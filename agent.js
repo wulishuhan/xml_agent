@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { ChatGPTBrowser } = require("./browser");
+const { createProvider } = require("./providers");
 
 const { run, setWorkspace, getWorkspace } = require("./runtime");
 
@@ -215,57 +215,43 @@ done = 结束 Agent
  * node agent.js --workspace=D:\\project\\my-project "这是个什么项目"
  */
 
-function parseArgs(argv) {
+function parseArgs() {
+  const args = process.argv.slice(2);
+
   let workspace = null;
+  let provider = "chatgpt";
   const taskParts = [];
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
 
-    /**
-     * --workspace D:\project
-     */
     if (arg === "--workspace") {
-      if (i + 1 >= argv.length) {
-        throw new Error("--workspace requires a path");
-      }
-
-      workspace = argv[++i];
+      workspace = args[++i];
       continue;
     }
 
-    /**
-     * --workspace=D:\project
-     */
     if (arg.startsWith("--workspace=")) {
       workspace = arg.substring("--workspace=".length);
-
-      if (!workspace) {
-        throw new Error("--workspace requires a path");
-      }
-
       continue;
     }
 
-    /**
-     * 其余参数全部作为任务
-     */
+    if (arg === "--provider") {
+      provider = args[++i];
+      continue;
+    }
+
+    if (arg.startsWith("--provider=")) {
+      provider = arg.substring("--provider=".length);
+      continue;
+    }
+
     taskParts.push(arg);
   }
 
-  const task = taskParts.join(" ").trim();
-
-  if (!workspace) {
-    throw new Error("Workspace is required.\n\n" + "Usage:\n" + 'node agent.js --workspace "D:\\\\project\\\\my-project" "你的任务"');
-  }
-
-  if (!task) {
-    throw new Error("Task is required.\n\n" + "Usage:\n" + 'node agent.js --workspace "D:\\\\project\\\\my-project" "你的任务"');
-  }
-
   return {
-    workspace: path.resolve(workspace),
-    task,
+    workspace,
+    provider,
+    task: taskParts.join(" ").trim(),
   };
 }
 
@@ -555,7 +541,7 @@ function saveReport(task) {
 
 function extractXML(response) {
   if (!response) {
-    throw new Error("ChatGPT returned empty response");
+    throw new Error("returned empty response");
   }
 
   let text = response.trim();
@@ -634,7 +620,7 @@ function extractXML(response) {
     return text;
   }
 
-  throw new Error("ChatGPT did not return a supported XML Action.\n\n" + "Response:\n" + response);
+  throw new Error("did not return a supported XML Action.\n\n" + "Response:\n" + response);
 }
 
 /**
@@ -653,7 +639,7 @@ async function main() {
    *
    * 用户任务
    */
-  const { workspace, task } = parseArgs(process.argv.slice(2));
+  const { workspace, task, provider: providerName } = parseArgs();
 
   /**
    * ==========================================================
@@ -709,9 +695,9 @@ async function main() {
    * ==========================================================
    */
 
-  const browser = new ChatGPTBrowser();
+  const provider = createProvider(providerName);
 
-  await browser.start();
+  await provider.start();
 
   try {
     /**
@@ -782,11 +768,9 @@ ${task}
        * ======================================================
        */
 
-      const response = await browser.send(prompt);
+      const response = await provider.send(prompt);
 
       console.log("");
-
-      console.log("ChatGPT:");
 
       console.log(response);
 
@@ -1030,8 +1014,7 @@ ${JSON.stringify(result, null, 2)}
      * ========================================================
      */
 
-    await browser.close();
-
+    await provider.close();
     /**
      * ========================================================
      * 保存 History

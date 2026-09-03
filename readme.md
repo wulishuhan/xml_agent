@@ -1073,6 +1073,7 @@ npm install playwright
   --remote-debugging-port=9222 `
   --user-data-dir="$PWD\chrome-agent-profile"
 ```
+进入对应网页，进行登录
 
 然后执行 Agent。
 
