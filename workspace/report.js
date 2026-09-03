@@ -7,7 +7,7 @@ const path = require("path");
  * ============================================================
  */
 
-function buildReport(task) {
+function buildReport(task, workspace) {
   const lines = [];
 
   lines.push("# Agent Execution Report");
@@ -18,7 +18,7 @@ function buildReport(task) {
 
   lines.push("");
 
-  lines.push(getWorkspace());
+  lines.push(workspace);
 
   lines.push("");
 

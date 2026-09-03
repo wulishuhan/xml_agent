@@ -14,229 +14,263 @@ class QwenProvider extends BrowserAgent {
   }
 
   /**
-   * 判断当前 Page 是否是 Qwen
+   * 判断当前页面是不是 Qwen
    */
-  matchPage(page) {
-    return page.url().includes("chat.qwen.ai");
+  async matchPage(page) {
+    try {
+      const url = page.url();
+
+      return url.includes("chat.qwen.ai");
+    } catch (error) {
+      return false;
+    }
   }
 
   /**
-   * =====================================================
-   * 获取最后一条 Qwen Assistant 回复
+   * 获取所有 assistant 消息数量
    *
    * 注意：
-   *
-   * .chat-response-message
-   * 是整个 AI 消息。
-   *
-   * 里面可能包含：
-   *
-   *   已经完成思考
-   *   <read path="package.json"/>
-   *
-   * 真正需要给 Agent 的内容是：
-   *
-   *   .qwen-markdown-text
-   *
-   * 所以这里不能直接 innerText() 整个 message。
-   * =====================================================
-   */
-  async getLastResponse() {
-    if (!this.isPageAlive()) {
-      return "";
-    }
-
-    const messages = this.page.locator(".response-message-content");
-
-    const count = await messages.count();
-
-    if (count === 0) {
-      return "";
-    }
-
-    /**
-     * 从最后一条消息开始找。
-     *
-     * 有时候最后一个 message 可能还没有
-     * 完全生成，所以这里倒序检查。
-     */
-    for (let i = count - 1; i >= 0; i--) {
-      const message = messages.nth(i);
-
-      const visible = await message.isVisible().catch(() => false);
-
-      if (!visible) {
-        continue;
-      }
-
-      const answer = message.locator(".qwen-markdown-html");
-
-      const answerCount = await answer.count();
-
-      if (answerCount === 0) {
-        continue;
-      }
-
-      const text = await answer
-        .last()
-        .innerText()
-        .catch(() => "");
-
-      if (text && text.trim()) {
-        return text.trim();
-      }
-    }
-
-    return "";
-  }
-
-  /**
-   * 获取当前 Assistant 消息数量
+   * 不把 assistant count 作为唯一判断条件。
    */
   async getAssistantCount() {
     if (!this.isPageAlive()) {
       return 0;
     }
 
-    return await this.page.locator(".response-message-content").count();
+    try {
+      return await this.page.locator(".response-message-content").count();
+    } catch (error) {
+      return 0;
+    }
   }
 
   /**
-   * =====================================================
-   * 发送消息
-   * =====================================================
+   * 获取最后一条 assistant 回复
    */
-  async send(message) {
-    if (!message || !message.trim()) {
-      throw new Error("Message cannot be empty");
+  async getLastResponse() {
+    if (!this.isPageAlive()) {
+      return "";
     }
 
-    /**
-     * 等待真正可用的输入框
-     */
-    const input = await this.waitForInput();
+    try {
+      let messages = this.page.locator(".response-message-content");
 
-    console.log("Sending message to Qwen...");
+      let count = await messages.count();
 
-    /**
-     * 发送之前记录 Assistant 数量。
-     *
-     * 后面通过数量变化判断是否产生新回复。
-     */
-    const oldCount = await this.getAssistantCount();
+      /**
+       * 如果第一种 DOM 不存在，
+       * 尝试备用 selector。
+       */
+      if (!count) {
+        messages = this.page.locator(".qwen-markdown-html");
 
-    /**
-     * 一次性填充消息。
-     *
-     * BrowserAgent.insertMessage()
-     * 已经负责：
-     *
-     * click
-     * fill
-     * 等待 React 状态同步
-     * 检查输入框确实有内容
-     */
-    await this.insertMessage(input, message);
+        count = await messages.count();
+      }
 
-    /**
-     * 再次确认输入框里面有内容
-     */
-    const finalValue = await this.getInputValue(input);
+      if (!count) {
+        return "";
+      }
 
-    if (!finalValue || !finalValue.trim()) {
-      throw new Error("Input is empty before sending");
+      const last = messages.nth(count - 1);
+
+      const visible = await last.isVisible().catch(() => false);
+
+      if (!visible) {
+        return "";
+      }
+
+      const text = await last.innerText().catch(() => "");
+
+      return (text || "").trim();
+    } catch (error) {
+      return "";
     }
-
-    console.log("Input verified.");
-
-    /**
-     * Enter 发送
-     */
-    console.log("Pressing Enter to send...");
-
-    await input.press("Enter");
-
-    /**
-     * 等待输入框清空
-     */
-    const cleared = await this.waitForInputClear();
-
-    if (!cleared) {
-      console.log("Warning: input was not cleared after Enter.");
-    }
-
-    /**
-     * 等待 Qwen 回复
-     */
-    return await this.waitResponse(oldCount);
   }
 
   /**
-   * =====================================================
-   * 等待 Qwen 回复完成
-   * =====================================================
+   * 获取当前 Qwen 回复状态
+   *
+   * 返回：
+   *
+   * {
+   *   count: assistant 数量,
+   *   text: 最后一条回复
+   * }
+   *
+   * 不把 count 作为唯一判断条件。
    */
-  async waitResponse(oldCount) {
-    console.log("Waiting for Qwen response...");
+  async getResponseState() {
+    return {
+      count: await this.getAssistantCount(),
+      text: await this.getLastResponse(),
+    };
+  }
 
-    const timeout = Date.now() + 180000;
+  /**
+   * 等待 Qwen 开始产生新的回复
+   *
+   * 不能只依赖 assistant count。
+   *
+   * 同时支持：
+   *
+   * 1. assistant count 增加
+   * 2. 最后一条回复出现
+   * 3. 最后一条回复内容发生变化
+   */
+  async waitForResponseStart(oldCount, oldResponse) {
+    const start = Date.now();
 
-    let lastResponse = "";
-    let stableCount = 0;
+    /**
+     * 使用 responseTimeout，
+     * 而不是之前固定的 responseInitialTimeout。
+     */
+    const timeout = this.responseTimeout;
 
-    while (Date.now() < timeout) {
+    let lastText = oldResponse || "";
+
+    while (Date.now() - start < timeout) {
       if (!this.isPageAlive()) {
         throw new Error("Qwen page was closed while waiting for response");
       }
 
-      await this.page.waitForTimeout(500);
+      try {
+        const state = await this.getResponseState();
 
-      const currentCount = await this.getAssistantCount();
+        // =====================================================
+        // 情况 1：
+        // assistant 数量增加
+        // =====================================================
 
-      /**
-       * 还没有产生新的 Assistant 消息
-       */
-      if (currentCount <= oldCount) {
-        continue;
+        if (state.count > oldCount) {
+          return true;
+        }
+
+        // =====================================================
+        // 情况 2：
+        // 当前已经出现回复
+        // =====================================================
+
+        if (state.text && state.text.trim()) {
+          /**
+           * 之前没有回复，
+           * 现在出现了回复。
+           */
+          if (!lastText) {
+            return true;
+          }
+
+          /**
+           * 回复内容发生变化。
+           */
+          if (state.text !== lastText) {
+            return true;
+          }
+        }
+
+        /**
+         * 保存最新文本。
+         */
+        lastText = state.text || lastText;
+      } catch (error) {
+        /**
+         * Qwen DOM 在生成过程中可能发生临时变化。
+         *
+         * 不要因为一次 DOM 异常直接终止 Agent。
+         */
       }
 
-      /**
-       * 获取真正的 Markdown 最终文本
-       */
-      const current = await this.getLastResponse();
-
-      /**
-       * Qwen 可能刚创建消息，
-       * 但是 .qwen-markdown-text 还没有生成。
-       */
-      if (!current) {
-        continue;
-      }
-
-      /**
-       * 连续多次内容相同，
-       * 认为生成完成。
-       */
-      if (current === lastResponse) {
-        stableCount++;
-      } else {
-        lastResponse = current;
-        stableCount = 0;
-      }
-
-      /**
-       * 连续 4 次相同。
-       *
-       * 4 × 500ms ≈ 2 秒。
-       */
-      if (stableCount >= 4) {
-        console.log("Qwen response complete.");
-
-        return current;
-      }
+      await this.sleep(this.responsePollInterval);
     }
 
-    throw new Error("Qwen response timeout");
+    throw new Error(`Qwen did not start a response within ${timeout}ms`);
+  }
+
+  /**
+   * 发送消息
+   */
+  async send(message) {
+    if (!message || !message.trim()) {
+      throw new Error("Qwen message cannot be empty");
+    }
+
+    if (!this.isPageAlive()) {
+      throw new Error("Qwen page is not available");
+    }
+
+    // =========================================================
+    // 发送前保存状态
+    // =========================================================
+
+    const oldAssistantCount = await this.getAssistantCount();
+
+    const oldResponse = await this.getLastResponse();
+
+    // =========================================================
+    // 输入消息
+    // =========================================================
+
+    await this.insertMessage(message);
+
+    // =========================================================
+    // 发送消息
+    // =========================================================
+
+    try {
+      const input = await this.getInput();
+
+      if (!input) {
+        throw new Error("Qwen input not found before pressing Enter");
+      }
+
+      await input.press("Enter");
+    } catch (error) {
+      throw new Error(`Qwen failed to send message: ${error.message}`);
+    }
+
+    // =========================================================
+    // 等待输入框清空
+    // =========================================================
+
+    const inputCleared = await this.waitForInputClear();
+
+    if (!inputCleared) {
+      /**
+       * 输入框没有及时清空，
+       * 不一定代表发送失败。
+       */
+      console.warn("[Qwen] Input did not clear within timeout, continuing...");
+    }
+
+    // =========================================================
+    // 等待 Qwen 开始产生回复
+    // =========================================================
+
+    await this.waitForResponseStart(oldAssistantCount, oldResponse);
+
+    // =========================================================
+    // 等待回复真正完成
+    // =========================================================
+
+    const response = await this.waitForStableResponse(() => this.getLastResponse(), {
+      timeout: this.responseTimeout,
+
+      // 连续稳定一段时间，
+      // 才认为模型生成完成。
+      stableTime: this.responseStableTime,
+
+      // 轮询间隔。
+      pollInterval: this.responsePollInterval,
+    });
+
+    // =========================================================
+    // 最终检查
+    // =========================================================
+
+    if (!response || !response.trim()) {
+      throw new Error("Qwen returned an empty response");
+    }
+
+    return response;
   }
 }
 
