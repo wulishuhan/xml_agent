@@ -2,6 +2,7 @@
 node_modules
 /dist
 browser-profile
+chrome-agent-profile
 .agent
 
 # local env files
