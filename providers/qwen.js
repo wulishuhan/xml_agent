@@ -5,7 +5,7 @@ class QwenProvider extends BrowserAgent {
     super({
       ...options,
 
-      inputSelectors: ['[contenteditable="true"]', "#prompt-textarea", "textarea", "message-input-textarea"],
+      inputSelectors: [".message-input-textarea", '[contenteditable="true"]', "#prompt-textarea", "textarea"],
     });
   }
 
