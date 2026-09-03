@@ -1,4 +1,4 @@
-const { BrowserAgent } = require("../core/browser-agent");
+const { BrowserAgent } = require("./browser-agent");
 
 class ChatGPTProvider extends BrowserAgent {
   constructor(options = {}) {
