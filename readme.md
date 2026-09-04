@@ -16,6 +16,79 @@ Agent 负责：
 
 ---
 
+## 快速开始
+
+### git仓库代码并安装依赖
+
+```bash
+https://github.com/wulishuhan/xml_agent.git
+cd xml_agent
+npm install
+```
+
+###  启动 Chrome CDP 提供网页版使用
+
+XML Agent 通过 Chrome DevTools Protocol 连接已经运行的 Chrome。
+
+Windows 示例：
+
+```powershell
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" `
+  --remote-debugging-port=9222 `
+  --user-data-dir="$PWD\chrome-agent-profile"
+```
+
+如果你的chrome.exe不是上述目录，请找到chrome浏览器图标，点击右键选择属性，点击打开文件所在目录既可找到
+```
+& "your_path\chrome.exe" `
+  --remote-debugging-port=9222 `
+  --user-data-dir="$PWD\chrome-agent-profile"
+```
+
+启动后，在这个 Chrome 中打开，下列网页版进行登录操作：
+
+```text
+https://chatgpt.com
+```
+
+或者：
+
+```text
+https://chat.qwen.ai
+```
+
+***注意：*** 完成登录后不要关闭这个浏览器，等待使用，该浏览器在9222端口运行
+
+
+Agent 默认连接：
+
+```text
+http://127.0.0.1:9222
+```
+
+
+Agent 连接的是用户启动的 Chrome，因此不会主动关闭整个 Chrome 浏览器。
+
+### 运行
+
+- ***参数解释***
+***--provider*** : 可选，默认是chatgpt，提供chatgpt/qwen。
+***--workspace*** : 必填，工作目录：注意目录必须存在
+
+默认gpt
+```
+cd xml_agent
+node agent.js --workspace "D:\code\vue\ppl" "创建一个vue项目，是关于泡泡龙的游戏"
+```
+
+手动选择provider
+```
+cd xml_agent
+node agent.js --provider qwen --workspace "D:\code\vue\ppl" "创建一个vue项目，是关于泡泡龙的游戏"
+```
+
+---
+
 ## ✨ 核心特点
 
 ### 1. 无需直接调用 LLM API
