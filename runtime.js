@@ -63,7 +63,7 @@ function getWorkspace() {
 
 const MAX_FILE_SIZE = 1024 * 1024 * 5; // 5MB
 const MAX_READ_SIZE = 1024 * 1024 * 2; // 2MB
-const MAX_EXEC_TIMEOUT = 120000; // 120秒
+const MAX_EXEC_TIMEOUT = 300000; // 300秒
 
 const parser = new XMLParser({
   ignoreAttributes: false,
