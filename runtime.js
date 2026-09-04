@@ -1,12 +1,9 @@
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
-const { XMLParser } = require("fast-xml-parser");
-
+const { getText } = require("./parse/xml-parse");
 /**
- * ============================================================
  * Workspace
- * ============================================================
  *
  * Workspace 必须由 Agent 启动时显式设置。
  *
@@ -14,13 +11,6 @@ const { XMLParser } = require("fast-xml-parser");
  *
  * setWorkspace("D:/project/my-project");
  *
- * Runtime 不再使用：
- *
- * process.cwd()
- *
- * 也不再固定使用：
- *
- * __dirname/workspace
  */
 
 let WORKSPACE = null;
@@ -64,39 +54,6 @@ function getWorkspace() {
 const MAX_FILE_SIZE = 1024 * 1024 * 5; // 5MB
 const MAX_READ_SIZE = 1024 * 1024 * 2; // 2MB
 const MAX_EXEC_TIMEOUT = 300000; // 300秒
-
-const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-  trimValues: false,
-});
-
-/**
- * ============================================================
- * 获取 XML 节点文本
- * ============================================================
- */
-function getText(node) {
-  if (node === undefined || node === null) {
-    return "";
-  }
-
-  if (typeof node === "string") {
-    return node;
-  }
-
-  if (typeof node === "number" || typeof node === "boolean") {
-    return String(node);
-  }
-
-  if (typeof node === "object") {
-    if (node["#text"] !== undefined) {
-      return String(node["#text"]);
-    }
-  }
-
-  return "";
-}
 
 /**
  * ============================================================
@@ -344,10 +301,27 @@ function done() {
  * ============================================================
  * Run XML Action
  * ============================================================
+ *
+ * 注意：
+ *
+ * XML 已经在 parse/xml-parse.js 中完成：
+ *
+ * XML
+ * ↓
+ * parse
+ * ↓
+ * validate
+ * ↓
+ * Action Object
+ *
+ * Runtime 这里只负责执行 Action。
+ *
+ * 不再进行 XML.parse。
+ * ============================================================
  */
-function run(xml) {
-  if (!xml || typeof xml !== "string") {
-    throw new Error("XML is empty");
+function run(action) {
+  if (!action || typeof action !== "object") {
+    throw new Error("Action is required");
   }
 
   /**
@@ -355,28 +329,19 @@ function run(xml) {
    */
   getWorkspace();
 
-  const parsed = parser.parse(xml);
+  const actionName = action.action;
+  const node = action.node;
 
-  if (!parsed || typeof parsed !== "object") {
-    throw new Error("Invalid XML");
+  if (!actionName || typeof actionName !== "string") {
+    throw new Error("Action name is required");
   }
-
-  const actionNames = Object.keys(parsed);
-
-  if (actionNames.length === 0) {
-    throw new Error("No XML action found");
-  }
-
-  const action = actionNames[0];
-
-  const node = parsed[action];
 
   console.log("");
   console.log("================================");
-  console.log("Runtime Action:", action);
+  console.log("Runtime Action:", actionName);
   console.log("================================");
 
-  switch (action) {
+  switch (actionName) {
     case "read":
       return read(node);
 
@@ -393,15 +358,10 @@ function run(xml) {
       return done(node);
 
     default:
-      throw new Error(`Unknown action: ${action}`);
+      throw new Error(`Unknown action: ${actionName}`);
   }
 }
 
-/**
- * ============================================================
- * Exports
- * ============================================================
- */
 module.exports = {
   run,
   setWorkspace,

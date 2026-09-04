@@ -9,11 +9,11 @@ const history = [];
 /**
  * 创建 History Record
  */
-function createHistoryRecord(step, xml, result) {
+function createHistoryRecord(step, action, result) {
   return {
     step,
     timestamp: new Date().toISOString(),
-    xml,
+    action,
     result,
   };
 }

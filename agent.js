@@ -130,23 +130,17 @@ async function main() {
 
       console.log(response);
 
-      let xml;
+      let action;
 
       try {
-        xml = extractXML(response);
+        action = extractXML(response);
       } catch (error) {
-        console.error("XML Parse Error:");
-
         console.error(error.message);
 
         prompt = getXmlErrorPrompt(error);
 
         continue;
       }
-
-      console.log("XML Action:");
-
-      console.log(xml);
 
       /**
        * Runtime
@@ -155,10 +149,8 @@ async function main() {
       let result;
 
       try {
-        result = run(xml);
+        result = run(action);
       } catch (error) {
-        console.error("");
-
         console.error("Runtime Error:");
 
         console.error(error.message);
@@ -170,8 +162,6 @@ async function main() {
         };
       }
 
-      console.log("");
-
       console.log("Runtime Result:");
 
       console.log(JSON.stringify(result, null, 2));
@@ -180,7 +170,7 @@ async function main() {
        * History
        */
 
-      history.push(createHistoryRecord(step, xml, result));
+      history.push(createHistoryRecord(step, action, result));
 
       /**
        * answer
@@ -213,8 +203,6 @@ async function main() {
        */
 
       if (result.action === "done") {
-        console.log("");
-
         console.log("Agent requested done.");
 
         break;
@@ -242,8 +230,6 @@ async function main() {
      */
 
     if (step >= MAX_STEPS) {
-      console.log("");
-
       console.log("Maximum Agent steps reached.");
     }
   } finally {
@@ -264,8 +250,6 @@ async function main() {
 
     const reportPath = saveReport(task, currentWorkspace);
 
-    console.log("");
-
     console.log("================================");
 
     console.log("Agent Files");
@@ -277,8 +261,6 @@ async function main() {
     console.log("History:", historyPath);
 
     console.log("Report:", reportPath);
-
-    console.log("");
   }
 }
 
@@ -288,15 +270,11 @@ async function main() {
 
 main()
   .then(() => {
-    console.log("");
-
     console.log("Node Agent finished.");
 
     process.exit(0);
   })
   .catch((error) => {
-    console.error("");
-
     console.error("Agent Error:");
 
     console.error(error);

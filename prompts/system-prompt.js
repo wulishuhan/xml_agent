@@ -32,7 +32,7 @@ console.log("hello");
 - write 会自动创建父目录
 - 不需要 mkdir
 - 内容必须放在 CDATA 中
-- 不能使用Markdown
+- 不能使用Markdown格式
 
 ---
 
