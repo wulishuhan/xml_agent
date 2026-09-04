@@ -6,16 +6,7 @@ const { history, createHistoryRecord, saveHistory } = require("./workspace/histo
 const { saveReport } = require("./workspace/report");
 const { extractXML } = require("./parse/xml-parse");
 
-/**
- * ============================================================
- * Command Line Arguments
- * ============================================================
- * 使用方式：
- * node agent.js --workspace "D:\\project\\my-project" "这是个什么项目"
- * 也支持：
- * node agent.js --workspace=D:\\project\\my-project "这是个什么项目"
- */
-
+// 获取命令行参数
 function parseArgs() {
   const args = process.argv.slice(2);
 
@@ -57,19 +48,14 @@ function parseArgs() {
 }
 
 /**
- * ============================================================
  * Main Agent
- * ============================================================
  */
 
 async function main() {
   /**
    * 解析：
-   *
    * --workspace
-   *
    * 和：
-   *
    * 用户任务
    */
   const { workspace, task, provider: providerName } = parseArgs();
@@ -163,9 +149,7 @@ async function main() {
       console.log(xml);
 
       /**
-       * ======================================================
        * Runtime
-       * ======================================================
        */
 
       let result;
@@ -193,17 +177,13 @@ async function main() {
       console.log(JSON.stringify(result, null, 2));
 
       /**
-       * ======================================================
        * History
-       * ======================================================
        */
 
       history.push(createHistoryRecord(step, xml, result));
 
       /**
-       * ======================================================
        * answer
-       * ======================================================
        */
 
       if (result.action === "answer" && result.ok) {
@@ -229,9 +209,7 @@ async function main() {
       }
 
       /**
-       * ======================================================
        * done
-       * ======================================================
        */
 
       if (result.action === "done") {
@@ -243,9 +221,7 @@ async function main() {
       }
 
       /**
-       * ======================================================
        * Runtime Error
-       * ======================================================
        */
 
       if (result.ok === false) {
@@ -255,18 +231,14 @@ async function main() {
       }
 
       /**
-       * ======================================================
        * 正常 Runtime Result
-       * ======================================================
        */
 
       prompt = getRuntimeOkPrompt(result);
     }
 
     /**
-     * ========================================================
      * MAX STEPS
-     * ========================================================
      */
 
     if (step >= MAX_STEPS) {
@@ -276,24 +248,18 @@ async function main() {
     }
   } finally {
     /**
-     * ========================================================
      * 不关闭 Chrome
-     * ========================================================
      */
 
     await provider.close();
     /**
-     * ========================================================
      * 保存 History
-     * ========================================================
      */
 
     const historyPath = saveHistory(currentWorkspace);
 
     /**
-     * ========================================================
      * 保存 Report
-     * ========================================================
      */
 
     const reportPath = saveReport(task, currentWorkspace);
@@ -317,9 +283,7 @@ async function main() {
 }
 
 /**
- * ============================================================
  * Start
- * ============================================================
  */
 
 main()

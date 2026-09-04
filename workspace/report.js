@@ -2,9 +2,7 @@ const { history } = require("./history");
 const fs = require("fs");
 const path = require("path");
 /**
- * ============================================================
  * Build Report
- * ============================================================
  */
 
 function buildReport(task, workspace) {
@@ -167,9 +165,7 @@ function buildReport(task, workspace) {
 }
 
 /**
- * ============================================================
  * Save Report
- * ============================================================
  */
 
 function saveReport(task, workspace) {
@@ -181,7 +177,7 @@ function saveReport(task, workspace) {
 
   const reportPath = path.join(agentDir, "report.md");
 
-  const report = buildReport(task);
+  const report = buildReport(task, workspace);
 
   fs.writeFileSync(reportPath, report, "utf8");
 

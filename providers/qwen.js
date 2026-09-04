@@ -13,9 +13,7 @@ class QwenProvider extends BrowserAgent {
     return "Qwen";
   }
 
-  /**
-   * 判断当前页面是不是 Qwen
-   */
+  //  判断当前页面是不是 Qwen
   async matchPage(page) {
     try {
       const url = page.url();
@@ -28,9 +26,6 @@ class QwenProvider extends BrowserAgent {
 
   /**
    * 获取所有 assistant 消息数量
-   *
-   * 注意：
-   * 不把 assistant count 作为唯一判断条件。
    */
   async getAssistantCount() {
     if (!this.isPageAlive()) {
@@ -89,15 +84,11 @@ class QwenProvider extends BrowserAgent {
 
   /**
    * 获取当前 Qwen 回复状态
-   *
    * 返回：
-   *
    * {
    *   count: assistant 数量,
    *   text: 最后一条回复
    * }
-   *
-   * 不把 count 作为唯一判断条件。
    */
   async getResponseState() {
     return {
@@ -108,11 +99,6 @@ class QwenProvider extends BrowserAgent {
 
   /**
    * 等待 Qwen 开始产生新的回复
-   *
-   * 不能只依赖 assistant count。
-   *
-   * 同时支持：
-   *
    * 1. assistant count 增加
    * 2. 最后一条回复出现
    * 3. 最后一条回复内容发生变化
@@ -120,10 +106,6 @@ class QwenProvider extends BrowserAgent {
   async waitForResponseStart(oldCount, oldResponse) {
     const start = Date.now();
 
-    /**
-     * 使用 responseTimeout，
-     * 而不是之前固定的 responseInitialTimeout。
-     */
     const timeout = this.responseTimeout;
 
     let lastText = oldResponse || "";
@@ -136,19 +118,15 @@ class QwenProvider extends BrowserAgent {
       try {
         const state = await this.getResponseState();
 
-        // =====================================================
         // 情况 1：
         // assistant 数量增加
-        // =====================================================
 
         if (state.count > oldCount) {
           return true;
         }
 
-        // =====================================================
         // 情况 2：
         // 当前已经出现回复
-        // =====================================================
 
         if (state.text && state.text.trim()) {
           /**
@@ -174,7 +152,6 @@ class QwenProvider extends BrowserAgent {
       } catch (error) {
         /**
          * Qwen DOM 在生成过程中可能发生临时变化。
-         *
          * 不要因为一次 DOM 异常直接终止 Agent。
          */
       }
@@ -197,23 +174,17 @@ class QwenProvider extends BrowserAgent {
       throw new Error("Qwen page is not available");
     }
 
-    // =========================================================
     // 发送前保存状态
-    // =========================================================
 
     const oldAssistantCount = await this.getAssistantCount();
 
     const oldResponse = await this.getLastResponse();
 
-    // =========================================================
     // 输入消息
-    // =========================================================
 
     await this.insertMessage(message);
 
-    // =========================================================
     // 发送消息
-    // =========================================================
 
     try {
       const input = await this.getInput();
@@ -227,9 +198,7 @@ class QwenProvider extends BrowserAgent {
       throw new Error(`Qwen failed to send message: ${error.message}`);
     }
 
-    // =========================================================
     // 等待输入框清空
-    // =========================================================
 
     const inputCleared = await this.waitForInputClear();
 
@@ -241,15 +210,11 @@ class QwenProvider extends BrowserAgent {
       console.warn("[Qwen] Input did not clear within timeout, continuing...");
     }
 
-    // =========================================================
     // 等待 Qwen 开始产生回复
-    // =========================================================
 
     await this.waitForResponseStart(oldAssistantCount, oldResponse);
 
-    // =========================================================
     // 等待回复真正完成
-    // =========================================================
 
     const response = await this.waitForStableResponse(() => this.getLastResponse(), {
       timeout: this.responseTimeout,
@@ -262,9 +227,7 @@ class QwenProvider extends BrowserAgent {
       pollInterval: this.responsePollInterval,
     });
 
-    // =========================================================
     // 最终检查
-    // =========================================================
 
     if (!response || !response.trim()) {
       throw new Error("Qwen returned an empty response");

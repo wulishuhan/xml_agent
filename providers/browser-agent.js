@@ -8,25 +8,16 @@ class BrowserAgent {
     this.page = null;
     this.browser = null;
 
-    // =========================================================
-    // Response wait configuration
-    // =========================================================
-
-    // 单次回复最大允许时间
-    // 默认 10 分钟
+    // 单次回复最大允许时间，默认 10 分钟
     this.responseTimeout = this.getNumberOption(options.responseTimeout, process.env.XML_AGENT_RESPONSE_TIMEOUT_MS, 10 * 60 * 1000);
 
-    // 回复连续稳定多久以后认为生成完成
-    // 默认 4 秒
+    // 回复连续稳定多久以后认为生成完成，默认 4 秒
     this.responseStableTime = this.getNumberOption(options.responseStableTime, process.env.XML_AGENT_RESPONSE_STABLE_TIME_MS, 4000);
 
-    // 检查间隔
-    // 原来 500ms，这里改成 1000ms
-    // 长文本情况下可以明显减少 DOM 读取压力
+    // 检查间隔1000ms，长文本情况下可以明显减少 DOM 读取压力
     this.responsePollInterval = this.getNumberOption(options.responsePollInterval, process.env.XML_AGENT_RESPONSE_POLL_INTERVAL_MS, 1000);
 
-    // 没有任何回复出现时允许等待多久
-    // 默认 60 秒
+    // 没有任何回复出现时允许等待多久，默认 60 秒
     this.responseInitialTimeout = this.getNumberOption(options.responseInitialTimeout, process.env.XML_AGENT_RESPONSE_INITIAL_TIMEOUT_MS, 60 * 1000);
 
     this.inputSelectors = options.inputSelectors || [];
@@ -251,12 +242,9 @@ class BrowserAgent {
 
   /**
    * 通用的回复等待器
-   *
    * getResponse:
    *   async () => string
-   *
    * 逻辑：
-   *
    * 1. 最多等待 responseTimeout
    * 2. 回复出现之前，最多等待 responseInitialTimeout
    * 3. 回复出现后，如果内容发生变化，则重新计算稳定时间
@@ -315,16 +303,12 @@ class BrowserAgent {
           lastChangeTime = now;
           lastResponse = response;
         } else if (response !== lastResponse) {
-          // ===================================================
           // 内容发生变化
-          // ===================================================
 
           lastResponse = response;
           lastChangeTime = now;
         } else {
-          // ===================================================
           // 内容没有变化
-          // ===================================================
 
           const stableDuration = now - lastChangeTime;
 
@@ -333,9 +317,7 @@ class BrowserAgent {
           }
         }
       } else {
-        // =====================================================
         // 回复还没有出现
-        // =====================================================
 
         if (now - startTime >= initialTimeout) {
           throw new Error(`${this.name} did not receive any response within ${initialTimeout}ms`);

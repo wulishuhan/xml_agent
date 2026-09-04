@@ -1,9 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 /**
- * ============================================================
  * History
- * ============================================================
  */
 
 const history = [];
@@ -21,9 +19,7 @@ function createHistoryRecord(step, xml, result) {
 }
 
 /**
- * ============================================================
  * Save History
- * ============================================================
  */
 
 function saveHistory(workspace) {
