@@ -5,7 +5,7 @@ class ChatGPTProvider extends BrowserAgent {
     super({
       ...options,
 
-      inputSelectors: ['[contenteditable="true"]', "#prompt-textarea", "textarea"],
+      inputSelectors: [".wcDTda_fallbackTextarea", '[contenteditable="true"]', "#prompt-textarea", "textarea"],
     });
   }
 
