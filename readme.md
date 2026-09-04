@@ -72,8 +72,8 @@ Agent 连接的是用户启动的 Chrome，因此不会主动关闭整个 Chrome
 ### 运行
 
 - ***参数解释***
-***--provider*** : 可选，默认是chatgpt，提供chatgpt/qwen。
-***--workspace*** : 必填，工作目录：注意目录必须存在
+  - ***--provider*** : 可选，默认是chatgpt，提供chatgpt/qwen。
+  - ***--workspace*** : 必填，工作目录：注意目录必须存在
 
 默认gpt
 ```
