@@ -47,13 +47,13 @@ function buildReport(task, workspace) {
 
     lines.push("");
 
-    lines.push("XML：");
+    lines.push("Action：");
 
     lines.push("");
 
-    lines.push("```xml");
+    lines.push("```action");
 
-    lines.push(item.xml);
+    lines.push(JSON.stringify(item.action));
 
     lines.push("```");
 

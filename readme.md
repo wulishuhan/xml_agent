@@ -263,7 +263,7 @@ Agent 不允许：
 ```text
 step
 timestamp
-xml
+action
 result
 ```
 
@@ -424,10 +424,12 @@ xml_agent/
 │   ├── chatgpt.js
 │   └── qwen.js
 │
-└── workspace/
-    ├── manifest.js
-    ├── history.js
-    └── report.js
+├── workspace/
+|    ├── manifest.js
+|    ├── history.js
+|    └── report.js
+└── test/
+    └── test-xml.js
 ```
 
 ---
@@ -451,110 +453,6 @@ XML
   "fast-xml-parser": "^5.11.1",
   "playwright": "^1.62.1"
 }
-```
-
----
-
-# 🚀 安装
-
-进入项目目录：
-
-```bash
-cd xml_agent
-```
-
-安装依赖：
-
-```bash
-npm install
-```
-
----
-
-# 🌐 启动 Chrome CDP
-
-XML Agent 通过 Chrome DevTools Protocol 连接已经运行的 Chrome。
-
-Windows 示例：
-
-```powershell
-& "C:\Program Files\Google\Chrome\Application\chrome.exe" `
-  --remote-debugging-port=9222 `
-  --user-data-dir="$PWD\chrome-agent-profile"
-```
-
-启动后，在这个 Chrome 中打开：
-
-```text
-https://chatgpt.com
-```
-
-或者：
-
-```text
-https://chat.qwen.ai
-```
-
-Agent 默认连接：
-
-```text
-http://127.0.0.1:9222
-```
-
-注意：
-
-Agent 连接的是用户启动的 Chrome，因此不会主动关闭整个 Chrome 浏览器。
-
----
-
-# ▶️ 使用 Agent
-
-## 默认使用 ChatGPT
-
-默认 Provider 是：
-
-```text
-chatgpt
-```
-
-执行：
-
-```bash
-node agent.js --workspace "D:\project\my-project" "分析这个项目"
-```
-
----
-
-## 使用 ChatGPT
-
-```bash
-node agent.js \
-  --workspace "D:\project\my-project" \
-  --provider chatgpt \
-  "分析这个项目的技术栈"
-```
-
-Windows CMD：
-
-```cmd
-node agent.js --workspace "D:\project\my-project" --provider chatgpt "分析这个项目的技术栈"
-```
-
----
-
-## 使用 Qwen
-
-```bash
-node agent.js \
-  --workspace "D:\project\my-project" \
-  --provider qwen \
-  "分析这个项目的架构"
-```
-
-Windows CMD：
-
-```cmd
-node agent.js --workspace "D:\project\my-project" --provider qwen "分析这个项目的架构"
 ```
 
 ---
@@ -704,7 +602,7 @@ console.log("hello");
 最大执行时间：
 
 ```text
-120 秒
+300 秒
 ```
 
 成功时 Runtime 返回命令输出。
@@ -1156,10 +1054,6 @@ runtime.js
 
 Runtime 使用：
 
-```text
-fast-xml-parser
-```
-
 解析 XML。
 
 处理流程：
@@ -1280,7 +1174,7 @@ workspace/history.js
 {
   step,
   timestamp,
-  xml,
+  action,
   result
 }
 ```
@@ -1291,7 +1185,10 @@ workspace/history.js
 {
   "step": 1,
   "timestamp": "2026-09-03T00:00:00.000Z",
-  "xml": "<read path=\"package.json\"/>",
+  "action": {
+    "action": "done",
+    "node": ""
+  },
   "result": {
     "ok": true,
     "action": "read",
@@ -1330,7 +1227,7 @@ Workspace
 执行记录
 Step
 Timestamp
-XML
+Action
 Runtime Result
 ```
 
