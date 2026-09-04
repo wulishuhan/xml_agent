@@ -21,7 +21,7 @@ Agent 负责：
 ### git仓库代码并安装依赖
 
 ```bash
-https://github.com/wulishuhan/xml_agent.git
+git clone https://github.com/wulishuhan/xml_agent.git
 cd xml_agent
 npm install
 ```
