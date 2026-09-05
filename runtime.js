@@ -102,10 +102,6 @@ function resolvePath(filePath) {
 }
 
 /**
- * ============================================================
- * read
- * ============================================================
- *
  * <read path="package.json"/>
  *
  * <read path="src"/>
@@ -177,10 +173,6 @@ function read(node) {
 }
 
 /**
- * ============================================================
- * write
- * ============================================================
- *
  * <write path="src/test.js"><![CDATA[
  * console.log("hello");
  * ]]></write>
@@ -220,10 +212,6 @@ function write(node) {
 }
 
 /**
- * ============================================================
- * exec
- * ============================================================
- *
  * <exec command="npm test"/>
  */
 function execute(node) {
@@ -267,11 +255,6 @@ function execute(node) {
   }
 }
 
-/**
- * ============================================================
- * answer
- * ============================================================
- */
 function answer(node) {
   const content = getText(node);
 
@@ -286,11 +269,6 @@ function answer(node) {
   };
 }
 
-/**
- * ============================================================
- * done
- * ============================================================
- */
 function done() {
   return {
     ok: true,
@@ -302,24 +280,16 @@ function done() {
  * ============================================================
  * Run XML Action
  * ============================================================
- *
- * 注意：
- *
- * XML 已经在 parse/xml-parse.js 中完成：
- *
- * XML
- * ↓
- * parse
- * ↓
- * validate
- * ↓
- * Action Object
- *
- * Runtime 这里只负责执行 Action。
- *
- * 不再进行 XML.parse。
- * ============================================================
  */
+
+const actionHandlers = {
+  read: read,
+  write: write,
+  exec: execute,
+  answer: answer,
+  done: done,
+};
+
 function run(action) {
   if (!action || typeof action !== "object") {
     throw new Error("Action is required");
@@ -342,25 +312,13 @@ function run(action) {
   console.log("Runtime Action:", actionName);
   console.log("================================");
 
-  switch (actionName) {
-    case "read":
-      return read(node);
+  const handler = actionHandlers[actionName];
 
-    case "write":
-      return write(node);
-
-    case "exec":
-      return execute(node);
-
-    case "answer":
-      return answer(node);
-
-    case "done":
-      return done(node);
-
-    default:
-      throw new Error(`Unknown action: ${actionName}`);
+  if (!handler) {
+    throw new Error(`Unknown action: ${actionName}`);
   }
+
+  return handler(node);
 }
 
 module.exports = {
