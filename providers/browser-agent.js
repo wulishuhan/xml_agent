@@ -128,7 +128,7 @@ class BrowserAgent {
                 if (await locator.isDisabled()) {
                     continue;
                 }
-
+                console.log(`[${this.name}] Found input using selector: ${selector}`);
                 return locator;
             } catch (error) {
                 // 某个 selector 失败不应该影响其他 selector
@@ -188,6 +188,7 @@ class BrowserAgent {
     }
 
     async insertMessage(message) {
+        console.log(`[${this.name}] Inserting message: "${message}"`);
         if (!this.isPageAlive()) {
             throw new Error(`[${this.name}] page is not available`);
         }
@@ -197,7 +198,23 @@ class BrowserAgent {
         if (!input) {
             throw new Error(`[${this.name}] input not found`);
         }
-
+        if (this.name === "chatgpt") {
+            try {
+                await input.evaluate(function (element, msg) {
+                    if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
+                        element.value = msg;
+                        element.dispatchEvent(new Event('input', { bubbles: true }));
+                        element.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else if (element.isContentEditable) {
+                        element.textContent = msg;
+                        element.dispatchEvent(new Event('input', { bubbles: true }));
+                        element.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                }, message);
+            } catch (error) {
+                throw new Error(`[${this.name}] failed to insert message: ${error.message}`);
+            }
+        }
         try {
             await input.click();
 
