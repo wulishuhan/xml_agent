@@ -5,7 +5,7 @@ const { buildWorkspaceManifest } = require("./workspace/manifest");
 const { history, createHistoryRecord, saveHistory } = require("./workspace/history");
 const { saveReport } = require("./workspace/report");
 const { extractXML } = require("./parse/xml-parse");
-
+const agentConfig = require("./config/agent-config");
 // 获取命令行参数
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -252,8 +252,8 @@ async function main() {
   try {
     let prompt = getFirstPrompt(currentWorkspace, manifest, task);
     let step = 0;
-    const MAX_STEPS = 50;
-    const MAX_PROVIDER_ERRORS = 3;
+    const MAX_STEPS = agentConfig.agent.maxSteps;
+    const MAX_PROVIDER_ERRORS = agentConfig.agent.maxProviderErrors;
     const providerErrorState = {
       count: 0,
       max: MAX_PROVIDER_ERRORS,
