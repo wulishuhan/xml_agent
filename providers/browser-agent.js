@@ -242,8 +242,7 @@ class BrowserAgent {
 
   /**
    * 通用的回复等待器
-   * getResponse:
-   *   async () => string
+   *
    * 逻辑：
    * 1. 最多等待 responseTimeout
    * 2. 回复出现之前，最多等待 responseInitialTimeout
@@ -254,82 +253,100 @@ class BrowserAgent {
    */
   async waitForStableResponse(getResponse, options = {}) {
     const timeout = options.timeout ?? this.responseTimeout;
-
-    const stableTime = options.stableTime ?? this.responseStableTime;
-
-    const pollInterval = options.pollInterval ?? this.responsePollInterval;
-
-    const initialTimeout = options.initialTimeout ?? this.responseInitialTimeout;
+    const stableTime =
+      options.stableTime ?? this.responseStableTime;
+    const pollInterval =
+      options.pollInterval ?? this.responsePollInterval;
+    const initialTimeout =
+      options.initialTimeout ?? this.responseInitialTimeout;
 
     const startTime = Date.now();
 
     let firstResponseTime = null;
-    let lastResponse = null;
+    let lastResponse = "";
     let lastChangeTime = null;
-
-    let lastError = null;
 
     while (true) {
       if (!this.isPageAlive()) {
-        throw new Error(`${this.name} page was closed while waiting for response`);
+        throw new Error(
+          `${this.name} page was closed while waiting for response`
+        );
       }
 
       const now = Date.now();
 
-      // =======================================================
-      // 总超时
-      // =======================================================
-
+      // 整体超时
       if (now - startTime >= timeout) {
-        throw new Error(`${this.name} response timeout after ${timeout}ms`);
+        throw new Error(
+          `${this.name} response timeout after ${timeout}ms`
+        );
       }
 
-      let response = null;
+      let response = "";
 
       try {
         response = await getResponse();
-        lastError = null;
       } catch (error) {
-        lastError = error;
-
         // DOM 偶发读取失败，不立即退出
         await this.sleep(pollInterval);
         continue;
       }
 
-      if (response && response.trim()) {
-        if (firstResponseTime === null) {
-          firstResponseTime = now;
-          lastChangeTime = now;
-          lastResponse = response;
-        } else if (response !== lastResponse) {
-          // 内容发生变化
+      response = typeof response === "string"
+        ? response.trim()
+        : "";
 
-          lastResponse = response;
-          lastChangeTime = now;
-        } else {
-          // 内容没有变化
+      // ========================================================
+      // 还没有任何回复
+      // ========================================================
 
-          const stableDuration = now - lastChangeTime;
-
-          if (stableDuration >= stableTime) {
-            return response;
-          }
-        }
-      } else {
-        // 回复还没有出现
-
+      if (!response) {
         if (now - startTime >= initialTimeout) {
-          throw new Error(`${this.name} did not receive any response within ${initialTimeout}ms`);
+          throw new Error(
+            `${this.name} did not receive any response within ${initialTimeout}ms`
+          );
         }
+
+        await this.sleep(pollInterval);
+        continue;
+      }
+
+      // ========================================================
+      // 第一次收到回复
+      // ========================================================
+
+      if (firstResponseTime === null) {
+        firstResponseTime = now;
+        lastResponse = response;
+        lastChangeTime = now;
+
+        await this.sleep(pollInterval);
+        continue;
+      }
+
+      // ========================================================
+      // 回复内容发生变化
+      // ========================================================
+
+      if (response !== lastResponse) {
+        lastResponse = response;
+        lastChangeTime = now;
+
+        await this.sleep(pollInterval);
+        continue;
+      }
+
+      // ========================================================
+      // 回复内容保持稳定
+      // ========================================================
+
+      const stableDuration = now - lastChangeTime;
+
+      if (stableDuration >= stableTime) {
+        return response;
       }
 
       await this.sleep(pollInterval);
-    }
-
-    // 理论上不会走到这里
-    if (lastError) {
-      throw lastError;
     }
   }
 

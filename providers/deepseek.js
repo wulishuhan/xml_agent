@@ -64,7 +64,22 @@ class DeepSeekProvider extends BrowserAgent {
         return "";
       }
 
-      const text = await last.innerText().catch(() => "");
+      // const text = await last.innerText().catch(() => "");
+
+      // return (text || "").trim();
+      const html = await last.innerHTML();
+
+      const cleanedHtml = html.replace(
+        /<div[^>]*class=["'][^"']*\bmd-code-block-banner-wrap\b[^"']*["'][^>]*>[\s\S]*?<\/div>/gi,
+        ""
+      );
+
+      const text = await this.page.evaluate((html) => {
+        const container = document.createElement("div");
+        container.innerHTML = html;
+
+        return container.innerText;
+      }, cleanedHtml);
 
       return (text || "").trim();
     } catch (error) {
