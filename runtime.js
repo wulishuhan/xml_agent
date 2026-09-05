@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 const { getText } = require("./parse/xml-parse");
+const agentConfig = require("./config/agent-config");
 /**
  * Workspace
  *
@@ -51,9 +52,9 @@ function getWorkspace() {
   return WORKSPACE;
 }
 
-const MAX_FILE_SIZE = 1024 * 1024 * 5; // 5MB
-const MAX_READ_SIZE = 1024 * 1024 * 2; // 2MB
-const MAX_EXEC_TIMEOUT = 300000; // 300秒
+const MAX_FILE_SIZE = agentConfig.runtime.maxFileSize;
+const MAX_READ_SIZE = agentConfig.runtime.maxReadSize;
+const MAX_EXEC_TIMEOUT = agentConfig.runtime.maxExecTimeout;
 
 /**
  * ============================================================
