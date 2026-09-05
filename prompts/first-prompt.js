@@ -1,6 +1,7 @@
-function getFirstPrompt(currentWorkspace, manifest, task, systemPrompt) {
+const { SYSTEM_PROMPT } = require("./system-prompt");
+function getFirstPrompt(currentWorkspace, manifest, task) {
   let prompt = `
-${systemPrompt}
+${SYSTEM_PROMPT}
 
 ============================================================
 Workspace

@@ -113,26 +113,69 @@ async function main() {
 
     const MAX_STEPS = 50;
 
+    const MAX_PROVIDER_ERRORS = 3;
+
+    let providerErrorCount = 0;
+
     while (step < MAX_STEPS) {
       step++;
 
       console.log("");
-
       console.log("================================");
-
       console.log(`Agent Step ${step}`);
-
       console.log("================================");
 
-      const response = await provider.send(prompt);
+      let response;
+
+      try {
+        response = await provider.send(prompt);
+
+        providerErrorCount = 0;
+      } catch (error) {
+        providerErrorCount++;
+
+        console.error("Provider Error:");
+        console.error(error.message);
+
+        console.error(
+          `Provider error count: ${providerErrorCount}/${MAX_PROVIDER_ERRORS}`
+        );
+
+        if (providerErrorCount >= MAX_PROVIDER_ERRORS) {
+          console.error("Maximum Provider errors reached.");
+
+          break;
+        }
+        prompt = `
+        上一轮 Agent 调用模型时发生错误。
+
+        错误信息：
+
+        ${error.message}
+
+        请继续完成用户任务。
+
+        不要假设上一轮已经成功执行。
+        不要编造 Runtime 结果。
+
+        请重新输出一个 XML Action。
+        `;
+
+        continue;
+      }
 
       console.log("");
 
       console.log(response);
 
+
+
+      console.log("");
+
       let action;
 
       try {
+        response = await provider.send(prompt);
         action = extractXML(response);
       } catch (error) {
         console.error(error.message);
@@ -163,7 +206,6 @@ async function main() {
       }
 
       console.log("Runtime Result:");
-
       console.log(JSON.stringify(result, null, 2));
 
       /**
@@ -178,13 +220,9 @@ async function main() {
 
       if (result.action === "answer" && result.ok) {
         console.log("");
-
         console.log("================================");
-
         console.log("Agent Answer");
-
         console.log("================================");
-
         console.log("");
 
         console.log(result.content);
@@ -204,7 +242,6 @@ async function main() {
 
       if (result.action === "done") {
         console.log("Agent requested done.");
-
         break;
       }
 
