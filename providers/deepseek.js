@@ -67,20 +67,21 @@ class DeepSeekProvider extends BrowserAgent {
       // const text = await last.innerText().catch(() => "");
 
       // return (text || "").trim();
-      const html = await last.innerHTML();
+      await last.evaluate((element) => {
+        // 在 element 内部查找所有目标父级容器
+        const containers = element.querySelectorAll('.md-code-block.md-code-block-light');
+        containers.forEach(container => {
+          const children = Array.from(container.childNodes);
+          children.forEach(child => {
+            if (child.tagName !== 'PRE') {
+              container.removeChild(child);
+            }
+          });
+        });
+      });
 
-      const cleanedHtml = html.replace(
-        /<div[^>]*class=["'][^"']*\bmd-code-block-banner-wrap\b[^"']*["'][^>]*>[\s\S]*?<\/div>/gi,
-        ""
-      );
-
-      const text = await this.page.evaluate((html) => {
-        const container = document.createElement("div");
-        container.innerHTML = html;
-
-        return container.innerText;
-      }, cleanedHtml);
-
+      // 此时 last 内部的 DOM 已被清理，innerText 只包含干净的代码内容
+      const text = await last.innerText().catch(() => "");
       return (text || "").trim();
     } catch (error) {
       return "";
