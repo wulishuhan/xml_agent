@@ -27,6 +27,13 @@ ${JSON.stringify(result, null, 2)}
 <answer><![CDATA[
 最终答案
 ]]></answer>
+注意：
+
+本轮只能输出 <answer>。
+
+输出 <answer> 后，不要同时输出 <done/>。
+
+Agent 会在下一轮单独要求你输出 <done/>。
 
 如果已经完成并且不需要回答：
 

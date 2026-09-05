@@ -53,7 +53,7 @@ function buildReport(task, workspace) {
 
     lines.push("```action");
 
-    lines.push(JSON.stringify(item.action));
+    lines.push(JSON.stringify(item.action, null, 2));
 
     lines.push("```");
 

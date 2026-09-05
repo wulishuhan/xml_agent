@@ -6,6 +6,9 @@ function getDonePrompt() {
 
 现在结束 Agent 生命周期。
 
+不要再次生成答案。
+不要执行其他 Action。
+
 只输出：
 
 <done/>
