@@ -20,6 +20,20 @@ cd xml_agent
 npm install
 ```
 
+## 使用webUI
+启动服务器
+```
+cd xml_agent
+node webui/server.js
+```
+访问
+```
+http://localhost:3000
+```
+
+---
+
+## 手动调用
 ## 启动 Chrome CDP 提供网页版使用
 
 XML Agent 通过 Chrome DevTools Protocol 连接已经运行的 Chrome。
