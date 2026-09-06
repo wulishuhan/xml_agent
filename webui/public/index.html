@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>XML Agent Web UI</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+          sans-serif;
+        background: #0d1117;
+        color: #e6edf3;
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 20px;
+      }
+      .container {
+        max-width: 1200px;
+        width: 100%;
+        background: #161b22;
+        border-radius: 16px;
+        padding: 30px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        border: 1px solid #30363d;
+      }
+      h1 {
+        font-size: 28px;
+        font-weight: 600;
+        color: #f0f6fc;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .subtitle {
+        color: #8b949e;
+        font-size: 14px;
+        margin-bottom: 24px;
+      }
+      .status-badge {
+        display: inline-block;
+        padding: 4px 14px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 500;
+        transition: all 0.3s;
+      }
+      .status-badge.idle {
+        background: #21262d;
+        color: #8b949e;
+      }
+      .status-badge.running {
+        background: #1f6feb;
+        color: #fff;
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+      .status-badge.completed {
+        background: #238636;
+        color: #fff;
+      }
+      .status-badge.error {
+        background: #da3633;
+        color: #fff;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.6;
+        }
+      }
+      .form-group {
+        margin-bottom: 18px;
+      }
+      .form-group label {
+        display: block;
+        font-size: 14px;
+        font-weight: 500;
+        color: #f0f6fc;
+        margin-bottom: 6px;
+      }
+      .form-group input,
+      .form-group select,
+      .form-group textarea {
+        width: 100%;
+        padding: 10px 14px;
+        background: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        color: #e6edf3;
+        font-size: 14px;
+        transition: border-color 0.2s;
+        font-family: inherit;
+      }
+      .form-group input:focus,
+      .form-group select:focus,
+      .form-group textarea:focus {
+        outline: none;
+        border-color: #1f6feb;
+        box-shadow: 0 0 0 3px rgba(31, 111, 235, 0.15);
+      }
+      .form-group textarea {
+        resize: vertical;
+        min-height: 80px;
+      }
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .btn-group {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      .btn {
+        padding: 10px 24px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .btn-primary {
+        background: #1f6feb;
+        color: #fff;
+      }
+      .btn-primary:hover:not(:disabled) {
+        background: #388bfd;
+        transform: translateY(-1px);
+      }
+      .btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .btn-danger {
+        background: #da3633;
+        color: #fff;
+      }
+      .btn-danger:hover:not(:disabled) {
+        background: #f85149;
+        transform: translateY(-1px);
+      }
+      .btn-danger:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .btn-secondary {
+        background: #21262d;
+        color: #c9d1d9;
+      }
+      .btn-secondary:hover {
+        background: #30363d;
+      }
+      .output-section {
+        margin-top: 24px;
+        border-top: 1px solid #30363d;
+        padding-top: 20px;
+      }
+      .output-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }
+      .output-header h2 {
+        font-size: 16px;
+        font-weight: 500;
+        color: #f0f6fc;
+      }
+      .output-header .count {
+        color: #8b949e;
+        font-size: 13px;
+      }
+      .output-container {
+        background: #0d1117;
+        border-radius: 8px;
+        padding: 16px;
+        max-height: 500px;
+        overflow-y: auto;
+        font-family: "Consolas", "Courier New", monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        border: 1px solid #21262d;
+      }
+      .output-container::-webkit-scrollbar {
+        width: 8px;
+      }
+      .output-container::-webkit-scrollbar-track {
+        background: #0d1117;
+      }
+      .output-container::-webkit-scrollbar-thumb {
+        background: #30363d;
+        border-radius: 4px;
+      }
+      .output-line {
+        padding: 2px 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+        border-bottom: 1px solid rgba(48, 54, 61, 0.3);
+      }
+      .output-line:last-child {
+        border-bottom: none;
+      }
+      .output-line.stdout {
+        color: #e6edf3;
+      }
+      .output-line.stderr {
+        color: #f85149;
+      }
+      .output-line.info {
+        color: #58a6ff;
+      }
+      .output-line.answer {
+        color: #3fb950;
+        font-weight: 600;
+        background: rgba(63, 185, 80, 0.1);
+        padding: 4px 8px;
+        border-radius: 4px;
+        margin: 4px 0;
+      }
+      .output-line.system {
+        color: #8b949e;
+        font-style: italic;
+        border-bottom: 1px solid #30363d;
+        padding: 4px 0;
+      }
+      .output-line.ai-response {
+        color: #d2a8ff;
+        border-left: 3px solid #d2a8ff;
+        padding-left: 8px;
+      }
+      .output-line.runtime-status {
+        color: #ffa657;
+        border-left: 3px solid #ffa657;
+        padding-left: 8px;
+      }
+      .output-line.agent-step {
+        color: #79c0ff;
+        font-weight: 500;
+        border-left: 3px solid #79c0ff;
+        padding-left: 8px;
+      }
+      .output-line.xml-action {
+        color: #ff7b72;
+        border-left: 3px solid #ff7b72;
+        padding-left: 8px;
+      }
+      .output-line.provider {
+        color: #7ee787;
+        border-left: 3px solid #7ee787;
+        padding-left: 8px;
+      }
+      .empty-output {
+        color: #8b949e;
+        text-align: center;
+        padding: 30px 0;
+      }
+      .footer {
+        margin-top: 20px;
+        color: #8b949e;
+        font-size: 12px;
+        text-align: center;
+        border-top: 1px solid #21262d;
+        padding-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>
+        🤖 XML Agent
+        <span id="statusBadge" class="status-badge idle">空闲</span>
+      </h1>
+      <p class="subtitle">
+        通过浏览器 ChatGPT / Qwen / DeepSeek 驱动本地代码操作
+      </p>
+      <form id="agentForm">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="workspace">工作目录 (Workspace)</label>
+            <input
+              type="text"
+              id="workspace"
+              placeholder="例如: D:/code/my-project"
+              value="D:/code/backend/nodejs/xml_agent"
+            />
+          </div>
+          <div class="form-group">
+            <label for="provider">Provider</label>
+            <select id="provider">
+              <option value="chatgpt" selected>ChatGPT</option>
+              <option value="qwen">Qwen</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="task">任务描述 (Task)</label>
+          <textarea id="task" placeholder="描述你想要完成的任务">
+分析当前项目的代码结构，并生成一个简单的项目说明文档</textarea
+          >
+        </div>
+        <div class="btn-group">
+          <button type="submit" class="btn btn-primary" id="runBtn">
+            ▶ 运行 Agent
+          </button>
+          <button type="button" class="btn btn-danger" id="stopBtn" disabled>
+            ⏹ 停止
+          </button>
+          <button type="button" class="btn btn-secondary" id="clearBtn">
+            🗑️ 清空输出
+          </button>
+        </div>
+      </form>
+      <div class="output-section">
+        <div class="output-header">
+          <h2>📋 执行输出</h2>
+          <span class="count" id="outputCount">0 行</span>
+        </div>
+        <div class="output-container" id="outputContainer">
+          <div class="empty-output">等待 Agent 执行...</div>
+        </div>
+      </div>
+      <div class="footer">
+        XML Agent Web UI v2.0 &bull; 基于 Node.js + Express + Playwright
+      </div>
+    </div>
+    <script>
+      const form = document.getElementById("agentForm");
+      const runBtn = document.getElementById("runBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const clearBtn = document.getElementById("clearBtn");
+      const outputContainer = document.getElementById("outputContainer");
+      const outputCount = document.getElementById("outputCount");
+      const statusBadge = document.getElementById("statusBadge");
+      let outputLines = [];
+      let isRunning = false;
+      let pollInterval = null;
+      let lastOutputLength = 0;
+      function updateStatus(state, text) {
+        statusBadge.className = "status-badge " + state;
+        statusBadge.textContent = text;
+      }
+      function classifyLine(content) {
+        if (content.includes("[AI_RESPONSE]")) return "ai-response";
+        if (content.includes("[RUNTIME_STATUS]")) return "runtime-status";
+        if (content.includes("[AGENT_STEP]")) return "agent-step";
+        if (content.includes("[XML_ACTION]")) return "xml-action";
+        if (content.includes("[PROVIDER]")) return "provider";
+        if (content.includes("[SYSTEM]")) return "system";
+        if (
+          content.includes("Agent Answer") ||
+          content.includes("Final Answer")
+        )
+          return "answer";
+        return "stdout";
+      }
+      function addOutputLine(type, content) {
+        var lines = content.split("\n");
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          if (line.trim() !== "" || type === "system") {
+            var detectedType = classifyLine(line);
+            var finalType = detectedType !== "stdout" ? detectedType : type;
+            outputLines.push({ type: finalType, content: line });
+          }
+        }
+        renderOutput();
+      }
+      function renderOutput() {
+        if (outputLines.length === 0) {
+          outputContainer.innerHTML =
+            '<div class="empty-output">等待 Agent 执行...</div>';
+          outputCount.textContent = "0 行";
+          return;
+        }
+        var html = "";
+        for (var i = 0; i < outputLines.length; i++) {
+          var line = outputLines[i];
+          var escaped = line.content
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+          html +=
+            '<div class="output-line ' + line.type + '">' + escaped + "</div>";
+        }
+        outputContainer.innerHTML = html;
+        outputContainer.scrollTop = outputContainer.scrollHeight;
+        outputCount.textContent = outputLines.length + " 行";
+      }
+      function clearOutput() {
+        outputLines = [];
+        lastOutputLength = 0;
+        renderOutput();
+      }
+      async function pollOutput() {
+        try {
+          var response = await fetch("/api/output");
+          var data = await response.json();
+          if (data.running !== isRunning) {
+            isRunning = data.running;
+            updateUIState();
+          }
+          if (data.output && data.output.length > 0) {
+            if (data.output.length > lastOutputLength) {
+              var newOutput = data.output.slice(lastOutputLength);
+              for (var j = 0; j < newOutput.length; j++) {
+                var item = newOutput[j];
+                var type = item.type || "stdout";
+                addOutputLine(type, item.content);
+              }
+              lastOutputLength = data.output.length;
+            }
+          }
+          if (!data.running && isRunning === false) {
+            updateStatus("completed", "已完成");
+          }
+        } catch (error) {
+          console.error("Poll error:", error);
+        }
+      }
+      function updateUIState() {
+        if (isRunning) {
+          runBtn.disabled = true;
+          stopBtn.disabled = false;
+          updateStatus("running", "运行中...");
+        } else {
+          runBtn.disabled = false;
+          stopBtn.disabled = true;
+          if (
+            statusBadge.textContent === "运行中..." ||
+            statusBadge.textContent === "启动中..."
+          ) {
+            updateStatus("completed", "已完成");
+          }
+        }
+      }
+      async function runAgent(e) {
+        e.preventDefault();
+        var workspace = document.getElementById("workspace").value.trim();
+        var provider = document.getElementById("provider").value;
+        var task = document.getElementById("task").value.trim();
+        if (!workspace) {
+          alert("请输入工作目录");
+          return;
+        }
+        if (!task) {
+          alert("请输入任务描述");
+          return;
+        }
+        clearOutput();
+        lastOutputLength = 0;
+        updateStatus("running", "启动中...");
+        runBtn.disabled = true;
+        runBtn.textContent = "⏳ 启动中...";
+        try {
+          var response = await fetch("/api/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              workspace: workspace,
+              provider: provider,
+              task: task,
+            }),
+          });
+          var data = await response.json();
+          if (response.ok) {
+            addOutputLine(
+              "system",
+              "═══════════════════════════════════════════════════════",
+            );
+            addOutputLine("system", "🚀 Agent 已启动");
+            addOutputLine("system", "📁 Workspace: " + workspace);
+            addOutputLine("system", "🔌 Provider: " + provider);
+            addOutputLine("system", "📝 Task: " + task);
+            addOutputLine(
+              "system",
+              "═══════════════════════════════════════════════════════",
+            );
+            addOutputLine("info", "✅ " + data.message);
+            isRunning = true;
+            updateUIState();
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(pollOutput, 500);
+            setTimeout(pollOutput, 100);
+          } else {
+            addOutputLine("stderr", "❌ 错误: " + data.error);
+            updateStatus("error", "启动失败");
+            runBtn.disabled = false;
+            runBtn.textContent = "▶ 运行 Agent";
+          }
+        } catch (error) {
+          addOutputLine("stderr", "❌ 请求失败: " + error.message);
+          updateStatus("error", "连接失败");
+          runBtn.disabled = false;
+          runBtn.textContent = "▶ 运行 Agent";
+        }
+      }
+      async function stopAgent() {
+        try {
+          var response = await fetch("/api/stop", { method: "POST" });
+          var data = await response.json();
+          addOutputLine(
+            "system",
+            "═══════════════════════════════════════════════════════",
+          );
+          addOutputLine("info", "⏹ " + (data.message || "Agent 已停止"));
+          addOutputLine(
+            "system",
+            "═══════════════════════════════════════════════════════",
+          );
+          isRunning = false;
+          updateUIState();
+          if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
+          runBtn.textContent = "▶ 运行 Agent";
+        } catch (error) {
+          addOutputLine("stderr", "❌ 停止失败: " + error.message);
+        }
+      }
+      form.addEventListener("submit", runAgent);
+      stopBtn.addEventListener("click", stopAgent);
+      clearBtn.addEventListener("click", clearOutput);
+      updateStatus("idle", "空闲");
+      updateUIState();
+      window.addEventListener("beforeunload", function () {
+        if (pollInterval) clearInterval(pollInterval);
+      });
+    </script>
+  </body>
+</html>
