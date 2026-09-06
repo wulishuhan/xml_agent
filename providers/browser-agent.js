@@ -77,7 +77,6 @@ class BrowserAgent {
         }
     }
 
-
     async startChromeCdpServer() {
         const chromePath = this.chromePath
 
@@ -87,7 +86,7 @@ class BrowserAgent {
 
         const url = new URL(this.cdpUrl);
         const port = parseInt(url.port) || 9222;
-        const userDataDir = path.join(os.tmpdir(), `chrome-agent-profile-${port}`);
+        const userDataDir = path.join(os.tmpdir(), "chrome-agent-profile-" + port);
 
         console.log("[" + this.name + "] Starting Chrome with remote debugging on port " + port + "...");
         console.log("[" + this.name + "] Chrome path: " + chromePath);
@@ -291,19 +290,19 @@ class BrowserAgent {
             throw new Error("[" + this.name + "] input not found");
         }
 
-        if (this.name === "chatgpt") {
+        const providerName = this.name.toLowerCase();
+
+        if (providerName === "chatgpt") {
             try {
-                await input.evaluate(function (element, msg) {
-                    if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
-                        element.value = msg;
-                        element.dispatchEvent(new Event('input', { bubbles: true }));
-                        element.dispatchEvent(new Event('change', { bubbles: true }));
-                    } else if (element.isContentEditable) {
-                        element.textContent = msg;
-                        element.dispatchEvent(new Event('input', { bubbles: true }));
-                        element.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                }, message);
+                await input.click();
+                await this.sleep(200);
+                await input.fill(message);
+                await this.sleep(300);
+                const actualValue = await this.getInputValue(input);
+                if (!actualValue || !actualValue.trim()) {
+                    throw new Error("Input value is empty after fill");
+                }
+                return true;
             } catch (error) {
                 throw new Error("[" + this.name + "] failed to insert message: " + error.message);
             }

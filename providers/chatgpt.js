@@ -6,10 +6,10 @@ class ChatGPTProvider extends BrowserAgent {
         super({
             ...options,
             inputSelectors: [
-                "div[role='textbox']", // 最可靠的选择器
-                ".ProseMirror", // 备选
-                "[contenteditable='true']", // 备选
-                "#prompt-textarea", // 备选
+                "div[role='textbox']",
+                ".ProseMirror",
+                "[contenteditable='true']",
+                "#prompt-textarea",
                 "textarea",
                 ".wcDTda_fallbackTextarea",
             ],
@@ -122,31 +122,69 @@ class ChatGPTProvider extends BrowserAgent {
         // 填充消息
         await this.insertMessage(message);
 
-        // 发送消息 - 优先使用 Enter
-        try {
-            const input = await this.getInput();
-            if (!input) {
-                throw new Error("ChatGPT input not found before pressing Enter");
-            }
+        // 发送消息 - 多种方式
+        let sent = false;
 
-            await input.press("Enter");
+        // 方式1: 使用 page.keyboard 发送 Enter (最可靠)
+        try {
+            await this.page.keyboard.press("Enter");
+            console.log("[ChatGPT] Sent Enter via keyboard");
+            sent = true;
         } catch (error) {
-            throw new Error("ChatGPT failed to send message: " + error.message);
+            console.warn("[ChatGPT] Keyboard Enter failed: " + error.message);
         }
 
-        // 等待输入框清空
-        const inputCleared = await this.waitForInputClear();
-        if (!inputCleared) {
-            // 如果输入框未清空，尝试 Ctrl+Enter（备选发送方式）
-            console.warn("[ChatGPT] Input did not clear with Enter, trying Ctrl+Enter...");
+        // 如果 keyboard 失败，尝试点击发送按钮
+        if (!sent) {
+            try {
+                const sendButtonSelectors = [
+                    'button[data-testid="send-button"]',
+                    'button[aria-label="Send message"]',
+                    'button[aria-label="Send"]',
+                    'button:has(svg[data-icon="send"])',
+                    'button:has(svg[data-icon="paper-plane"])'
+                ];
+
+                for (const selector of sendButtonSelectors) {
+                    try {
+                        const button = this.page.locator(selector).first();
+                        if (await button.count() > 0 && await button.isVisible()) {
+                            await button.click();
+                            console.log("[ChatGPT] Clicked send button: " + selector);
+                            sent = true;
+                            break;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+            } catch (error) {
+                console.warn("[ChatGPT] Send button click failed: " + error.message);
+            }
+        }
+
+        // 方式3: 尝试通过 input 元素按 Enter
+        if (!sent) {
             try {
                 const input = await this.getInput();
                 if (input) {
-                    await input.press("Control+Enter");
+                    await input.press("Enter");
+                    console.log("[ChatGPT] Pressed Enter on input element");
+                    sent = true;
                 }
             } catch (error) {
-                console.warn("[ChatGPT] Ctrl+Enter also failed: " + error.message);
+                console.warn("[ChatGPT] Input Enter failed: " + error.message);
             }
+        }
+
+        if (!sent) {
+            throw new Error("ChatGPT failed to send message - all send methods failed");
+        }
+
+        // 等待输入框清空 (减少超时时间，避免卡太久)
+        const inputCleared = await this.waitForInputClear(5000);
+        if (!inputCleared) {
+            console.warn("[ChatGPT] Input did not clear within 5s, but continuing...");
         }
 
         await this.waitForResponseStart(oldAssistantCount, oldResponse);
