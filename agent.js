@@ -245,7 +245,13 @@ async function main() {
 
   console.log("");
 
-  const provider = createProvider(providerName);
+  const provider = createProvider(providerName, {
+    autoStart: agentConfig.browser.autoStart,
+    startTimeout: agentConfig.browser.startTimeout,
+    retryInterval: agentConfig.browser.retryInterval,
+    chromePath: agentConfig.browser.chromePath,
+    targetUrl: agentConfig.browser.targetUrls[providerName]
+  });
 
   await provider.start();
 

@@ -33,7 +33,7 @@ console.log("hello");
 - 不需要 mkdir
 - 内容必须放在 CDATA 中
 - 不能使用Markdown格式
-
+- 写入文件之后需要进行语法和运行的验证，可以创建test文件进行验证然后使用 <exec> 进行验证，如果是文档则不需要
 ---
 
 3. 执行命令
@@ -189,5 +189,5 @@ done = 结束 Agent
 `;
 
 module.exports = {
-  SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
 };

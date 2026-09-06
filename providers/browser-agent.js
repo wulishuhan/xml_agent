@@ -1,5 +1,10 @@
 
 const { chromium } = require("playwright");
+const { spawn } = require("child_process");
+const { promises: fs } = require("fs");
+const path = require("path");
+const os = require("os");
+const net = require("net");
 
 class BrowserAgent {
     constructor(options = {}) {
@@ -8,35 +13,30 @@ class BrowserAgent {
         this.context = null;
         this.page = null;
         this.browser = null;
+        this.chromeProcess = null;
+        this.autoStart = options.autoStart !== undefined ? options.autoStart : true;
+        this.startTimeout = options.startTimeout || 30000;
+        this.retryInterval = options.retryInterval || 1000;
+        this.chromePath = options.chromePath || '';
 
-        // 单次回复最大允许时间，默认 10 分钟
         this.responseTimeout = this.getNumberOption(options.responseTimeout, process.env.XML_AGENT_RESPONSE_TIMEOUT_MS, 10 * 60 * 1000);
-
-        // 回复连续稳定多久以后认为生成完成，默认 4 秒
         this.responseStableTime = this.getNumberOption(options.responseStableTime, process.env.XML_AGENT_RESPONSE_STABLE_TIME_MS, 4000);
-
-        // 检查间隔1000ms，长文本情况下可以明显减少 DOM 读取压力
         this.responsePollInterval = this.getNumberOption(options.responsePollInterval, process.env.XML_AGENT_RESPONSE_POLL_INTERVAL_MS, 1000);
-
-        // 没有任何回复出现时允许等待多久，默认 60 秒
         this.responseInitialTimeout = this.getNumberOption(options.responseInitialTimeout, process.env.XML_AGENT_RESPONSE_INITIAL_TIMEOUT_MS, 60 * 1000);
 
         this.inputSelectors = options.inputSelectors || [];
+        this.targetUrl = options.targetUrl || "https://chatgpt.com";
     }
 
     getNumberOption(optionValue, envValue, defaultValue) {
         const value = optionValue ?? envValue;
-
         if (value === undefined || value === null || value === "") {
             return defaultValue;
         }
-
         const number = Number(value);
-
         if (!Number.isFinite(number) || number <= 0) {
             return defaultValue;
         }
-
         return number;
     }
 
@@ -48,26 +48,121 @@ class BrowserAgent {
         throw new Error("matchPage() must be implemented");
     }
 
-    async start() {
+    async checkCdpServer(cdpUrl) {
         try {
-            this.browser = await chromium.connectOverCDP(this.cdpUrl);
+            const url = new URL(cdpUrl);
+            const host = url.hostname || "127.0.0.1";
+            const port = parseInt(url.port) || 9222;
 
-            const contexts = this.browser.contexts();
+            return new Promise((resolve) => {
+                const socket = new net.Socket();
+                const timeout = 3000;
+                socket.setTimeout(timeout);
+                socket.once("connect", () => {
+                    socket.destroy();
+                    resolve(true);
+                });
+                socket.once("timeout", () => {
+                    socket.destroy();
+                    resolve(false);
+                });
+                socket.once("error", () => {
+                    socket.destroy();
+                    resolve(false);
+                });
+                socket.connect(port, host);
+            });
+        } catch (error) {
+            return false;
+        }
+    }
 
-            if (!contexts.length) {
-                throw new Error("No browser context found");
+
+    async startChromeCdpServer() {
+        const chromePath = this.chromePath
+
+        if (!chromePath) {
+            throw new Error("Could not find Chrome executable. Please install Chrome or set ChromePath environment variable in config.");
+        }
+
+        const url = new URL(this.cdpUrl);
+        const port = parseInt(url.port) || 9222;
+        const userDataDir = path.join(os.tmpdir(), `chrome-agent-profile-${port}`);
+
+        console.log("[" + this.name + "] Starting Chrome with remote debugging on port " + port + "...");
+        console.log("[" + this.name + "] Chrome path: " + chromePath);
+
+        const args = [
+            "--remote-debugging-port=" + port,
+            "--user-data-dir=" + userDataDir,
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-default-apps",
+            "--disable-extensions",
+            "--disable-component-update",
+            "--disable-client-side-phishing-detection",
+            "--disable-crash-reporter",
+            "--disable-breakpad",
+            "--no-startup-window"
+        ];
+
+        this.chromeProcess = spawn(chromePath, args, {
+            stdio: ["ignore", "ignore", "ignore"],
+            detached: true,
+            windowsHide: true,
+        });
+
+        if (!this.chromeProcess) {
+            throw new Error("Failed to spawn Chrome process");
+        }
+
+        this.chromeProcess.unref();
+
+        console.log("[" + this.name + "] Chrome process started with PID: " + this.chromeProcess.pid);
+
+        const startTime = Date.now();
+
+        while (Date.now() - startTime < this.startTimeout) {
+            const isReady = await this.checkCdpServer(this.cdpUrl);
+            if (isReady) {
+                console.log("[" + this.name + "] CDP server is ready at " + this.cdpUrl);
+                return true;
             }
+            await this.sleep(this.retryInterval);
+        }
 
+        throw new Error("Chrome CDP server did not start within " + this.startTimeout + "ms");
+    }
+
+    async ensurePage() {
+        if (!this.browser) {
+            throw new Error("Browser not connected");
+        }
+
+        let contexts = this.browser.contexts();
+        if (!contexts || contexts.length === 0) {
+            console.log("[" + this.name + "] No context found, creating new context...");
+            this.context = await this.browser.newContext();
+        } else {
             this.context = contexts[0];
+        }
 
-            const pages = this.context.pages();
-
-            if (!pages.length) {
-                throw new Error("No browser page found");
+        let pages = this.context.pages();
+        if (!pages || pages.length === 0) {
+            console.log("[" + this.name + "] No page found, creating new page...");
+            this.page = await this.context.newPage();
+            if (this.targetUrl) {
+                console.log("[" + this.name + "] Navigating to " + this.targetUrl + "...");
+                try {
+                    await this.page.goto(this.targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+                } catch (error) {
+                    console.warn("[" + this.name + "] Navigation to " + this.targetUrl + " timed out, continuing...");
+                }
             }
-
+        } else {
             this.page = null;
-
             for (const page of pages) {
                 try {
                     if (await this.matchPage(page)) {
@@ -75,32 +170,49 @@ class BrowserAgent {
                         break;
                     }
                 } catch (error) {
-                    console.warn(`[${this.name}] Failed to inspect page: ${error.message}`);
+                    console.warn("[" + this.name + "] Failed to inspect page: " + error.message);
                 }
             }
 
             if (!this.page) {
-                // 如果没有找到匹配的页面，尝试创建新页面
-                console.log(`[${this.name}] No matching page found, creating new page...`);
-                try {
-                    this.page = await this.context.newPage();
-                    console.log(`[${this.name}] New page created successfully`);
-                } catch (error) {
-                    throw new Error(`Failed to create new page: ${error.message}`);
-                }
+                console.log("[" + this.name + "] No matching page found, using first available page");
+                this.page = pages[0];
+            }
+        }
+
+        if (!this.page) {
+            throw new Error("Failed to get or create a page");
+        }
+
+        await this.page.bringToFront();
+        return this.page;
+    }
+
+    async start() {
+        try {
+            const isRunning = await this.checkCdpServer(this.cdpUrl);
+
+            if (isRunning) {
+                console.log("[" + this.name + "] CDP server already running at " + this.cdpUrl);
+            } else if (this.autoStart) {
+                console.log("[" + this.name + "] CDP server not running, attempting to start...");
+                await this.startChromeCdpServer();
+            } else {
+                throw new Error("CDP server not running at " + this.cdpUrl + " and autoStart is disabled");
             }
 
-            await this.page.bringToFront();
+            this.browser = await chromium.connectOverCDP(this.cdpUrl);
+            console.log("[" + this.name + "] Connected to CDP server");
+
+            await this.ensurePage();
 
             await this.waitForInput();
-
-            console.log(`[${this.name}] Connected successfully`);
+            console.log("[" + this.name + "] Connected successfully");
         } catch (error) {
             this.page = null;
             this.context = null;
             this.browser = null;
-
-            throw new Error(`[${this.name}] Failed to start browser agent: ${error.message}`);
+            throw new Error("[" + this.name + "] Failed to start browser agent: " + error.message);
         }
     }
 
@@ -110,73 +222,54 @@ class BrowserAgent {
 
     async getInput() {
         if (!this.isPageAlive()) {
-            throw new Error(`[${this.name}] page is not available`);
+            throw new Error("[" + this.name + "] page is not available");
         }
 
         for (const selector of this.inputSelectors) {
             try {
                 const locator = this.page.locator(selector).first();
-
-                if (!(await locator.count())) {
-                    continue;
-                }
-
-                if (!(await locator.isVisible())) {
-                    continue;
-                }
-
-                if (await locator.isDisabled()) {
-                    continue;
-                }
-                console.log(`[${this.name}] Found input using selector: ${selector}`);
+                if (!(await locator.count())) continue;
+                if (!(await locator.isVisible())) continue;
+                if (await locator.isDisabled()) continue;
+                console.log("[" + this.name + "] Found input using selector: " + selector);
                 return locator;
             } catch (error) {
-                // 某个 selector 失败不应该影响其他 selector
                 continue;
             }
         }
-
         return null;
     }
 
-    async waitForInput(timeout = 60 * 1000) {
+    async waitForInput(timeout) {
+        timeout = timeout || 60 * 1000;
         const start = Date.now();
 
         while (Date.now() - start < timeout) {
             if (!this.isPageAlive()) {
-                throw new Error(`[${this.name}] page was closed while waiting for input`);
+                throw new Error("[" + this.name + "] page was closed while waiting for input");
             }
-
             try {
                 const input = await this.getInput();
-
                 if (input) {
                     return input;
                 }
             } catch (error) {
-                // 页面 DOM 临时异常，继续等待
+                // continue
             }
-
             await this.sleep(500);
         }
-
-        throw new Error(`[${this.name}] input not found within ${timeout}ms`);
+        throw new Error("[" + this.name + "] input not found within " + timeout + "ms");
     }
 
     async getInputValue(input) {
-        if (!input) {
-            return "";
-        }
-
+        if (!input) return "";
         try {
-            const tagName = await input.evaluate((element) => {
+            const tagName = await input.evaluate(function (element) {
                 return element.tagName.toLowerCase();
             });
-
             if (tagName === "input" || tagName === "textarea") {
                 return await input.inputValue();
             }
-
             return await input.innerText();
         } catch (error) {
             try {
@@ -188,16 +281,16 @@ class BrowserAgent {
     }
 
     async insertMessage(message) {
-        console.log(`[${this.name}] Inserting message: "${message}"`);
+        console.log("[" + this.name + "] Inserting message: " + JSON.stringify(message));
         if (!this.isPageAlive()) {
-            throw new Error(`[${this.name}] page is not available`);
+            throw new Error("[" + this.name + "] page is not available");
         }
 
         const input = await this.getInput();
-
         if (!input) {
-            throw new Error(`[${this.name}] input not found`);
+            throw new Error("[" + this.name + "] input not found");
         }
+
         if (this.name === "chatgpt") {
             try {
                 await input.evaluate(function (element, msg) {
@@ -212,176 +305,116 @@ class BrowserAgent {
                     }
                 }, message);
             } catch (error) {
-                throw new Error(`[${this.name}] failed to insert message: ${error.message}`);
+                throw new Error("[" + this.name + "] failed to insert message: " + error.message);
             }
         }
+
         try {
             await input.click();
-
             await input.fill(message);
-
             await this.sleep(300);
-
             const actualValue = await this.getInputValue(input);
-
             if (!actualValue || !actualValue.trim()) {
                 throw new Error("Input value is empty after fill");
             }
-
             return true;
         } catch (error) {
-            throw new Error(`[${this.name}] failed to insert message: ${error.message}`);
+            throw new Error("[" + this.name + "] failed to insert message: " + error.message);
         }
     }
 
-    async waitForInputClear(timeout = 10 * 1000) {
+    async waitForInputClear(timeout) {
+        timeout = timeout || 10 * 1000;
         const start = Date.now();
 
         while (Date.now() - start < timeout) {
             if (!this.isPageAlive()) {
-                throw new Error(`[${this.name}] page was closed while waiting for input clear`);
+                throw new Error("[" + this.name + "] page was closed while waiting for input clear");
             }
-
             try {
                 const input = await this.getInput();
-
                 if (!input) {
                     await this.sleep(300);
                     continue;
                 }
-
                 const value = await this.getInputValue(input);
-
                 if (!value || !value.trim()) {
                     return true;
                 }
             } catch (error) {
-                // DOM 短暂异常，继续检查
+                // continue
             }
-
             await this.sleep(300);
         }
-
         return false;
     }
 
-    /**
-    
-    通用的回复等待器
-    
-    逻辑：
-    
-    最多等待 responseTimeout
-    
-    回复出现之前，最多等待 responseInitialTimeout
-    
-    回复出现后，如果内容发生变化，则重新计算稳定时间
-    
-    内容连续稳定 responseStableTime 后，认为回复完成
-    
-    页面关闭立即报错
-    
-    某一次 DOM 读取失败不会直接导致整个 Agent 崩溃
-    */
-    async waitForStableResponse(getResponse, options = {}) {
-        const timeout = options.timeout ?? this.responseTimeout;
-        const stableTime =
-            options.stableTime ?? this.responseStableTime;
-        const pollInterval =
-            options.pollInterval ?? this.responsePollInterval;
-        const initialTimeout =
-            options.initialTimeout ?? this.responseInitialTimeout;
+    async waitForStableResponse(getResponse, options) {
+        options = options || {};
+        const timeout = options.timeout || this.responseTimeout;
+        const stableTime = options.stableTime || this.responseStableTime;
+        const pollInterval = options.pollInterval || this.responsePollInterval;
+        const initialTimeout = options.initialTimeout || this.responseInitialTimeout;
 
         const startTime = Date.now();
-
         let firstResponseTime = null;
         let lastResponse = "";
         let lastChangeTime = null;
 
         while (true) {
             if (!this.isPageAlive()) {
-                throw new Error(`[${this.name}] page was closed while waiting for response`);
+                throw new Error("[" + this.name + "] page was closed while waiting for response");
             }
 
             const now = Date.now();
 
-            // 整体超时
             if (now - startTime >= timeout) {
-                throw new Error(
-                    `[${this.name}] response timeout after ${timeout}ms`
-                );
+                throw new Error("[" + this.name + "] response timeout after " + timeout + "ms");
             }
 
             let response = "";
-
             try {
                 response = await getResponse();
             } catch (error) {
-                // DOM 偶发读取失败，不立即退出
                 await this.sleep(pollInterval);
                 continue;
             }
 
-            response = typeof response === "string"
-                ? response.trim()
-                : "";
-
-            // ========================================================
-            // 还没有任何回复
-            // ========================================================
+            response = typeof response === "string" ? response.trim() : "";
 
             if (!response) {
                 if (now - startTime >= initialTimeout) {
-                    throw new Error(
-                        `[${this.name}] did not receive any response within ${initialTimeout}ms`
-                    );
+                    throw new Error("[" + this.name + "] did not receive any response within " + initialTimeout + "ms");
                 }
-
                 await this.sleep(pollInterval);
                 continue;
             }
-
-            // ========================================================
-            // 第一次收到回复
-            // ========================================================
 
             if (firstResponseTime === null) {
                 firstResponseTime = now;
                 lastResponse = response;
                 lastChangeTime = now;
-
                 await this.sleep(pollInterval);
                 continue;
             }
-
-            // ========================================================
-            // 回复内容发生变化
-            // ========================================================
 
             if (response !== lastResponse) {
                 lastResponse = response;
                 lastChangeTime = now;
-
                 await this.sleep(pollInterval);
                 continue;
             }
 
-            // ========================================================
-            // 回复内容保持稳定
-            // ========================================================
-
             const stableDuration = now - lastChangeTime;
-
             if (stableDuration >= stableTime) {
                 return response;
             }
-
             await this.sleep(pollInterval);
         }
     }
 
     async sleep(ms) {
-        return new Promise((resolve) => {
+        return new Promise(function (resolve) {
             setTimeout(resolve, ms);
         });
     }
@@ -391,7 +424,7 @@ class BrowserAgent {
             try {
                 await this.browser.close();
             } catch (error) {
-                console.warn(`[${this.name}] Error closing browser: ${error.message}`);
+                console.warn("[" + this.name + "] Error closing browser connection: " + error.message);
             }
         }
         this.page = null;

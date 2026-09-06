@@ -15,6 +15,12 @@ ${JSON.stringify(result, null, 2)}
 如果需要修改文件：
 
 使用 <write>
+例如：
+<write path="src/example.js"><![CDATA[
+console.log("hello");
+]]></write>
+注意：之后请你进行语法和运行的验证，可以创建test文件进行验证然后使用 <exec> 进行验证，验证完成之后可以删除验证文件，避免语法错误，如果是文档则不需要验证。
+完成之后再进行下一步。
 
 如果需要运行命令：
 
