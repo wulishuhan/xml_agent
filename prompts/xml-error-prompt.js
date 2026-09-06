@@ -15,6 +15,12 @@ ${error.message}
 
 或者：
 
+<write><![CDATA[
+最终答案
+]]></write>
+
+或者：
+
 <answer><![CDATA[
 最终答案
 ]]></answer>

@@ -26,6 +26,11 @@ class BrowserAgent {
 
         this.inputSelectors = options.inputSelectors || [];
         this.targetUrl = options.targetUrl || "https://chatgpt.com";
+
+        // 缓存输入框引用，避免每次重新查找
+        this._cachedInput = null;
+        this._cachedInputTimestamp = 0;
+        this._inputCacheTTL = 5000; // 5秒缓存有效期
     }
 
     getNumberOption(optionValue, envValue, defaultValue) {
@@ -184,6 +189,8 @@ class BrowserAgent {
         }
 
         await this.page.bringToFront();
+        // 清除缓存的输入框引用，因为页面可能已经变化
+        this._cachedInput = null;
         return this.page;
     }
 
@@ -219,9 +226,23 @@ class BrowserAgent {
         return !!this.page && !this.page.isClosed();
     }
 
-    async getInput() {
+    async getInput(useCache = true) {
         if (!this.isPageAlive()) {
             throw new Error("[" + this.name + "] page is not available");
+        }
+
+        // 检查缓存是否有效
+        if (useCache && this._cachedInput) {
+            try {
+                const isVisible = await this._cachedInput.isVisible().catch(() => false);
+                const isEnabled = !(await this._cachedInput.isDisabled().catch(() => false));
+                if (isVisible && isEnabled) {
+                    return this._cachedInput;
+                }
+            } catch (error) {
+                // 缓存失效，继续查找
+            }
+            this._cachedInput = null;
         }
 
         for (const selector of this.inputSelectors) {
@@ -231,6 +252,9 @@ class BrowserAgent {
                 if (!(await locator.isVisible())) continue;
                 if (await locator.isDisabled()) continue;
                 console.log("[" + this.name + "] Found input using selector: " + selector);
+                // 缓存输入框引用
+                this._cachedInput = locator;
+                this._cachedInputTimestamp = Date.now();
                 return locator;
             } catch (error) {
                 continue;
@@ -285,41 +309,130 @@ class BrowserAgent {
             throw new Error("[" + this.name + "] page is not available");
         }
 
-        const input = await this.getInput();
+        // 获取输入框，使用缓存
+        const input = await this.getInput(true);
         if (!input) {
             throw new Error("[" + this.name + "] input not found");
         }
 
         const providerName = this.name.toLowerCase();
 
+        // 通用方法：使用 focus 代替 click，避免被拦截
+        try {
+            // 先尝试 focus
+            try {
+                await input.focus({ timeout: 5000 });
+                await this.sleep(200);
+            } catch (focusError) {
+                // 如果 focus 失败，尝试 click
+                try {
+                    await input.click({ timeout: 5000 });
+                    await this.sleep(200);
+                } catch (clickError) {
+                    // 如果 click 也失败，使用 evaluate 直接设置焦点
+                    await input.evaluate((el) => {
+                        el.focus();
+                        // 如果是 contenteditable，确保光标在末尾
+                        if (el.isContentEditable) {
+                            const range = document.createRange();
+                            const sel = window.getSelection();
+                            if (el.childNodes.length > 0) {
+                                range.setStartAfter(el.childNodes[el.childNodes.length - 1]);
+                            } else {
+                                range.setStart(el, 0);
+                            }
+                            range.collapse(false);
+                            sel.removeAllRanges();
+                            sel.addRange(range);
+                        }
+                    });
+                    await this.sleep(200);
+                }
+            }
+        } catch (error) {
+            console.warn("[" + this.name + "] Failed to focus input: " + error.message);
+        }
+
+        // 填充消息
+        let fillSuccess = false;
+
         if (providerName === "chatgpt") {
             try {
-                await input.click();
-                await this.sleep(200);
+                // 对于 ChatGPT，使用 evaluate 直接设置内容最可靠
+                await input.evaluate((el, msg) => {
+                    if (el.isContentEditable) {
+                        // 清空并设置文本
+                        el.innerHTML = '';
+                        el.textContent = msg;
+                    } else {
+                        el.value = msg;
+                    }
+                    // 触发事件
+                    const event = new Event('input', { bubbles: true });
+                    el.dispatchEvent(event);
+                }, message);
+                await this.sleep(300);
+                fillSuccess = true;
+            } catch (error) {
+                console.warn("[" + this.name + "] Evaluate fill failed: " + error.message);
+                // 备选：使用 fill
+                try {
+                    await input.fill(message);
+                    await this.sleep(300);
+                    fillSuccess = true;
+                } catch (fillError) {
+                    console.warn("[" + this.name + "] Fill failed: " + fillError.message);
+                }
+            }
+        } else {
+            // 其他 provider 使用 fill
+            try {
                 await input.fill(message);
                 await this.sleep(300);
-                const actualValue = await this.getInputValue(input);
-                if (!actualValue || !actualValue.trim()) {
-                    throw new Error("Input value is empty after fill");
-                }
-                return true;
+                fillSuccess = true;
             } catch (error) {
-                throw new Error("[" + this.name + "] failed to insert message: " + error.message);
+                console.warn("[" + this.name + "] Fill failed: " + error.message);
+                // 尝试 evaluate
+                try {
+                    await input.evaluate((el, msg) => {
+                        if (el.isContentEditable) {
+                            el.innerHTML = '';
+                            el.textContent = msg;
+                        } else {
+                            el.value = msg;
+                        }
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                    }, message);
+                    await this.sleep(300);
+                    fillSuccess = true;
+                } catch (e) {
+                    // ignore
+                }
             }
         }
 
-        try {
-            await input.click();
-            await input.fill(message);
-            await this.sleep(300);
-            const actualValue = await this.getInputValue(input);
-            if (!actualValue || !actualValue.trim()) {
-                throw new Error("Input value is empty after fill");
+        // 验证内容是否填充成功
+        const actualValue = await this.getInputValue(input);
+        if (!actualValue || !actualValue.trim()) {
+            // 最后一次尝试：直接使用键盘输入
+            try {
+                await input.click();
+                await this.sleep(200);
+                await this.page.keyboard.type(message);
+                await this.sleep(300);
+                const finalValue = await this.getInputValue(input);
+                if (finalValue && finalValue.trim()) {
+                    fillSuccess = true;
+                }
+            } catch (e) {
+                throw new Error("[" + this.name + "] failed to insert message: all methods failed");
             }
-            return true;
-        } catch (error) {
-            throw new Error("[" + this.name + "] failed to insert message: " + error.message);
+            if (!fillSuccess) {
+                throw new Error("[" + this.name + "] failed to insert message: input value is empty after fill");
+            }
         }
+
+        return true;
     }
 
     async waitForInputClear(timeout) {
@@ -331,13 +444,14 @@ class BrowserAgent {
                 throw new Error("[" + this.name + "] page was closed while waiting for input clear");
             }
             try {
-                const input = await this.getInput();
+                const input = await this.getInput(true);
                 if (!input) {
                     await this.sleep(300);
                     continue;
                 }
                 const value = await this.getInputValue(input);
                 if (!value || !value.trim()) {
+                    this._cachedInput = null; // 清除缓存
                     return true;
                 }
             } catch (error) {
@@ -429,6 +543,7 @@ class BrowserAgent {
         this.page = null;
         this.context = null;
         this.browser = null;
+        this._cachedInput = null;
     }
 }
 
