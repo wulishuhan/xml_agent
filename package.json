@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node agent.js",
     "browser": "node browser.js",
-    "runtime": "node runtime.js"
+    "runtime": "node runtime.js",
+    "serve": "node webui/server.js"
   },
   "dependencies": {
     "fast-xml-parser": "^5.11.1",

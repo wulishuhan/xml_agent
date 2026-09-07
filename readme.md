@@ -21,11 +21,23 @@ npm install
 ```
 
 ## 使用webUI
+
+安装依赖
+```
+cd xml_agent/webui
+npm install
+```
 启动服务器
 ```
-cd xml_agent
-node webui/server.js
+cd xml_agent/webui
+node server.js
 ```
+或
+```
+cd xml_agent
+npm run serve
+```
+
 访问
 ```
 http://localhost:3000
