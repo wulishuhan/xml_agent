@@ -26,7 +26,22 @@ npm install
 ```
 cd xml_agent/webui
 npm install
+
 ```
+配置chrome.exe路径
+配置文件xml_agent/config/agent-config.js
+
+```
+  browser: {
+    ...
+    // Chrome.exe Path
+    chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe
+    ...
+  },
+
+```
+
+
 启动服务器
 ```
 cd xml_agent/webui
