@@ -42,20 +42,20 @@ npm install
 ```
 
 
-启动服务器
-```
-cd xml_agent/webui
-node server.js
-```
-或
+启动服务器agent服务器
 ```
 cd xml_agent
-npm run serve
+npm run webui
+```
+另外一个终端启动dev页面
+```
+cd xml_agent
+npm run webui:dev
 ```
 
-访问
+访问页面
 ```
-http://localhost:3000
+http://localhost:5173
 ```
 
 ---

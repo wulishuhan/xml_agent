@@ -1,131 +1,217 @@
-
-const express = require('express');
-const path = require('path');
-const { spawn } = require('child_process');
-const fs = require('fs');
+const express = require("express");
+const path = require("path");
+const fs = require("fs");
+const { AgentSession } = require("./session/agent-session");
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, "frontend", "dist")));
 
-let agentProcess = null;
-let agentOutput = [];
-let isRunning = false;
+/**
+ * 所有 Agent Session
+ *
+ * Map:
+ * sessionId -> AgentSession
+ */
+const sessions = new Map();
 
-app.post('/api/run', (req, res) => {
-    const { workspace, provider, task } = req.body;
+/**
+ * 创建 Agent Session
+ */
+app.post("/api/run", (req, res) => {
+  const { workspace, provider, task } = req.body;
 
-    if (!workspace || !task) {
-        return res.status(400).json({ error: 'Workspace and task are required' });
-    }
-
-    if (isRunning) {
-        return res.status(400).json({ error: 'Agent is already running' });
-    }
-
-    if (!fs.existsSync(workspace)) {
-        return res.status(400).json({ error: 'Workspace does not exist: ' + workspace });
-    }
-
-    agentOutput = [];
-    isRunning = true;
-
-    // 不使用 detached，以便捕获输出
-    const args = [
-        'agent.js',
-        '--workspace', workspace,
-        '--provider', provider || 'chatgpt',
-        task
-    ];
-
-    console.log('[WebUI] Starting agent: node ' + args.join(' '));
-    agentOutput.push({ type: 'system', content: '🚀 Starting agent...' });
-
-    agentProcess = spawn('node', args, {
-        cwd: path.join(__dirname, '..'),
-        shell: true,
-        env: process.env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true
+  if (!workspace || !task) {
+    return res.status(400).json({
+      error: "Workspace and task are required",
     });
+  }
 
-    agentProcess.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log('[Agent] ' + output);
-        // 按行分割，保留空行
-        const lines = output.split('\n');
-        for (const line of lines) {
-            agentOutput.push({ type: 'stdout', content: line });
-        }
+  if (!fs.existsSync(workspace)) {
+    return res.status(400).json({
+      error: "Workspace does not exist: " + workspace,
     });
+  }
 
-    agentProcess.stderr.on('data', (data) => {
-        const output = data.toString();
-        console.error('[Agent Error] ' + output);
-        const lines = output.split('\n');
-        for (const line of lines) {
-            agentOutput.push({ type: 'stderr', content: line });
-        }
-    });
+  /**
+   * 创建 Session
+   */
+  const session = new AgentSession({
+    workspace,
+    provider: provider || "chatgpt",
+    task,
+  });
 
-    agentProcess.on('close', (code) => {
-        isRunning = false;
-        agentOutput.push({ type: 'system', content: 'Agent exited with code ' + code });
-        console.log('[WebUI] Agent exited with code ' + code);
-        agentProcess = null;
-    });
+  /**
+   * 保存 Session
+   */
+  sessions.set(session.id, session);
 
-    agentProcess.on('error', (err) => {
-        isRunning = false;
-        agentOutput.push({ type: 'stderr', content: 'Agent process error: ' + err.message });
-        console.error('[WebUI] Agent process error:', err);
-        agentProcess = null;
-    });
+  /**
+   * 启动 Agent
+   */
+  try {
+    session.start();
 
-    res.json({ message: 'Agent started successfully', pid: agentProcess.pid });
-});
+    console.log(`[WebUI] Session started: ${session.id}`);
 
-app.get('/api/output', (req, res) => {
     res.json({
-        running: isRunning,
-        output: agentOutput
+      message: "Agent started successfully",
+      sessionId: session.id,
     });
+  } catch (error) {
+    sessions.delete(session.id);
+
+    console.error(`[WebUI] Failed to start session ${session.id}:`, error);
+
+    res.status(500).json({
+      error: error.message,
+    });
+  }
 });
 
-app.post('/api/stop', (req, res) => {
-    if (agentProcess) {
-        try {
-            agentProcess.kill('SIGINT');
-            agentOutput.push({ type: 'system', content: '⏹ Agent stopped by user' });
-            res.json({ message: 'Agent stopped' });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    } else {
-        res.status(400).json({ error: 'No agent running' });
-    }
+/**
+ * 获取 Session 状态
+ */
+app.get("/api/sessions/:id", (req, res) => {
+  const session = sessions.get(req.params.id);
+
+  if (!session) {
+    return res.status(404).json({
+      error: "Session not found",
+    });
+  }
+
+  res.json(session.getInfo());
 });
 
-app.get('/api/status', (req, res) => {
+/**
+ * 获取 Session 输出
+ */
+app.get("/api/sessions/:id/output", (req, res) => {
+  const session = sessions.get(req.params.id);
+
+  if (!session) {
+    return res.status(404).json({
+      error: "Session not found",
+    });
+  }
+
+  res.json({
+    running: session.isRunning(),
+    output: session.getOutput(),
+  });
+});
+
+/**
+ * 停止 Agent
+ */
+app.post("/api/sessions/:id/stop", (req, res) => {
+  const session = sessions.get(req.params.id);
+
+  if (!session) {
+    return res.status(404).json({
+      error: "Session not found",
+    });
+  }
+
+  if (!session.isRunning()) {
+    return res.status(400).json({
+      error: "Agent is not running",
+    });
+  }
+
+  try {
+    session.stop();
+
     res.json({
-        running: isRunning,
-        outputLength: agentOutput.length
+      message: "Agent stopped",
+      sessionId: session.id,
     });
+  } catch (error) {
+    console.error(`[WebUI] Failed to stop session ${session.id}:`, error);
+
+    res.status(500).json({
+      error: error.message,
+    });
+  }
 });
 
-const server = app.listen(PORT, () => {
-    console.log('[WebUI] Server running at http://localhost:' + PORT);
-    console.log('[WebUI] Open your browser to http://localhost:' + PORT);
+/**
+ * 获取所有 Session
+ *
+ * 目前主要用于调试。
+ * 后面 WebUI 做多任务管理时可以直接使用。
+ */
+app.get("/api/sessions", (req, res) => {
+  const result = [];
+
+  for (const session of sessions.values()) {
+    result.push(session.getInfo());
+  }
+
+  res.json({
+    sessions: result,
+  });
 });
 
-process.on('SIGINT', () => {
-    console.log('[WebUI] Shutting down...');
-    if (agentProcess) {
-        agentProcess.kill('SIGINT');
+/**
+ * 删除已经结束的 Session
+ */
+app.delete("/api/sessions/:id", (req, res) => {
+  const session = sessions.get(req.params.id);
+
+  if (!session) {
+    return res.status(404).json({
+      error: "Session not found",
+    });
+  }
+
+  if (session.isRunning()) {
+    return res.status(400).json({
+      error: "Cannot delete a running session",
+    });
+  }
+
+  sessions.delete(session.id);
+
+  res.json({
+    message: "Session deleted",
+    sessionId: session.id,
+  });
+});
+
+/**
+ * Server
+ */
+const server = app.listen(PORT, "127.0.0.1", () => {
+  console.log(`[WebUI] Server running at http://localhost:${PORT}`);
+
+  console.log(`[WebUI] Open your browser to http://localhost:${PORT}`);
+});
+
+/**
+ * 优雅退出
+ */
+process.on("SIGINT", () => {
+  console.log("[WebUI] Shutting down...");
+
+  /**
+   * 停止所有正在运行的 Agent
+   */
+  for (const session of sessions.values()) {
+    if (session.isRunning()) {
+      try {
+        session.stop();
+      } catch (error) {
+        console.error(`[WebUI] Failed to stop session ${session.id}:`, error.message);
+      }
     }
-    server.close(() => {
-        process.exit(0);
-    });
+  }
+
+  server.close(() => {
+    process.exit(0);
+  });
 });

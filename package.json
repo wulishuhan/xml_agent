@@ -10,10 +10,18 @@
     "start": "node agent.js",
     "browser": "node browser.js",
     "runtime": "node runtime.js",
-    "serve": "node webui/server.js"
+    "webui": "node webui/server.js",
+    "webui:dev": "vite --config webui/frontend/vite.config.js",
+    "webui:build": "vite build --config webui/frontend/vite.config.js"
   },
   "dependencies": {
+    "express": "^5.2.1",
     "fast-xml-parser": "^5.11.1",
-    "playwright": "^1.62.1"
+    "playwright": "^1.62.1",
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.8",
+    "vite": "^7.3.6"
   }
 }
