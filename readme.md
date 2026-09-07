@@ -14,6 +14,12 @@
 
 ## git仓库代码并安装依赖
 
+环境：
+
+```
+Node.js >= 16
+```
+
 ```bash
 git clone https://github.com/wulishuhan/xml_agent.git
 cd xml_agent
