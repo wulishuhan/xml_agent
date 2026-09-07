@@ -9,7 +9,7 @@ Agent Configuration
 
 const agentConfig = {
   agent: {
-    maxSteps: 50,
+    maxSteps: 100,
     maxProviderErrors: 3,
   },
 
@@ -29,7 +29,7 @@ const agentConfig = {
     // CDP 服务器 URL
     cdpUrl: "http://127.0.0.1:9222",
     // Chrome.exe Path
-    chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
+    chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
     // web ai url
     targetUrls: {
       deepseek: "https://chat.deepseek.com",

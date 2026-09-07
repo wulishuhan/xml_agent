@@ -121,7 +121,7 @@ class ChatGPTProvider extends BrowserAgent {
 
         // 先点击输入框获取焦点
         try {
-            await input.click();
+            await input.click({ timeout: 3000 });
             await this.sleep(300);
         } catch (error) {
             console.warn("[ChatGPT] Click input failed: " + error.message);

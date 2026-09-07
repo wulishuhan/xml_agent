@@ -5,9 +5,20 @@ const { execSync, spawn } = require("child_process");
 const { getText } = require("./parse/xml-parse");
 const agentConfig = require("./config/agent-config");
 
-let WORKSPACE = null;
+const MAX_FILE_SIZE = agentConfig.runtime.maxFileSize;
+const MAX_READ_SIZE = agentConfig.runtime.maxReadSize;
+const MAX_EXEC_TIMEOUT = agentConfig.runtime.maxExecTimeout;
 
-function setWorkspace(workspace) {
+class Runtime {
+constructor(workspace = null) {
+this.workspace = null;
+
+    if (workspace) {
+        this.setWorkspace(workspace);
+    }
+}
+
+setWorkspace(workspace) {
     if (!workspace || typeof workspace !== "string") {
         throw new Error("Workspace path is required");
     }
@@ -24,25 +35,21 @@ function setWorkspace(workspace) {
         throw new Error("Workspace is not a directory: " + resolved);
     }
 
-    WORKSPACE = resolved;
+    this.workspace = resolved;
 
-    return WORKSPACE;
+    return this.workspace;
 }
 
-function getWorkspace() {
-    if (!WORKSPACE) {
+getWorkspace() {
+    if (!this.workspace) {
         throw new Error("Workspace has not been configured");
     }
 
-    return WORKSPACE;
+    return this.workspace;
 }
 
-const MAX_FILE_SIZE = agentConfig.runtime.maxFileSize;
-const MAX_READ_SIZE = agentConfig.runtime.maxReadSize;
-const MAX_EXEC_TIMEOUT = agentConfig.runtime.maxExecTimeout;
-
-function resolvePath(filePath) {
-    const workspace = getWorkspace();
+resolvePath(filePath) {
+    const workspace = this.getWorkspace();
 
     if (!filePath || typeof filePath !== "string") {
         throw new Error("Path is required");
@@ -53,24 +60,28 @@ function resolvePath(filePath) {
     }
 
     const fullPath = path.resolve(workspace, filePath);
+    const workspacePrefix = workspace.endsWith(path.sep)
+        ? workspace
+        : workspace + path.sep;
 
-    const workspacePrefix = workspace.endsWith(path.sep) ? workspace : workspace + path.sep;
-
-    if (fullPath !== workspace && !fullPath.startsWith(workspacePrefix)) {
+    if (
+        fullPath !== workspace &&
+        !fullPath.startsWith(workspacePrefix)
+    ) {
         throw new Error("Path escapes workspace");
     }
 
     return fullPath;
 }
 
-function read(node) {
+read(node) {
     const filePath = node?.["@_path"];
 
     if (!filePath) {
         throw new Error("read requires path");
     }
 
-    const fullPath = resolvePath(filePath);
+    const fullPath = this.resolvePath(filePath);
 
     if (!fs.existsSync(fullPath)) {
         return {
@@ -107,7 +118,10 @@ function read(node) {
             ok: false,
             action: "read",
             path: filePath,
-            error: "File too large to read. Size: " + stat.size + " bytes",
+            error:
+                "File too large to read. Size: " +
+                stat.size +
+                " bytes",
         };
     }
 
@@ -123,15 +137,14 @@ function read(node) {
     };
 }
 
-function write(node) {
+write(node) {
     const filePath = node?.["@_path"];
 
     if (!filePath) {
         throw new Error("write requires path");
     }
 
-    const fullPath = resolvePath(filePath);
-
+    const fullPath = this.resolvePath(filePath);
     const content = getText(node);
 
     if (Buffer.byteLength(content, "utf8") > MAX_FILE_SIZE) {
@@ -157,9 +170,8 @@ function write(node) {
     };
 }
 
-function execute(node) {
-    const workspace = getWorkspace();
-
+execute(node) {
+    const workspace = this.getWorkspace();
     const command = node?.["@_command"];
 
     if (!command) {
@@ -174,7 +186,10 @@ function execute(node) {
 
     if (isBackground) {
         const cleanCommand = command.replace(/ --background/g, "");
-        console.log("Running as background process: " + cleanCommand);
+
+        console.log(
+            "Running as background process: " + cleanCommand
+        );
 
         try {
             const child = spawn(cleanCommand, {
@@ -188,7 +203,9 @@ function execute(node) {
 
             child.unref();
 
-            console.log("Background process started with PID: " + child.pid);
+            console.log(
+                "Background process started with PID: " + child.pid
+            );
 
             return {
                 ok: true,
@@ -196,7 +213,9 @@ function execute(node) {
                 command: cleanCommand,
                 background: true,
                 pid: child.pid,
-                message: "Background process started with PID: " + child.pid,
+                message:
+                    "Background process started with PID: " +
+                    child.pid,
             };
         } catch (error) {
             return {
@@ -236,7 +255,7 @@ function execute(node) {
     }
 }
 
-function answer(node) {
+answer(node) {
     const content = getText(node);
 
     if (!content.trim()) {
@@ -250,27 +269,19 @@ function answer(node) {
     };
 }
 
-function done() {
+done() {
     return {
         ok: true,
         action: "done",
     };
 }
 
-const actionHandlers = {
-    read: read,
-    write: write,
-    exec: execute,
-    answer: answer,
-    done: done,
-};
-
-function run(action) {
+run(action) {
     if (!action || typeof action !== "object") {
         throw new Error("Action is required");
     }
 
-    getWorkspace();
+    this.getWorkspace();
 
     const actionName = action.action;
     const node = action.node;
@@ -284,7 +295,7 @@ function run(action) {
     console.log("Runtime Action:", actionName);
     console.log("==================================");
 
-    const handler = actionHandlers[actionName];
+    const handler = this.actionHandlers[actionName];
 
     if (!handler) {
         throw new Error("Unknown action: " + actionName);
@@ -293,8 +304,54 @@ function run(action) {
     return handler(node);
 }
 
+get actionHandlers() {
+    return {
+        read: this.read.bind(this),
+        write: this.write.bind(this),
+        exec: this.execute.bind(this),
+        answer: this.answer.bind(this),
+        done: this.done.bind(this),
+    };
+}
+
+}
+
+function createRuntime(workspace) {
+return new Runtime(workspace);
+}
+
+/*
+
+Legacy singleton API.
+
+Existing callers can continue to use:
+
+setWorkspace(workspace);
+
+run(action);
+
+New Agent instances should create their own Runtime instance through
+
+createRuntime(workspace), which keeps workspace state isolated.
+*/
+const legacyRuntime = createRuntime();
+
+function setWorkspace(workspace) {
+return legacyRuntime.setWorkspace(workspace);
+}
+
+function getWorkspace() {
+return legacyRuntime.getWorkspace();
+}
+
+function run(action) {
+return legacyRuntime.run(action);
+}
+
 module.exports = {
-    run,
-    setWorkspace,
-    getWorkspace,
+Runtime,
+createRuntime,
+run,
+setWorkspace,
+getWorkspace,
 };

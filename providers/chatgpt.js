@@ -6,8 +6,8 @@ class ChatGPTProvider extends BrowserAgent {
         super({
             ...options,
             inputSelectors: [
-                "div[role='textbox']",
                 ".ProseMirror",
+                "div[role='textbox']",
                 "[contenteditable='true']",
                 "#prompt-textarea",
                 "textarea",
@@ -121,13 +121,13 @@ class ChatGPTProvider extends BrowserAgent {
 
         // 先点击输入框获取焦点
         try {
-            await input.click();
+            await input.focus();
             await this.sleep(300);
         } catch (error) {
             console.warn("[ChatGPT] Click input failed: " + error.message);
             // 尝试使用 focus
             try {
-                await input.focus();
+                await input.click({ timeout: 3000 });
                 await this.sleep(300);
             } catch (e) {
                 // ignore

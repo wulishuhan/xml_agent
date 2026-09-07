@@ -1,25 +1,29 @@
+
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
-const { AgentSession } = require("./session/agent-session");
+const { SessionManager } = require("./session/session-manager");
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
+const sessionManager = new SessionManager();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "frontend", "dist")));
 
-/**
- * 所有 Agent Session
- *
- * Map:
- * sessionId -> AgentSession
- */
-const sessions = new Map();
+function getSession(req, res) {
+  const session = sessionManager.get(req.params.id);
 
-/**
- * 创建 Agent Session
- */
+  if (!session) {
+    res.status(404).json({
+      error: "Session not found",
+    });
+    return null;
+  }
+
+  return session;
+}
+
 app.post("/api/run", (req, res) => {
   const { workspace, provider, task } = req.body;
 
@@ -35,69 +39,55 @@ app.post("/api/run", (req, res) => {
     });
   }
 
-  /**
-   * 创建 Session
-   */
-  const session = new AgentSession({
-    workspace,
-    provider: provider || "chatgpt",
-    task,
-  });
+  let session;
 
-  /**
-   * 保存 Session
-   */
-  sessions.set(session.id, session);
-
-  /**
-   * 启动 Agent
-   */
   try {
+    session = sessionManager.create({
+      workspace,
+      provider: provider || "chatgpt",
+      task,
+    });
+
     session.start();
 
-    console.log(`[WebUI] Session started: ${session.id}`);
+    console.log("[WebUI] Session started: " + session.id);
 
-    res.json({
+    return res.json({
       message: "Agent started successfully",
       sessionId: session.id,
     });
+
   } catch (error) {
-    sessions.delete(session.id);
+    if (session) {
+      try {
+        sessionManager.remove(session.id);
+      } catch (removeError) {
+        console.error(
+          "[WebUI] Failed to remove session " + session.id + ":",
+          removeError.message
+        );
+      }
+    }
 
-    console.error(`[WebUI] Failed to start session ${session.id}:`, error);
+    console.error("[WebUI] Failed to start session:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       error: error.message,
     });
+
   }
 });
 
-/**
- * 获取 Session 状态
- */
 app.get("/api/sessions/:id", (req, res) => {
-  const session = sessions.get(req.params.id);
-
-  if (!session) {
-    return res.status(404).json({
-      error: "Session not found",
-    });
-  }
+  const session = getSession(req, res);
+  if (!session) return;
 
   res.json(session.getInfo());
 });
 
-/**
- * 获取 Session 输出
- */
 app.get("/api/sessions/:id/output", (req, res) => {
-  const session = sessions.get(req.params.id);
-
-  if (!session) {
-    return res.status(404).json({
-      error: "Session not found",
-    });
-  }
+  const session = getSession(req, res);
+  if (!session) return;
 
   res.json({
     running: session.isRunning(),
@@ -105,17 +95,57 @@ app.get("/api/sessions/:id/output", (req, res) => {
   });
 });
 
-/**
- * 停止 Agent
- */
-app.post("/api/sessions/:id/stop", (req, res) => {
-  const session = sessions.get(req.params.id);
+app.get("/api/sessions/:id/events", (req, res) => {
+  const session = getSession(req, res);
+  if (!session) return;
 
-  if (!session) {
-    return res.status(404).json({
-      error: "Session not found",
-    });
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const send = (eventName, data) => {
+    if (res.writableEnded) return;
+
+    res.write("event: " + eventName + "\n");
+    res.write("data: " + JSON.stringify(data) + "\n\n");
+
+  };
+
+  const sendOutput = output => send("output", output);
+  const sendFinished = info => send("finished", info);
+  const sendError = error => send("error", { message: error.message });
+
+  for (const output of session.getOutput()) {
+    sendOutput(output);
   }
+
+  if (!session.isRunning()) {
+    sendFinished(session.getInfo());
+  }
+
+  session.on("output", sendOutput);
+  session.on("finished", sendFinished);
+  session.on("session.error", sendError);
+
+  const heartbeat = setInterval(() => {
+    if (res.writableEnded) return;
+    res.write(": heartbeat\n\n");
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    session.removeListener("output", sendOutput);
+    session.removeListener("finished", sendFinished);
+    session.removeListener("session.error", sendError);
+  });
+});
+
+app.post("/api/sessions/:id/stop", async (req, res) => {
+  const session = getSession(req, res);
+  if (!session) return;
 
   if (!session.isRunning()) {
     return res.status(400).json({
@@ -124,94 +154,99 @@ app.post("/api/sessions/:id/stop", (req, res) => {
   }
 
   try {
-    session.stop();
+    await sessionManager.stop(session.id);
 
-    res.json({
+    return res.json({
       message: "Agent stopped",
       sessionId: session.id,
     });
-  } catch (error) {
-    console.error(`[WebUI] Failed to stop session ${session.id}:`, error);
 
-    res.status(500).json({
+  } catch (error) {
+    console.error(
+      "[WebUI] Failed to stop session " + session.id + ":",
+      error.message
+    );
+
+    return res.status(500).json({
+      error: error.message,
+    });
+
+  }
+});
+
+app.get("/api/sessions", (req, res) => {
+  res.json({
+    sessions: sessionManager.list().map(session => session.getInfo()),
+  });
+});
+
+app.delete("/api/sessions/:id", (req, res) => {
+  const session = getSession(req, res);
+  if (!session) return;
+
+  try {
+    sessionManager.remove(session.id);
+
+    return res.json({
+      message: "Session deleted",
+      sessionId: session.id,
+    });
+
+  } catch (error) {
+    return res.status(400).json({
       error: error.message,
     });
   }
 });
 
-/**
- * 获取所有 Session
- *
- * 目前主要用于调试。
- * 后面 WebUI 做多任务管理时可以直接使用。
- */
-app.get("/api/sessions", (req, res) => {
-  const result = [];
+let server = null;
 
-  for (const session of sessions.values()) {
-    result.push(session.getInfo());
+function startServer() {
+  if (server) {
+    return server;
   }
 
-  res.json({
-    sessions: result,
+  server = app.listen(PORT, "127.0.0.1", () => {
+    console.log("[WebUI] Server running on localhost port " + PORT);
+    console.log("[WebUI] Open your browser on localhost port " + PORT);
   });
-});
 
-/**
- * 删除已经结束的 Session
- */
-app.delete("/api/sessions/:id", (req, res) => {
-  const session = sessions.get(req.params.id);
+  return server;
+}
 
-  if (!session) {
-    return res.status(404).json({
-      error: "Session not found",
-    });
-  }
-
-  if (session.isRunning()) {
-    return res.status(400).json({
-      error: "Cannot delete a running session",
-    });
-  }
-
-  sessions.delete(session.id);
-
-  res.json({
-    message: "Session deleted",
-    sessionId: session.id,
-  });
-});
-
-/**
- * Server
- */
-const server = app.listen(PORT, "127.0.0.1", () => {
-  console.log(`[WebUI] Server running at http://localhost:${PORT}`);
-
-  console.log(`[WebUI] Open your browser to http://localhost:${PORT}`);
-});
-
-/**
- * 优雅退出
- */
-process.on("SIGINT", () => {
+async function shutdown() {
   console.log("[WebUI] Shutting down...");
 
-  /**
-   * 停止所有正在运行的 Agent
-   */
-  for (const session of sessions.values()) {
-    if (session.isRunning()) {
-      try {
-        session.stop();
-      } catch (error) {
-        console.error(`[WebUI] Failed to stop session ${session.id}:`, error.message);
-      }
-    }
+  try {
+    await sessionManager.stopAll();
+  } catch (error) {
+    console.error("[WebUI] Failed to stop sessions:", error.message);
   }
 
-  server.close(() => {
+  if (!server) {
+    return;
+  }
+
+  await new Promise(resolve => {
+    server.close(() => {
+      server = null;
+      resolve();
+    });
+  });
+}
+
+if (require.main === module) {
+  startServer();
+
+  process.on("SIGINT", async () => {
+    await shutdown();
     process.exit(0);
   });
-});
+}
+
+module.exports = {
+  app,
+  startServer,
+  shutdown,
+  sessionManager,
+};

@@ -416,7 +416,7 @@ class BrowserAgent {
         if (!actualValue || !actualValue.trim()) {
             // 最后一次尝试：直接使用键盘输入
             try {
-                await input.click();
+                await input.click({ timeout: 3000 });
                 await this.sleep(200);
                 await this.page.keyboard.type(message);
                 await this.sleep(300);
