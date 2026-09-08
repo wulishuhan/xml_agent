@@ -389,30 +389,31 @@ class BrowserAgent {
 
         let fillSuccess = false;
 
- try {
- await input.fill(message);
- await this.sleep(300);
- fillSuccess = true;
- } catch (fillError) {
- console.warn("[" + this.name + "] Fill failed: " + fillError.message);
- try {
- await input.evaluate((el, msg) => {
- if (el.isContentEditable) {
- el.innerHTML = "";
- el.textContent = msg;
- } else {
- el.value = msg;
- }
- const event = new Event("input", { bubbles: true });
- el.dispatchEvent(event);
- }, message);
- await this.sleep(300);
- fillSuccess = true;
- } catch (evaluateError) {
- console.warn("[" + this.name + "] Evaluate fill failed: " + evaluateError.message);
- }
- }
- const actualValue = await this.getInputValue(input);
+        try {
+            await input.fill(message);
+            await this.sleep(300);
+            fillSuccess = true;
+        } catch (fillError) {
+            console.warn("[" + this.name + "] Fill failed: " + fillError.message);
+            try {
+                await input.evaluate((el, msg) => {
+                    if (el.isContentEditable) {
+                        el.innerHTML = "";
+                        el.textContent = msg;
+                    } else {
+                        el.value = msg;
+                    }
+                    const event = new Event("input", { bubbles: true });
+                    el.dispatchEvent(event);
+                }, message);
+                await this.sleep(300);
+                fillSuccess = true;
+            } catch (evaluateError) {
+                console.warn("[" + this.name + "] Evaluate fill failed: " + evaluateError.message);
+            }
+        }
+
+        const actualValue = await this.getInputValue(input);
         if (!actualValue || !actualValue.trim()) {
             try {
                 await input.click({ timeout: 3000 });
