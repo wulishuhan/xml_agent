@@ -30,7 +30,7 @@ const agentConfig = {
         cdpUrl: "http://127.0.0.1:9222",
         // Chrome.exe Path
         // chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-        chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application",
+        chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
 
         // web ai url
         targetUrls: {
