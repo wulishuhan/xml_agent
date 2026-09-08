@@ -1,4 +1,3 @@
-
 const { Agent } = require("./agent-core");
 const { saveHistory } = require("./workspace/history");
 const { saveReport } = require("./workspace/report");
@@ -49,7 +48,6 @@ function parseArgs() {
         task: taskParts.join(" ").trim(),
         background,
     };
-
 }
 
 function attachLogging(agent) {
@@ -67,11 +65,7 @@ function attachLogging(agent) {
         }
 
         if (event.type === "runtime.result") {
-            console.log(
-                prefix,
-                event.action,
-                JSON.stringify(event.result)
-            );
+            console.log(prefix, event.action, JSON.stringify(event.result));
             return;
         }
 
@@ -87,16 +81,10 @@ function attachLogging(agent) {
 
         console.log(prefix, JSON.stringify(event));
     });
-
 }
 
 async function main() {
-    const {
-        workspace,
-        task,
-        provider: providerName,
-        background,
-    } = parseArgs();
+    const { workspace, task, provider: providerName, background } = parseArgs();
 
     if (!workspace) {
         throw new Error("Workspace is required");
@@ -108,9 +96,7 @@ async function main() {
 
     if (background) {
         process.on("SIGINT", function () {
-            console.log(
-                "Received SIGINT in background mode, ignoring..."
-            );
+            console.log("Received SIGINT in background mode, ignoring...");
         });
 
         console.log("[SYSTEM] Running in background mode");
@@ -158,15 +144,11 @@ async function main() {
             saveHistory(result.workspace, result.history);
             saveReport(result.task, result.workspace, result.history);
         } catch (saveError) {
-            console.error(
-                "[SYSTEM] Failed to save agent artifacts:",
-                saveError.message
-            );
+            console.error("[SYSTEM] Failed to save agent artifacts:", saveError.message);
         }
 
         process.exitCode = 1;
     }
-
 }
 
 if (require.main === module) {

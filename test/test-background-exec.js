@@ -1,4 +1,3 @@
-
 const path = require("path");
 const { setWorkspace, run } = require("../runtime");
 const http = require("http");
@@ -15,8 +14,8 @@ async function runTests() {
     const action1 = {
         action: "exec",
         node: {
-            "@_command": "node test/test-server.js --background"
-        }
+            "@_command": "node test/test-server.js --background",
+        },
     };
 
     const result1 = run(action1);
@@ -33,10 +32,10 @@ async function runTests() {
     // 测试2: 通过直接 HTTP 请求验证服务器是否运行
     console.log("Test 2: Verify background process by HTTP request");
     const serverRunning = await new Promise((resolve) => {
-        const req = http.get('http://127.0.0.1:9999', (res) => {
+        const req = http.get("http://127.0.0.1:9999", (res) => {
             resolve(true);
         });
-        req.on('error', () => {
+        req.on("error", () => {
             resolve(false);
         });
         req.setTimeout(2000, () => {

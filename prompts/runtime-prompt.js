@@ -1,5 +1,5 @@
 function getRuntimeOkPrompt(result) {
-  return `
+    return `
 上一轮 Runtime 已经执行完成。
 
 Runtime 返回：
@@ -52,7 +52,7 @@ Agent 会在下一轮单独要求你输出 <done/>。
 }
 
 function getRuntimeErrorPrompt(result) {
-  return `
+    return `
 Runtime 执行失败。
 
 下面是 Runtime 的真实返回结果：
@@ -77,6 +77,6 @@ ${JSON.stringify(result, null, 2)}
 }
 
 module.exports = {
-  getRuntimeOkPrompt,
-  getRuntimeErrorPrompt,
+    getRuntimeOkPrompt,
+    getRuntimeErrorPrompt,
 };

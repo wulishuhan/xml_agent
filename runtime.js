@@ -1,4 +1,3 @@
-
 const fs = require("fs");
 const path = require("path");
 const { execSync, spawn } = require("child_process");
@@ -10,314 +9,299 @@ const MAX_READ_SIZE = agentConfig.runtime.maxReadSize;
 const MAX_EXEC_TIMEOUT = agentConfig.runtime.maxExecTimeout;
 
 class Runtime {
-constructor(workspace = null) {
-this.workspace = null;
+    constructor(workspace = null) {
+        this.workspace = null;
 
-    if (workspace) {
-        this.setWorkspace(workspace);
-    }
-}
-
-setWorkspace(workspace) {
-    if (!workspace || typeof workspace !== "string") {
-        throw new Error("Workspace path is required");
+        if (workspace) {
+            this.setWorkspace(workspace);
+        }
     }
 
-    const resolved = path.resolve(workspace);
+    setWorkspace(workspace) {
+        if (!workspace || typeof workspace !== "string") {
+            throw new Error("Workspace path is required");
+        }
 
-    if (!fs.existsSync(resolved)) {
-        throw new Error("Workspace does not exist: " + resolved);
+        const resolved = path.resolve(workspace);
+
+        if (!fs.existsSync(resolved)) {
+            throw new Error("Workspace does not exist: " + resolved);
+        }
+
+        const stat = fs.statSync(resolved);
+
+        if (!stat.isDirectory()) {
+            throw new Error("Workspace is not a directory: " + resolved);
+        }
+
+        this.workspace = resolved;
+
+        return this.workspace;
     }
 
-    const stat = fs.statSync(resolved);
+    getWorkspace() {
+        if (!this.workspace) {
+            throw new Error("Workspace has not been configured");
+        }
 
-    if (!stat.isDirectory()) {
-        throw new Error("Workspace is not a directory: " + resolved);
+        return this.workspace;
     }
 
-    this.workspace = resolved;
+    resolvePath(filePath) {
+        const workspace = this.getWorkspace();
 
-    return this.workspace;
-}
+        if (!filePath || typeof filePath !== "string") {
+            throw new Error("Path is required");
+        }
 
-getWorkspace() {
-    if (!this.workspace) {
-        throw new Error("Workspace has not been configured");
+        if (path.isAbsolute(filePath)) {
+            throw new Error("Absolute paths are not allowed");
+        }
+
+        const fullPath = path.resolve(workspace, filePath);
+        const workspacePrefix = workspace.endsWith(path.sep) ? workspace : workspace + path.sep;
+
+        if (fullPath !== workspace && !fullPath.startsWith(workspacePrefix)) {
+            throw new Error("Path escapes workspace");
+        }
+
+        return fullPath;
     }
 
-    return this.workspace;
-}
+    read(node) {
+        const filePath = node?.["@_path"];
 
-resolvePath(filePath) {
-    const workspace = this.getWorkspace();
+        if (!filePath) {
+            throw new Error("read requires path");
+        }
 
-    if (!filePath || typeof filePath !== "string") {
-        throw new Error("Path is required");
-    }
+        const fullPath = this.resolvePath(filePath);
 
-    if (path.isAbsolute(filePath)) {
-        throw new Error("Absolute paths are not allowed");
-    }
+        if (!fs.existsSync(fullPath)) {
+            return {
+                ok: false,
+                action: "read",
+                path: filePath,
+                error: "File or directory does not exist",
+            };
+        }
 
-    const fullPath = path.resolve(workspace, filePath);
-    const workspacePrefix = workspace.endsWith(path.sep)
-        ? workspace
-        : workspace + path.sep;
+        const stat = fs.statSync(fullPath);
 
-    if (
-        fullPath !== workspace &&
-        !fullPath.startsWith(workspacePrefix)
-    ) {
-        throw new Error("Path escapes workspace");
-    }
+        if (stat.isDirectory()) {
+            const entries = fs
+                .readdirSync(fullPath, {
+                    withFileTypes: true,
+                })
+                .map((entry) => {
+                    return entry.name + (entry.isDirectory() ? "/" : "");
+                })
+                .sort();
 
-    return fullPath;
-}
+            return {
+                ok: true,
+                action: "read",
+                path: filePath,
+                type: "directory",
+                entries,
+            };
+        }
 
-read(node) {
-    const filePath = node?.["@_path"];
+        if (stat.size > MAX_READ_SIZE) {
+            return {
+                ok: false,
+                action: "read",
+                path: filePath,
+                error: "File too large to read. Size: " + stat.size + " bytes",
+            };
+        }
 
-    if (!filePath) {
-        throw new Error("read requires path");
-    }
-
-    const fullPath = this.resolvePath(filePath);
-
-    if (!fs.existsSync(fullPath)) {
-        return {
-            ok: false,
-            action: "read",
-            path: filePath,
-            error: "File or directory does not exist",
-        };
-    }
-
-    const stat = fs.statSync(fullPath);
-
-    if (stat.isDirectory()) {
-        const entries = fs
-            .readdirSync(fullPath, {
-                withFileTypes: true,
-            })
-            .map((entry) => {
-                return entry.name + (entry.isDirectory() ? "/" : "");
-            })
-            .sort();
+        const content = fs.readFileSync(fullPath, "utf8");
 
         return {
             ok: true,
             action: "read",
             path: filePath,
-            type: "directory",
-            entries,
+            type: "file",
+            size: stat.size,
+            content,
         };
     }
 
-    if (stat.size > MAX_READ_SIZE) {
+    write(node) {
+        const filePath = node?.["@_path"];
+
+        if (!filePath) {
+            throw new Error("write requires path");
+        }
+
+        const fullPath = this.resolvePath(filePath);
+        const content = getText(node);
+
+        if (Buffer.byteLength(content, "utf8") > MAX_FILE_SIZE) {
+            return {
+                ok: false,
+                action: "write",
+                path: filePath,
+                error: "File too large",
+            };
+        }
+
+        fs.mkdirSync(path.dirname(fullPath), {
+            recursive: true,
+        });
+
+        fs.writeFileSync(fullPath, content, "utf8");
+
         return {
-            ok: false,
-            action: "read",
-            path: filePath,
-            error:
-                "File too large to read. Size: " +
-                stat.size +
-                " bytes",
-        };
-    }
-
-    const content = fs.readFileSync(fullPath, "utf8");
-
-    return {
-        ok: true,
-        action: "read",
-        path: filePath,
-        type: "file",
-        size: stat.size,
-        content,
-    };
-}
-
-write(node) {
-    const filePath = node?.["@_path"];
-
-    if (!filePath) {
-        throw new Error("write requires path");
-    }
-
-    const fullPath = this.resolvePath(filePath);
-    const content = getText(node);
-
-    if (Buffer.byteLength(content, "utf8") > MAX_FILE_SIZE) {
-        return {
-            ok: false,
+            ok: true,
             action: "write",
             path: filePath,
-            error: "File too large",
+            size: Buffer.byteLength(content, "utf8"),
         };
     }
 
-    fs.mkdirSync(path.dirname(fullPath), {
-        recursive: true,
-    });
+    execute(node) {
+        const workspace = this.getWorkspace();
+        const command = node?.["@_command"];
 
-    fs.writeFileSync(fullPath, content, "utf8");
+        if (!command) {
+            throw new Error("exec requires command");
+        }
 
-    return {
-        ok: true,
-        action: "write",
-        path: filePath,
-        size: Buffer.byteLength(content, "utf8"),
-    };
-}
+        console.log("");
+        console.log("Executing command:");
+        console.log(command);
 
-execute(node) {
-    const workspace = this.getWorkspace();
-    const command = node?.["@_command"];
+        const isBackground = command.includes(" --background");
 
-    if (!command) {
-        throw new Error("exec requires command");
-    }
+        if (isBackground) {
+            const cleanCommand = command.replace(/ --background/g, "");
 
-    console.log("");
-    console.log("Executing command:");
-    console.log(command);
+            console.log("Running as background process: " + cleanCommand);
 
-    const isBackground = command.includes(" --background");
+            try {
+                const child = spawn(cleanCommand, {
+                    cwd: workspace,
+                    shell: true,
+                    env: process.env,
+                    detached: true,
+                    stdio: "ignore",
+                    windowsHide: true,
+                });
 
-    if (isBackground) {
-        const cleanCommand = command.replace(/ --background/g, "");
+                child.unref();
 
-        console.log(
-            "Running as background process: " + cleanCommand
-        );
+                console.log("Background process started with PID: " + child.pid);
+
+                return {
+                    ok: true,
+                    action: "exec",
+                    command: cleanCommand,
+                    background: true,
+                    pid: child.pid,
+                    message: "Background process started with PID: " + child.pid,
+                };
+            } catch (error) {
+                return {
+                    ok: false,
+                    action: "exec",
+                    command: cleanCommand,
+                    error: error.message,
+                };
+            }
+        }
 
         try {
-            const child = spawn(cleanCommand, {
+            const output = execSync(command, {
                 cwd: workspace,
-                shell: true,
-                env: process.env,
-                detached: true,
-                stdio: "ignore",
-                windowsHide: true,
+                encoding: "utf8",
+                timeout: MAX_EXEC_TIMEOUT,
+                stdio: ["pipe", "pipe", "pipe"],
+                windowsHide: false,
             });
-
-            child.unref();
-
-            console.log(
-                "Background process started with PID: " + child.pid
-            );
 
             return {
                 ok: true,
                 action: "exec",
-                command: cleanCommand,
-                background: true,
-                pid: child.pid,
-                message:
-                    "Background process started with PID: " +
-                    child.pid,
+                command,
+                output,
             };
         } catch (error) {
             return {
                 ok: false,
                 action: "exec",
-                command: cleanCommand,
+                command,
+                exitCode: error.status ?? null,
+                stdout: error.stdout || "",
+                stderr: error.stderr || "",
                 error: error.message,
             };
         }
     }
 
-    try {
-        const output = execSync(command, {
-            cwd: workspace,
-            encoding: "utf8",
-            timeout: MAX_EXEC_TIMEOUT,
-            stdio: ["pipe", "pipe", "pipe"],
-            windowsHide: false,
-        });
+    answer(node) {
+        const content = getText(node);
+
+        if (!content.trim()) {
+            throw new Error("answer content cannot be empty");
+        }
 
         return {
             ok: true,
-            action: "exec",
-            command,
-            output,
+            action: "answer",
+            content,
         };
-    } catch (error) {
+    }
+
+    done() {
         return {
-            ok: false,
-            action: "exec",
-            command,
-            exitCode: error.status ?? null,
-            stdout: error.stdout || "",
-            stderr: error.stderr || "",
-            error: error.message,
+            ok: true,
+            action: "done",
         };
     }
-}
 
-answer(node) {
-    const content = getText(node);
+    run(action) {
+        if (!action || typeof action !== "object") {
+            throw new Error("Action is required");
+        }
 
-    if (!content.trim()) {
-        throw new Error("answer content cannot be empty");
+        this.getWorkspace();
+
+        const actionName = action.action;
+        const node = action.node;
+
+        if (!actionName || typeof actionName !== "string") {
+            throw new Error("Action name is required");
+        }
+
+        console.log("");
+        console.log("==================================");
+        console.log("Runtime Action:", actionName);
+        console.log("==================================");
+
+        const handler = this.actionHandlers[actionName];
+
+        if (!handler) {
+            throw new Error("Unknown action: " + actionName);
+        }
+
+        return handler(node);
     }
 
-    return {
-        ok: true,
-        action: "answer",
-        content,
-    };
-}
-
-done() {
-    return {
-        ok: true,
-        action: "done",
-    };
-}
-
-run(action) {
-    if (!action || typeof action !== "object") {
-        throw new Error("Action is required");
+    get actionHandlers() {
+        return {
+            read: this.read.bind(this),
+            write: this.write.bind(this),
+            exec: this.execute.bind(this),
+            answer: this.answer.bind(this),
+            done: this.done.bind(this),
+        };
     }
-
-    this.getWorkspace();
-
-    const actionName = action.action;
-    const node = action.node;
-
-    if (!actionName || typeof actionName !== "string") {
-        throw new Error("Action name is required");
-    }
-
-    console.log("");
-    console.log("==================================");
-    console.log("Runtime Action:", actionName);
-    console.log("==================================");
-
-    const handler = this.actionHandlers[actionName];
-
-    if (!handler) {
-        throw new Error("Unknown action: " + actionName);
-    }
-
-    return handler(node);
-}
-
-get actionHandlers() {
-    return {
-        read: this.read.bind(this),
-        write: this.write.bind(this),
-        exec: this.execute.bind(this),
-        answer: this.answer.bind(this),
-        done: this.done.bind(this),
-    };
-}
-
 }
 
 function createRuntime(workspace) {
-return new Runtime(workspace);
+    return new Runtime(workspace);
 }
 
 /*
@@ -337,21 +321,21 @@ createRuntime(workspace), which keeps workspace state isolated.
 const legacyRuntime = createRuntime();
 
 function setWorkspace(workspace) {
-return legacyRuntime.setWorkspace(workspace);
+    return legacyRuntime.setWorkspace(workspace);
 }
 
 function getWorkspace() {
-return legacyRuntime.getWorkspace();
+    return legacyRuntime.getWorkspace();
 }
 
 function run(action) {
-return legacyRuntime.run(action);
+    return legacyRuntime.run(action);
 }
 
 module.exports = {
-Runtime,
-createRuntime,
-run,
-setWorkspace,
-getWorkspace,
+    Runtime,
+    createRuntime,
+    run,
+    setWorkspace,
+    getWorkspace,
 };

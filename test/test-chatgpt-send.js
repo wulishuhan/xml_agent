@@ -1,4 +1,3 @@
-
 const { createProvider } = require("../providers");
 const agentConfig = require("../config/agent-config");
 
@@ -10,7 +9,7 @@ async function testChatGPTSend() {
         startTimeout: agentConfig.browser.startTimeout,
         retryInterval: agentConfig.browser.retryInterval,
         chromePath: agentConfig.browser.chromePath,
-        targetUrl: agentConfig.browser.targetUrls["chatgpt"]
+        targetUrl: agentConfig.browser.targetUrls["chatgpt"],
     });
 
     try {
@@ -46,9 +45,11 @@ async function testChatGPTSend() {
 }
 
 // 运行测试
-testChatGPTSend().then((success) => {
-    process.exit(success ? 0 : 1);
-}).catch((error) => {
-    console.error("Unhandled error:", error);
-    process.exit(1);
-});
+testChatGPTSend()
+    .then((success) => {
+        process.exit(success ? 0 : 1);
+    })
+    .catch((error) => {
+        console.error("Unhandled error:", error);
+        process.exit(1);
+    });

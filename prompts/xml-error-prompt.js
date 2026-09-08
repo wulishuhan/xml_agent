@@ -1,5 +1,5 @@
 function getXmlErrorPrompt(error) {
-  let prompt = `你的上一条回复不是合法的 XML Action。
+    let prompt = `你的上一条回复不是合法的 XML Action。
 
 错误：
 
@@ -28,9 +28,9 @@ ${error.message}
 或者：
 
 <done/>`;
-  return prompt;
+    return prompt;
 }
 
 module.exports = {
-  getXmlErrorPrompt,
+    getXmlErrorPrompt,
 };

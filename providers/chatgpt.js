@@ -1,4 +1,3 @@
-
 const { BrowserAgent } = require("./browser-agent");
 
 class ChatGPTProvider extends BrowserAgent {
@@ -139,16 +138,16 @@ class ChatGPTProvider extends BrowserAgent {
             const tagName = await input.evaluate((el) => el.tagName.toLowerCase());
             const isContentEditable = await input.evaluate((el) => el.isContentEditable);
 
-            if (isContentEditable || tagName === 'div') {
+            if (isContentEditable || tagName === "div") {
                 // 使用 evaluate 设置 innerHTML，这是最可靠的方式
                 await input.evaluate((el, msg) => {
-                    el.innerHTML = '';
+                    el.innerHTML = "";
                     el.textContent = msg;
                     // 触发 input 事件
-                    const event = new Event('input', { bubbles: true });
+                    const event = new Event("input", { bubbles: true });
                     el.dispatchEvent(event);
                     // 触发 change 事件
-                    const changeEvent = new Event('change', { bubbles: true });
+                    const changeEvent = new Event("change", { bubbles: true });
                     el.dispatchEvent(changeEvent);
                 }, message);
                 await this.sleep(300);
@@ -182,7 +181,9 @@ class ChatGPTProvider extends BrowserAgent {
             throw new Error("[ChatGPT] Input value is empty after fill");
         }
 
-        console.log("[ChatGPT] Message inserted successfully, value length: " + (finalValue || "").length);
+        console.log(
+            "[ChatGPT] Message inserted successfully, value length: " + (finalValue || "").length
+        );
         return true;
     }
 
@@ -225,13 +226,13 @@ class ChatGPTProvider extends BrowserAgent {
                     'button[aria-label="Send message"]',
                     'button[aria-label="Send"]',
                     'button:has(svg[data-icon="send"])',
-                    'button:has(svg[data-icon="paper-plane"])'
+                    'button:has(svg[data-icon="paper-plane"])',
                 ];
 
                 for (const selector of sendButtonSelectors) {
                     try {
                         const button = this.page.locator(selector).first();
-                        if (await button.count() > 0 && await button.isVisible()) {
+                        if ((await button.count()) > 0 && (await button.isVisible())) {
                             await button.click();
                             console.log("[ChatGPT] Clicked send button: " + selector);
                             sent = true;
@@ -263,7 +264,10 @@ class ChatGPTProvider extends BrowserAgent {
         }
 
         if (!sent) {
-            throw new Error("ChatGPT failed to send message - all send methods failed. Last error: " + (sendError ? sendError.message : "unknown"));
+            throw new Error(
+                "ChatGPT failed to send message - all send methods failed. Last error: " +
+                    (sendError ? sendError.message : "unknown")
+            );
         }
 
         // 等待输入框清空 - 增加重试机制

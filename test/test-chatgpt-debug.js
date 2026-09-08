@@ -1,4 +1,3 @@
-
 /**
 
 ChatGPT 调试测试 - 检查页面状态
@@ -21,7 +20,7 @@ async function runDebug() {
             cdpUrl: TEST_CDP_URL,
             autoStart: true,
             startTimeout: 30000,
-            chromePath: agentConfig.browser.chromePath
+            chromePath: agentConfig.browser.chromePath,
         });
 
         await provider.start();
@@ -36,7 +35,10 @@ async function runDebug() {
 
         // 检查是否存在登录障碍
         const pageContent = await provider.page.content();
-        const hasLogin = pageContent.includes("Log in") || pageContent.includes("Sign in") || pageContent.includes("login");
+        const hasLogin =
+            pageContent.includes("Log in") ||
+            pageContent.includes("Sign in") ||
+            pageContent.includes("login");
         console.log("Has login screen: " + hasLogin);
 
         // 检查是否有输入框
@@ -73,7 +75,6 @@ async function runDebug() {
         } else {
             console.log("❌ No input found - page structure may have changed");
         }
-
     } catch (error) {
         console.error("Debug error:", error.message);
     } finally {
@@ -81,7 +82,7 @@ async function runDebug() {
             try {
                 await provider.close();
                 console.log("✅ Provider closed");
-            } catch (e) { }
+            } catch (e) {}
         }
     }
 }

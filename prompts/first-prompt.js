@@ -1,6 +1,6 @@
 const { SYSTEM_PROMPT } = require("./system-prompt");
 function getFirstPrompt(currentWorkspace, manifest, task) {
-  let prompt = `
+    let prompt = `
 ${SYSTEM_PROMPT}
 
 ============================================================
@@ -40,9 +40,9 @@ ${task}
 
 <done/>
 `;
-  return prompt;
+    return prompt;
 }
 
 module.exports = {
-  getFirstPrompt,
+    getFirstPrompt,
 };

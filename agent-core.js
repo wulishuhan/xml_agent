@@ -1,4 +1,3 @@
-
 const { createProvider } = require("./providers");
 const {
     getFirstPrompt,
@@ -10,10 +9,7 @@ const {
 } = require("./prompts/index");
 const { createRuntime } = require("./runtime");
 const { buildWorkspaceManifest } = require("./workspace/manifest");
-const {
-    createHistory,
-    createHistoryRecord,
-} = require("./workspace/history");
+const { createHistory, createHistoryRecord } = require("./workspace/history");
 const { EventEmitter } = require("events");
 const agentConfig = require("./config/agent-config");
 
@@ -33,11 +29,8 @@ class Agent extends EventEmitter {
         this.providerName = options.provider || "chatgpt";
         this.task = options.task;
 
-        this.maxSteps =
-            options.maxSteps || agentConfig.agent.maxSteps;
-        this.maxProviderErrors =
-            options.maxProviderErrors ||
-            agentConfig.agent.maxProviderErrors;
+        this.maxSteps = options.maxSteps || agentConfig.agent.maxSteps;
+        this.maxProviderErrors = options.maxProviderErrors || agentConfig.agent.maxProviderErrors;
 
         this.history = createHistory();
         this.runtime = createRuntime(this.workspace);
@@ -72,8 +65,7 @@ class Agent extends EventEmitter {
 
         try {
             const currentWorkspace = this.runtime.getWorkspace();
-            const manifest =
-                buildWorkspaceManifest(currentWorkspace);
+            const manifest = buildWorkspaceManifest(currentWorkspace);
 
             this.emitEvent("agent.started", {
                 workspace: currentWorkspace,
@@ -86,8 +78,7 @@ class Agent extends EventEmitter {
                 startTimeout: agentConfig.browser.startTimeout,
                 retryInterval: agentConfig.browser.retryInterval,
                 chromePath: agentConfig.browser.chromePath,
-                targetUrl:
-                    agentConfig.browser.targetUrls[this.providerName],
+                targetUrl: agentConfig.browser.targetUrls[this.providerName],
             });
 
             this.emitEvent("provider.starting", {
@@ -100,11 +91,7 @@ class Agent extends EventEmitter {
                 provider: this.providerName,
             });
 
-            let prompt = getFirstPrompt(
-                currentWorkspace,
-                manifest,
-                this.task
-            );
+            let prompt = getFirstPrompt(currentWorkspace, manifest, this.task);
 
             const providerErrorState = {
                 count: 0,
@@ -131,10 +118,7 @@ class Agent extends EventEmitter {
             }
 
             if (this.status === "running") {
-                this.status =
-                    this.step >= this.maxSteps
-                        ? "max_steps"
-                        : "completed";
+                this.status = this.step >= this.maxSteps ? "max_steps" : "completed";
             }
 
             await this.closeProvider();
@@ -186,10 +170,7 @@ class Agent extends EventEmitter {
                 max: providerErrorState.max,
             });
 
-            if (
-                providerErrorState.count >=
-                providerErrorState.max
-            ) {
+            if (providerErrorState.count >= providerErrorState.max) {
                 return {
                     stop: true,
                     prompt: null,
@@ -205,9 +186,7 @@ class Agent extends EventEmitter {
         let action;
 
         try {
-            action = require("./parse/xml-parse").extractXML(
-                response
-            );
+            action = require("./parse/xml-parse").extractXML(response);
 
             this.emitEvent("action.parsed", {
                 step: this.step,
@@ -237,13 +216,7 @@ class Agent extends EventEmitter {
             };
         }
 
-        this.history.push(
-            createHistoryRecord(
-                this.step,
-                action,
-                result
-            )
-        );
+        this.history.push(createHistoryRecord(this.step, action, result));
 
         this.emitEvent("runtime.result", {
             step: this.step,
@@ -331,13 +304,10 @@ class Agent extends EventEmitter {
             task: this.task,
             step: this.step,
             answer: this.answer,
-            error: this.error
-                ? this.error.message
-                : null,
+            error: this.error ? this.error.message : null,
             history: this.history,
         };
     }
-
 }
 
 module.exports = {

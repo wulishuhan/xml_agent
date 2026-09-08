@@ -1,4 +1,3 @@
-
 /**
 
 ChatGPT 问题验证测试
@@ -30,7 +29,9 @@ console.log("Chrome Path: " + agentConfig.browser.chromePath);
 console.log("");
 
 function sleep(ms) {
-    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    return new Promise(function (resolve) {
+        setTimeout(resolve, ms);
+    });
 }
 
 function checkPort(port, timeout) {
@@ -86,16 +87,21 @@ async function testGetLastResponse(provider) {
 
         // 判断：如果页面有回复但 getLastResponse 返回空，则有问题
         if (count > 0 && (!response || response.trim().length === 0)) {
-            logTest("getLastResponse 能获取已有回复", false,
-                "有 " + count + " 条 assistant 消息但返回空内容");
+            logTest(
+                "getLastResponse 能获取已有回复",
+                false,
+                "有 " + count + " 条 assistant 消息但返回空内容"
+            );
             return false;
         } else if (count > 0 && response && response.trim().length > 0) {
-            logTest("getLastResponse 能获取已有回复", true,
-                "成功获取 " + response.length + " 字符");
+            logTest(
+                "getLastResponse 能获取已有回复",
+                true,
+                "成功获取 " + response.length + " 字符"
+            );
             return true;
         } else {
-            logTest("getLastResponse 能获取已有回复", true,
-                "当前无回复消息（跳过验证）");
+            logTest("getLastResponse 能获取已有回复", true, "当前无回复消息（跳过验证）");
             return true;
         }
     } catch (error) {
@@ -126,7 +132,7 @@ async function testSendMessage(provider) {
                 setTimeout(function () {
                     reject(new Error("send() 超时 (60s)"));
                 }, 60000);
-            })
+            }),
         ]);
 
         console.log(" 收到回复长度: " + response.length);
@@ -134,12 +140,10 @@ async function testSendMessage(provider) {
 
         // 验证：回复不为空
         if (response && response.trim().length > 0) {
-            logTest("send() 能成功发送并接收回复", true,
-                "收到 " + response.length + " 字符回复");
+            logTest("send() 能成功发送并接收回复", true, "收到 " + response.length + " 字符回复");
             return true;
         } else {
-            logTest("send() 能成功发送并接收回复", false,
-                "回复为空");
+            logTest("send() 能成功发送并接收回复", false, "回复为空");
             return false;
         }
     } catch (error) {
@@ -183,15 +187,16 @@ async function testInsertDuringResponse(provider) {
                     console.log(" ⚠️ 尝试在回复未完成时插入新消息...");
                     // 注意：这里只测试是否能获取到输入框，实际插入可能导致状态混乱
                     // 所以我们只检测输入框是否可用
-                    logTest("响应完成前输入框状态", true,
-                        "回复生成中，输入框可用（可能导致误插入）");
+                    logTest(
+                        "响应完成前输入框状态",
+                        true,
+                        "回复生成中，输入框可用（可能导致误插入）"
+                    );
                 } else {
-                    logTest("响应完成前输入框状态", false,
-                        "回复生成中但无法获取输入框");
+                    logTest("响应完成前输入框状态", false, "回复生成中但无法获取输入框");
                 }
             } catch (inputError) {
-                logTest("响应完成前输入框状态", false,
-                    "获取输入框失败: " + inputError.message);
+                logTest("响应完成前输入框状态", false, "获取输入框失败: " + inputError.message);
             }
 
             // 等待回复完成
@@ -201,8 +206,7 @@ async function testInsertDuringResponse(provider) {
             return true;
         } else {
             // 没有新回复，可能是发送失败
-            logTest("响应完成前输入框状态", false,
-                "消息未能触发回复生成");
+            logTest("响应完成前输入框状态", false, "消息未能触发回复生成");
             return false;
         }
     } catch (error) {
@@ -251,7 +255,6 @@ async function testWaitForResponseStart(provider) {
             startDetected = true;
             var elapsed = Date.now() - startTime;
             console.log(" ✅ waitForResponseStart 在 " + elapsed + "ms 内检测到响应开始");
-
         } catch (waitError) {
             var elapsed = Date.now() - startTime;
             console.log(" ❌ waitForResponseStart 失败: " + waitError.message);
@@ -264,16 +267,17 @@ async function testWaitForResponseStart(provider) {
         console.log(" 最终回复长度: " + (finalResponse || "").length);
 
         if (startDetected && finalResponse && finalResponse.trim().length > 0) {
-            logTest("waitForResponseStart 能检测响应开始", true,
-                "检测成功，最终回复 " + finalResponse.length + " 字符");
+            logTest(
+                "waitForResponseStart 能检测响应开始",
+                true,
+                "检测成功，最终回复 " + finalResponse.length + " 字符"
+            );
             return true;
         } else if (startDetected) {
-            logTest("waitForResponseStart 能检测响应开始", false,
-                "检测到开始但最终回复为空");
+            logTest("waitForResponseStart 能检测响应开始", false, "检测到开始但最终回复为空");
             return false;
         } else {
-            logTest("waitForResponseStart 能检测响应开始", false,
-                "未能检测到响应开始");
+            logTest("waitForResponseStart 能检测响应开始", false, "未能检测到响应开始");
             return false;
         }
     } catch (error) {
@@ -310,7 +314,7 @@ async function runTests() {
             responseTimeout: 60000,
             responseStableTime: 3000,
             responsePollInterval: 500,
-            chromePath: agentConfig.browser.chromePath
+            chromePath: agentConfig.browser.chromePath,
         });
 
         await provider.start();
@@ -379,7 +383,8 @@ async function runTests() {
             if (r.details) {
                 console.log(" " + r.details);
             }
-            if (r.success) passed++; else failed++;
+            if (r.success) passed++;
+            else failed++;
         }
 
         console.log("");
@@ -398,7 +403,6 @@ async function runTests() {
         }
 
         return overallSuccess;
-
     } catch (error) {
         console.error("测试流程异常:", error);
         return false;
@@ -416,12 +420,14 @@ async function runTests() {
 
 // 运行测试
 if (require.main === module) {
-    runTests().then(function (success) {
-        process.exit(success ? 0 : 1);
-    }).catch(function (error) {
-        console.error("测试套件错误:", error);
-        process.exit(1);
-    });
+    runTests()
+        .then(function (success) {
+            process.exit(success ? 0 : 1);
+        })
+        .catch(function (error) {
+            console.error("测试套件错误:", error);
+            process.exit(1);
+        });
 }
 
 module.exports = { runTests: runTests };

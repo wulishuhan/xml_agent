@@ -5,15 +5,15 @@ const { getDonePrompt } = require("./done-prompt.js");
 const { getRuntimeErrorPrompt, getRuntimeOkPrompt } = require("./runtime-prompt.js");
 const { getSendErrorPrompt } = require("./send-error-prompt.js");
 function getSystemPrompt() {
-  return SYSTEM_PROMPT;
+    return SYSTEM_PROMPT;
 }
 
 module.exports = {
-  getSystemPrompt,
-  getFirstPrompt,
-  getXmlErrorPrompt,
-  getDonePrompt,
-  getRuntimeErrorPrompt,
-  getRuntimeOkPrompt,
-  getSendErrorPrompt,
+    getSystemPrompt,
+    getFirstPrompt,
+    getXmlErrorPrompt,
+    getDonePrompt,
+    getRuntimeErrorPrompt,
+    getRuntimeOkPrompt,
+    getSendErrorPrompt,
 };

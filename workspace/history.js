@@ -1,4 +1,3 @@
-
 const fs = require("fs");
 const path = require("path");
 
@@ -44,11 +43,7 @@ function saveHistory(workspace, records = history) {
 
     const historyPath = path.join(agentDir, "history.json");
 
-    fs.writeFileSync(
-        historyPath,
-        JSON.stringify(records, null, 2),
-        "utf8"
-    );
+    fs.writeFileSync(historyPath, JSON.stringify(records, null, 2), "utf8");
 
     return historyPath;
 }

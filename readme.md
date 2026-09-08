@@ -29,11 +29,13 @@ npm install
 ## 使用webUI
 
 安装依赖
+
 ```
 cd xml_agent/webui
 npm install
 
 ```
+
 配置chrome.exe路径
 配置文件xml_agent/config/agent-config.js
 
@@ -47,19 +49,22 @@ npm install
 
 ```
 
-
 启动服务器agent服务器
+
 ```
 cd xml_agent
 npm run webui
 ```
+
 另外一个终端启动dev页面
+
 ```
 cd xml_agent
 npm run webui:dev
 ```
 
 访问页面
+
 ```
 http://localhost:5173
 ```
@@ -67,6 +72,7 @@ http://localhost:5173
 ---
 
 ## 手动调用
+
 ## 启动 Chrome CDP 提供网页版使用
 
 XML Agent 通过 Chrome DevTools Protocol 连接已经运行的 Chrome。
@@ -112,8 +118,8 @@ Agent 连接的是用户启动的 Chrome，因此不会主动关闭整个 Chrome
 ## 运行
 
 - **_参数解释_**
-  - **_--provider_** : 可选，默认是chatgpt，提供chatgpt/qwen。
-  - **_--workspace_** : 必填，工作目录：注意目录必须存在
+    - **_--provider_** : 可选，默认是chatgpt，提供chatgpt/qwen。
+    - **_--workspace_** : 必填，工作目录：注意目录必须存在
 
 默认gpt
 
@@ -253,10 +259,10 @@ LLM 不直接操作电脑。
 
 ```json
 {
-  "ok": true,
-  "action": "read",
-  "type": "file",
-  "content": "..."
+    "ok": true,
+    "action": "read",
+    "type": "file",
+    "content": "..."
 }
 ```
 
@@ -417,8 +423,8 @@ Runtime:
 
 ```json
 {
-  "action": "read",
-  "content": "..."
+    "action": "read",
+    "content": "..."
 }
 ```
 
@@ -555,8 +561,8 @@ Runtime 执行：
 
 ```json
 {
-  "ok": true,
-  "entries": ["index.js"]
+    "ok": true,
+    "entries": ["index.js"]
 }
 ```
 

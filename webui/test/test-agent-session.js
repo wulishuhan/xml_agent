@@ -5,9 +5,9 @@ let provider = "deepseek";
 let task = "这是什么项目";
 
 const session = new AgentSession({
-  workspace,
-  provider: provider || "chatgpt",
-  task,
+    workspace,
+    provider: provider || "chatgpt",
+    task,
 });
 
 console.log("get seesion id:", session.id);
@@ -16,9 +16,9 @@ console.log("get seesion id:", session.id);
  * 启动 Agent
  */
 try {
-  session.start();
+    session.start();
 
-  console.log(`[WebUI] Session started: ${session.id}`);
+    console.log(`[WebUI] Session started: ${session.id}`);
 } catch (error) {
-  console.error(`[WebUI] Failed to start session ${session.id}:`, error);
+    console.error(`[WebUI] Failed to start session ${session.id}:`, error);
 }

@@ -9,111 +9,111 @@ const { XMLParser } = require("fast-xml-parser");
  */
 
 const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-  trimValues: false,
+    ignoreAttributes: false,
+    attributeNamePrefix: "@_",
+    trimValues: false,
 });
 
 /**
  * 清理 Markdown XML 代码块
  */
 function cleanXML(response) {
-  if (!response || typeof response !== "string") {
-    throw new Error("returned empty response");
-  }
+    if (!response || typeof response !== "string") {
+        throw new Error("returned empty response");
+    }
 
-  let text = response.trim();
+    let text = response.trim();
 
-  // ```xml
-  text = text.replace(/^```xml\s*/i, "");
+    // ```xml
+    text = text.replace(/^```xml\s*/i, "");
 
-  // ```
-  text = text.replace(/^```\s*/, "");
+    // ```
+    text = text.replace(/^```\s*/, "");
 
-  // ```
-  text = text.replace(/\s*```$/i, "");
+    // ```
+    text = text.replace(/\s*```$/i, "");
 
-  return text.trim();
+    return text.trim();
 }
 
 /**
  * 获取节点文本
  */
 function getText(node) {
-  if (node === undefined || node === null) {
+    if (node === undefined || node === null) {
+        return "";
+    }
+
+    if (typeof node === "string") {
+        return node;
+    }
+
+    if (typeof node === "number" || typeof node === "boolean") {
+        return String(node);
+    }
+
+    if (typeof node === "object" && node["#text"] !== undefined) {
+        return String(node["#text"]);
+    }
+
     return "";
-  }
-
-  if (typeof node === "string") {
-    return node;
-  }
-
-  if (typeof node === "number" || typeof node === "boolean") {
-    return String(node);
-  }
-
-  if (typeof node === "object" && node["#text"] !== undefined) {
-    return String(node["#text"]);
-  }
-
-  return "";
 }
 
 /**
  * 校验 Action
  */
 function validateAction(action, node) {
-  switch (action) {
-    case "read":
-      if (!node || typeof node !== "object") {
-        throw new Error("read action is invalid");
-      }
+    switch (action) {
+        case "read":
+            if (!node || typeof node !== "object") {
+                throw new Error("read action is invalid");
+            }
 
-      if (!node["@_path"]) {
-        throw new Error("read requires path");
-      }
+            if (!node["@_path"]) {
+                throw new Error("read requires path");
+            }
 
-      return;
+            return;
 
-    case "write":
-      if (!node || typeof node !== "object") {
-        throw new Error("write action is invalid");
-      }
+        case "write":
+            if (!node || typeof node !== "object") {
+                throw new Error("write action is invalid");
+            }
 
-      if (!node["@_path"]) {
-        throw new Error("write requires path");
-      }
+            if (!node["@_path"]) {
+                throw new Error("write requires path");
+            }
 
-      if (!getText(node)) {
-        throw new Error("write content cannot be empty");
-      }
+            if (!getText(node)) {
+                throw new Error("write content cannot be empty");
+            }
 
-      return;
+            return;
 
-    case "exec":
-      if (!node || typeof node !== "object") {
-        throw new Error("exec action is invalid");
-      }
+        case "exec":
+            if (!node || typeof node !== "object") {
+                throw new Error("exec action is invalid");
+            }
 
-      if (!node["@_command"]) {
-        throw new Error("exec requires command");
-      }
+            if (!node["@_command"]) {
+                throw new Error("exec requires command");
+            }
 
-      return;
+            return;
 
-    case "answer":
-      if (!getText(node).trim()) {
-        throw new Error("answer content cannot be empty");
-      }
+        case "answer":
+            if (!getText(node).trim()) {
+                throw new Error("answer content cannot be empty");
+            }
 
-      return;
+            return;
 
-    case "done":
-      return;
+        case "done":
+            return;
 
-    default:
-      throw new Error(`Unknown XML Action: ${action}`);
-  }
+        default:
+            throw new Error(`Unknown XML Action: ${action}`);
+    }
 }
 
 /**
@@ -131,45 +131,45 @@ function validateAction(action, node) {
  * Runtime 直接使用这个对象。
  */
 function extractXML(response) {
-  const text = cleanXML(response);
+    const text = cleanXML(response);
 
-  let parsed;
+    let parsed;
 
-  try {
-    parsed = parser.parse(text);
-  } catch (error) {
-    throw new Error(`Invalid XML: ${error.message}`);
-  }
+    try {
+        parsed = parser.parse(text);
+    } catch (error) {
+        throw new Error(`Invalid XML: ${error.message}`);
+    }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Invalid XML");
-  }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("Invalid XML");
+    }
 
-  const actionNames = Object.keys(parsed);
+    const actionNames = Object.keys(parsed);
 
-  /**
-   * 必须且只能有一个 Action
-   */
-  if (actionNames.length === 0) {
-    throw new Error("No XML Action found");
-  }
+    /**
+     * 必须且只能有一个 Action
+     */
+    if (actionNames.length === 0) {
+        throw new Error("No XML Action found");
+    }
 
-  if (actionNames.length !== 1) {
-    throw new Error(`Exactly one XML Action is required, but received ${actionNames.length}`);
-  }
+    if (actionNames.length !== 1) {
+        throw new Error(`Exactly one XML Action is required, but received ${actionNames.length}`);
+    }
 
-  const action = actionNames[0];
-  const node = parsed[action];
+    const action = actionNames[0];
+    const node = parsed[action];
 
-  validateAction(action, node);
+    validateAction(action, node);
 
-  return {
-    action,
-    node,
-  };
+    return {
+        action,
+        node,
+    };
 }
 
 module.exports = {
-  extractXML,
-  getText,
+    extractXML,
+    getText,
 };

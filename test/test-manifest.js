@@ -1,4 +1,3 @@
-
 const { buildWorkspaceManifest } = require("../workspace/manifest");
 
 const manifest = buildWorkspaceManifest("D:/code/backend/nodejs/xml_agent");
@@ -10,7 +9,7 @@ console.log("扫描结果：");
 console.log("");
 
 for (const entry of manifest) {
-console.log(entry);
+    console.log(entry);
 }
 
 console.log("");

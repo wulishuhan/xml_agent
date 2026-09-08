@@ -1,40 +1,40 @@
 <template>
-  <section v-if="session" class="panel">
-    <div class="panel-title">Session</div>
+    <section v-if="session" class="panel">
+        <div class="panel-title">Session</div>
 
-    <div class="session-info">
-      <div>
-        <span>ID</span>
+        <div class="session-info">
+            <div>
+                <span>ID</span>
 
-        <code>
-          {{ session.id }}
-        </code>
-      </div>
+                <code>
+                    {{ session.id }}
+                </code>
+            </div>
 
-      <div>
-        <span>Workspace</span>
+            <div>
+                <span>Workspace</span>
 
-        <code>
-          {{ session.workspace }}
-        </code>
-      </div>
+                <code>
+                    {{ session.workspace }}
+                </code>
+            </div>
 
-      <div>
-        <span>Task</span>
+            <div>
+                <span>Task</span>
 
-        <div class="task">
-          {{ session.task }}
+                <div class="task">
+                    {{ session.task }}
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  </section>
+    </section>
 </template>
 
 <script setup>
 defineProps({
-  session: {
-    type: Object,
-    default: null,
-  },
+    session: {
+        type: Object,
+        default: null,
+    },
 });
 </script>

@@ -1,4 +1,3 @@
-
 const { chromium } = require("playwright");
 const { spawn } = require("child_process");
 const { promises: fs } = require("fs");
@@ -17,12 +16,28 @@ class BrowserAgent {
         this.autoStart = options.autoStart !== undefined ? options.autoStart : true;
         this.startTimeout = options.startTimeout || 30000;
         this.retryInterval = options.retryInterval || 1000;
-        this.chromePath = options.chromePath || '';
+        this.chromePath = options.chromePath || "";
 
-        this.responseTimeout = this.getNumberOption(options.responseTimeout, process.env.XML_AGENT_RESPONSE_TIMEOUT_MS, 10 * 60 * 1000);
-        this.responseStableTime = this.getNumberOption(options.responseStableTime, process.env.XML_AGENT_RESPONSE_STABLE_TIME_MS, 4000);
-        this.responsePollInterval = this.getNumberOption(options.responsePollInterval, process.env.XML_AGENT_RESPONSE_POLL_INTERVAL_MS, 1000);
-        this.responseInitialTimeout = this.getNumberOption(options.responseInitialTimeout, process.env.XML_AGENT_RESPONSE_INITIAL_TIMEOUT_MS, 60 * 1000);
+        this.responseTimeout = this.getNumberOption(
+            options.responseTimeout,
+            process.env.XML_AGENT_RESPONSE_TIMEOUT_MS,
+            10 * 60 * 1000
+        );
+        this.responseStableTime = this.getNumberOption(
+            options.responseStableTime,
+            process.env.XML_AGENT_RESPONSE_STABLE_TIME_MS,
+            4000
+        );
+        this.responsePollInterval = this.getNumberOption(
+            options.responsePollInterval,
+            process.env.XML_AGENT_RESPONSE_POLL_INTERVAL_MS,
+            1000
+        );
+        this.responseInitialTimeout = this.getNumberOption(
+            options.responseInitialTimeout,
+            process.env.XML_AGENT_RESPONSE_INITIAL_TIMEOUT_MS,
+            60 * 1000
+        );
 
         this.inputSelectors = options.inputSelectors || [];
         this.targetUrl = options.targetUrl || "https://chatgpt.com";
@@ -83,17 +98,21 @@ class BrowserAgent {
     }
 
     async startChromeCdpServer() {
-        const chromePath = this.chromePath
+        const chromePath = this.chromePath;
 
         if (!chromePath) {
-            throw new Error("Could not find Chrome executable. Please install Chrome or set ChromePath environment variable in config.");
+            throw new Error(
+                "Could not find Chrome executable. Please install Chrome or set ChromePath environment variable in config."
+            );
         }
 
         const url = new URL(this.cdpUrl);
         const port = parseInt(url.port) || 9222;
         const userDataDir = path.join(os.tmpdir(), "chrome-agent-profile-" + port);
 
-        console.log("[" + this.name + "] Starting Chrome with remote debugging on port " + port + "...");
+        console.log(
+            "[" + this.name + "] Starting Chrome with remote debugging on port " + port + "..."
+        );
         console.log("[" + this.name + "] Chrome path: " + chromePath);
 
         const args = [
@@ -109,7 +128,7 @@ class BrowserAgent {
             "--disable-client-side-phishing-detection",
             "--disable-crash-reporter",
             "--disable-breakpad",
-            "--no-startup-window"
+            "--no-startup-window",
         ];
 
         this.chromeProcess = spawn(chromePath, args, {
@@ -124,7 +143,9 @@ class BrowserAgent {
 
         this.chromeProcess.unref();
 
-        console.log("[" + this.name + "] Chrome process started with PID: " + this.chromeProcess.pid);
+        console.log(
+            "[" + this.name + "] Chrome process started with PID: " + this.chromeProcess.pid
+        );
 
         const startTime = Date.now();
 
@@ -160,9 +181,18 @@ class BrowserAgent {
             if (this.targetUrl) {
                 console.log("[" + this.name + "] Navigating to " + this.targetUrl + "...");
                 try {
-                    await this.page.goto(this.targetUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+                    await this.page.goto(this.targetUrl, {
+                        waitUntil: "domcontentloaded",
+                        timeout: 30000,
+                    });
                 } catch (error) {
-                    console.warn("[" + this.name + "] Navigation to " + this.targetUrl + " timed out, continuing...");
+                    console.warn(
+                        "[" +
+                            this.name +
+                            "] Navigation to " +
+                            this.targetUrl +
+                            " timed out, continuing..."
+                    );
                 }
             }
         } else {
@@ -179,7 +209,9 @@ class BrowserAgent {
             }
 
             if (!this.page) {
-                console.log("[" + this.name + "] No matching page found, using first available page");
+                console.log(
+                    "[" + this.name + "] No matching page found, using first available page"
+                );
                 this.page = pages[0];
             }
         }
@@ -204,7 +236,9 @@ class BrowserAgent {
                 console.log("[" + this.name + "] CDP server not running, attempting to start...");
                 await this.startChromeCdpServer();
             } else {
-                throw new Error("CDP server not running at " + this.cdpUrl + " and autoStart is disabled");
+                throw new Error(
+                    "CDP server not running at " + this.cdpUrl + " and autoStart is disabled"
+                );
             }
 
             this.browser = await chromium.connectOverCDP(this.cdpUrl);
@@ -362,13 +396,13 @@ class BrowserAgent {
                 await input.evaluate((el, msg) => {
                     if (el.isContentEditable) {
                         // 清空并设置文本
-                        el.innerHTML = '';
+                        el.innerHTML = "";
                         el.textContent = msg;
                     } else {
                         el.value = msg;
                     }
                     // 触发事件
-                    const event = new Event('input', { bubbles: true });
+                    const event = new Event("input", { bubbles: true });
                     el.dispatchEvent(event);
                 }, message);
                 await this.sleep(300);
@@ -396,12 +430,12 @@ class BrowserAgent {
                 try {
                     await input.evaluate((el, msg) => {
                         if (el.isContentEditable) {
-                            el.innerHTML = '';
+                            el.innerHTML = "";
                             el.textContent = msg;
                         } else {
                             el.value = msg;
                         }
-                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event("input", { bubbles: true }));
                     }, message);
                     await this.sleep(300);
                     fillSuccess = true;
@@ -428,7 +462,9 @@ class BrowserAgent {
                 throw new Error("[" + this.name + "] failed to insert message: all methods failed");
             }
             if (!fillSuccess) {
-                throw new Error("[" + this.name + "] failed to insert message: input value is empty after fill");
+                throw new Error(
+                    "[" + this.name + "] failed to insert message: input value is empty after fill"
+                );
             }
         }
 
@@ -441,7 +477,9 @@ class BrowserAgent {
 
         while (Date.now() - start < timeout) {
             if (!this.isPageAlive()) {
-                throw new Error("[" + this.name + "] page was closed while waiting for input clear");
+                throw new Error(
+                    "[" + this.name + "] page was closed while waiting for input clear"
+                );
             }
             try {
                 const input = await this.getInput(true);
@@ -497,7 +535,13 @@ class BrowserAgent {
 
             if (!response) {
                 if (now - startTime >= initialTimeout) {
-                    throw new Error("[" + this.name + "] did not receive any response within " + initialTimeout + "ms");
+                    throw new Error(
+                        "[" +
+                            this.name +
+                            "] did not receive any response within " +
+                            initialTimeout +
+                            "ms"
+                    );
                 }
                 await this.sleep(pollInterval);
                 continue;
@@ -537,7 +581,9 @@ class BrowserAgent {
             try {
                 await this.browser.close();
             } catch (error) {
-                console.warn("[" + this.name + "] Error closing browser connection: " + error.message);
+                console.warn(
+                    "[" + this.name + "] Error closing browser connection: " + error.message
+                );
             }
         }
         this.page = null;

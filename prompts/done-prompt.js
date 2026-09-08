@@ -1,5 +1,5 @@
 function getDonePrompt() {
-  return `
+    return `
 用户答案已经成功生成。
 
 最终答案已经显示给用户。
@@ -16,5 +16,5 @@ function getDonePrompt() {
 }
 
 module.exports = {
-  getDonePrompt,
+    getDonePrompt,
 };
