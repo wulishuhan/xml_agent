@@ -3,7 +3,7 @@ const { spawn } = require("child_process");
 const { promises: fs } = require("fs");
 const path = require("path");
 const os = require("os");
-const net = require("net");
+const http = require("http");
 
 class BrowserAgent {
     constructor(options = {}) {
@@ -16,7 +16,11 @@ class BrowserAgent {
         this.autoStart = options.autoStart !== undefined ? options.autoStart : true;
         this.startTimeout = options.startTimeout || 30000;
         this.retryInterval = options.retryInterval || 1000;
-        this.chromePath = options.chromePath || "";
+        this.chromePath =
+            options.chromePath ||
+            process.env.CHROME_PATH ||
+            process.env.XML_AGENT_CHROME_PATH ||
+            "";
 
         this.responseTimeout = this.getNumberOption(
             options.responseTimeout,
@@ -42,10 +46,9 @@ class BrowserAgent {
         this.inputSelectors = options.inputSelectors || [];
         this.targetUrl = options.targetUrl || "https://chatgpt.com";
 
-        // 缓存输入框引用，避免每次重新查找
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
-        this._inputCacheTTL = 5000; // 5秒缓存有效期
+        this._inputCacheTTL = 5000;
     }
 
     getNumberOption(optionValue, envValue, defaultValue) {
@@ -73,24 +76,20 @@ class BrowserAgent {
             const url = new URL(cdpUrl);
             const host = url.hostname || "127.0.0.1";
             const port = parseInt(url.port) || 9222;
+            const healthUrl = "http://" + host + ":" + port + "/json/version";
 
             return new Promise((resolve) => {
-                const socket = new net.Socket();
-                const timeout = 3000;
-                socket.setTimeout(timeout);
-                socket.once("connect", () => {
-                    socket.destroy();
-                    resolve(true);
+                const request = http.get(healthUrl, { timeout: 3000 }, (response) => {
+                    response.resume();
+                    resolve(response.statusCode === 200);
                 });
-                socket.once("timeout", () => {
-                    socket.destroy();
+                request.on("timeout", () => {
+                    request.destroy();
                     resolve(false);
                 });
-                socket.once("error", () => {
-                    socket.destroy();
+                request.on("error", () => {
                     resolve(false);
                 });
-                socket.connect(port, host);
             });
         } catch (error) {
             return false;
@@ -102,7 +101,7 @@ class BrowserAgent {
 
         if (!chromePath) {
             throw new Error(
-                "Could not find Chrome executable. Please install Chrome or set ChromePath environment variable in config."
+                "Could not find Chrome executable. Please install Chrome or set CHROME_PATH environment variable or chromePath in config."
             );
         }
 
@@ -209,10 +208,21 @@ class BrowserAgent {
             }
 
             if (!this.page) {
-                console.log(
-                    "[" + this.name + "] No matching page found, using first available page"
+                const availableUrls = pages.map((page) => {
+                    try {
+                        return page.url();
+                    } catch (error) {
+                        return "unknown";
+                    }
+                });
+                throw new Error(
+                    "[" +
+                        this.name +
+                        "] No matching page found for " +
+                        this.targetUrl +
+                        ". Available pages: " +
+                        availableUrls.join(", ")
                 );
-                this.page = pages[0];
             }
         }
 
@@ -220,8 +230,12 @@ class BrowserAgent {
             throw new Error("Failed to get or create a page");
         }
 
-        await this.page.bringToFront();
-        // 清除缓存的输入框引用，因为页面可能已经变化
+        try {
+            await this.page.bringToFront();
+        } catch (error) {
+            console.warn("[" + this.name + "] Could not bring page to front: " + error.message);
+        }
+
         this._cachedInput = null;
         return this.page;
     }
@@ -265,7 +279,6 @@ class BrowserAgent {
             throw new Error("[" + this.name + "] page is not available");
         }
 
-        // 检查缓存是否有效
         if (useCache && this._cachedInput) {
             try {
                 const isVisible = await this._cachedInput.isVisible().catch(() => false);
@@ -286,7 +299,6 @@ class BrowserAgent {
                 if (!(await locator.isVisible())) continue;
                 if (await locator.isDisabled()) continue;
                 console.log("[" + this.name + "] Found input using selector: " + selector);
-                // 缓存输入框引用
                 this._cachedInput = locator;
                 this._cachedInputTimestamp = Date.now();
                 return locator;
@@ -343,112 +355,66 @@ class BrowserAgent {
             throw new Error("[" + this.name + "] page is not available");
         }
 
-        // 获取输入框，使用缓存
         const input = await this.getInput(true);
         if (!input) {
             throw new Error("[" + this.name + "] input not found");
         }
 
-        const providerName = this.name.toLowerCase();
-
-        // 通用方法：使用 focus 代替 click，避免被拦截
         try {
-            // 先尝试 focus
+            await input.focus({ timeout: 5000 });
+            await this.sleep(200);
+        } catch (focusError) {
             try {
-                await input.focus({ timeout: 5000 });
+                await input.click({ timeout: 5000 });
                 await this.sleep(200);
-            } catch (focusError) {
-                // 如果 focus 失败，尝试 click
-                try {
-                    await input.click({ timeout: 5000 });
-                    await this.sleep(200);
-                } catch (clickError) {
-                    // 如果 click 也失败，使用 evaluate 直接设置焦点
-                    await input.evaluate((el) => {
-                        el.focus();
-                        // 如果是 contenteditable，确保光标在末尾
-                        if (el.isContentEditable) {
-                            const range = document.createRange();
-                            const sel = window.getSelection();
-                            if (el.childNodes.length > 0) {
-                                range.setStartAfter(el.childNodes[el.childNodes.length - 1]);
-                            } else {
-                                range.setStart(el, 0);
-                            }
-                            range.collapse(false);
-                            sel.removeAllRanges();
-                            sel.addRange(range);
+            } catch (clickError) {
+                await input.evaluate((el) => {
+                    el.focus();
+                    if (el.isContentEditable) {
+                        const range = document.createRange();
+                        const sel = window.getSelection();
+                        if (el.childNodes.length > 0) {
+                            range.setStartAfter(el.childNodes[el.childNodes.length - 1]);
+                        } else {
+                            range.setStart(el, 0);
                         }
-                    });
-                    await this.sleep(200);
-                }
+                        range.collapse(false);
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                    }
+                });
+                await this.sleep(200);
             }
-        } catch (error) {
-            console.warn("[" + this.name + "] Failed to focus input: " + error.message);
         }
 
-        // 填充消息
         let fillSuccess = false;
 
-        if (providerName === "chatgpt") {
-            try {
-                // 对于 ChatGPT，使用 evaluate 直接设置内容最可靠
-                await input.evaluate((el, msg) => {
-                    if (el.isContentEditable) {
-                        // 清空并设置文本
-                        el.innerHTML = "";
-                        el.textContent = msg;
-                    } else {
-                        el.value = msg;
-                    }
-                    // 触发事件
-                    const event = new Event("input", { bubbles: true });
-                    el.dispatchEvent(event);
-                }, message);
-                await this.sleep(300);
-                fillSuccess = true;
-            } catch (error) {
-                console.warn("[" + this.name + "] Evaluate fill failed: " + error.message);
-                // 备选：使用 fill
-                try {
-                    await input.fill(message);
-                    await this.sleep(300);
-                    fillSuccess = true;
-                } catch (fillError) {
-                    console.warn("[" + this.name + "] Fill failed: " + fillError.message);
+        try {
+            await input.evaluate((el, msg) => {
+                if (el.isContentEditable) {
+                    el.innerHTML = "";
+                    el.textContent = msg;
+                } else {
+                    el.value = msg;
                 }
-            }
-        } else {
-            // 其他 provider 使用 fill
+                const event = new Event("input", { bubbles: true });
+                el.dispatchEvent(event);
+            }, message);
+            await this.sleep(300);
+            fillSuccess = true;
+        } catch (error) {
+            console.warn("[" + this.name + "] Evaluate fill failed: " + error.message);
             try {
                 await input.fill(message);
                 await this.sleep(300);
                 fillSuccess = true;
-            } catch (error) {
-                console.warn("[" + this.name + "] Fill failed: " + error.message);
-                // 尝试 evaluate
-                try {
-                    await input.evaluate((el, msg) => {
-                        if (el.isContentEditable) {
-                            el.innerHTML = "";
-                            el.textContent = msg;
-                        } else {
-                            el.value = msg;
-                        }
-                        el.dispatchEvent(new Event("input", { bubbles: true }));
-                    }, message);
-                    await this.sleep(300);
-                    fillSuccess = true;
-                } catch (e) {
-                    // ignore
-                }
+            } catch (fillError) {
+                console.warn("[" + this.name + "] Fill failed: " + fillError.message);
             }
         }
 
-        // 验证内容是否填充成功
         const actualValue = await this.getInputValue(input);
         if (!actualValue || !actualValue.trim()) {
-            // 最后一次尝试：直接使用键盘输入
             try {
                 await input.click({ timeout: 3000 });
                 await this.sleep(200);
@@ -489,7 +455,7 @@ class BrowserAgent {
                 }
                 const value = await this.getInputValue(input);
                 if (!value || !value.trim()) {
-                    this._cachedInput = null; // 清除缓存
+                    this._cachedInput = null;
                     return true;
                 }
             } catch (error) {
@@ -586,10 +552,21 @@ class BrowserAgent {
                 );
             }
         }
+
+        if (this.chromeProcess && !this.chromeProcess.killed) {
+            try {
+                this.chromeProcess.kill();
+                console.log("[" + this.name + "] Chrome process killed: " + this.chromeProcess.pid);
+            } catch (error) {
+                console.warn("[" + this.name + "] Error killing Chrome process: " + error.message);
+            }
+        }
+
         this.page = null;
         this.context = null;
         this.browser = null;
         this._cachedInput = null;
+        this.chromeProcess = null;
     }
 }
 

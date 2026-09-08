@@ -32,6 +32,7 @@ class AgentSession extends EventEmitter {
 
     addOutput(type, content, event = null) {
         const record = {
+            id: crypto.randomUUID(),
             type,
             content,
             timestamp: Date.now(),
@@ -63,37 +64,39 @@ class AgentSession extends EventEmitter {
                 return "🚀 Agent started";
 
             case "step.started":
-                return `Agent step ${event.step}`;
+                return "Agent step " + event.step;
 
             case "provider.starting":
-                return `Starting provider: ${event.provider}`;
+                return "Starting provider: " + event.provider;
 
             case "provider.started":
-                return `Provider started: ${event.provider}`;
+                return "Provider started: " + event.provider;
 
             case "provider.request":
-                return `Provider request (step ${event.step})`;
+                return "Provider request (step " + event.step + ")";
 
             case "provider.response":
-                return `Provider response received (${event.length} chars)`;
+                return "Provider response received (" + event.length + " chars)";
 
             case "provider.error":
-                return `Provider error (${event.count}/${event.max}): ${event.error}`;
+                return "Provider error (" + event.count + "/" + event.max + "): " + event.error;
 
             case "provider.closed":
-                return `Provider closed: ${event.provider}`;
+                return "Provider closed: " + event.provider;
 
             case "provider.close_error":
-                return `Provider close error: ${event.error}`;
+                return "Provider close error: " + event.error;
 
             case "action.parsed":
-                return `XML action parsed: ${event.action}`;
+                return "XML action parsed: " + event.action;
 
             case "action.parse_error":
-                return `XML parse error: ${event.error}`;
+                return "XML parse error: " + event.error;
 
             case "runtime.result":
-                return `Runtime action: ${event.action}\n${JSON.stringify(event.result, null, 2)}`;
+                return (
+                    "Runtime action: " + event.action + "\n" + JSON.stringify(event.result, null, 2)
+                );
 
             case "answer":
                 return event.content;
@@ -102,10 +105,10 @@ class AgentSession extends EventEmitter {
                 return "⏹ Agent stopped by user";
 
             case "agent.completed":
-                return `Agent completed with status: ${event.status}`;
+                return "Agent completed with status: " + event.status;
 
             case "agent.error":
-                return `Agent error: ${event.error}`;
+                return "Agent error: " + event.error;
 
             default:
                 return null;

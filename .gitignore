@@ -4,6 +4,7 @@ node_modules
 browser-profile
 chrome-agent-profile
 .agent
+/webui/frontend/dist
 
 # local env files
 .env.local

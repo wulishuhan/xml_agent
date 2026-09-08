@@ -5,8 +5,9 @@ CDP 自动启动验证测试
 验证自动检测和启动 CDP 服务器功能
 */
 
-// 设置 Chrome 路径 - 使用正斜杠避免反斜杠转义问题
-process.env.CHROME_PATH = "C:/Program Files/Google/Chrome/Application/chrome.exe";
+// 从项目配置读取 Chrome 路径，避免硬编码导致 ENOENT
+const agentConfig = require("../config/agent-config.js");
+process.env.CHROME_PATH = agentConfig.browser.chromePath;
 
 const { createProvider } = require("../providers");
 const net = require("net");
@@ -68,6 +69,7 @@ function testProviderConnection(providerName, options) {
                 cdpUrl: cdpUrl,
                 autoStart: autoStart,
                 startTimeout: startTimeout,
+                chromePath: process.env.CHROME_PATH,
             });
 
             console.log(" Starting " + providerName + "...");
