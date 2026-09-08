@@ -10,6 +10,7 @@ const {
 const { createRuntime } = require("./runtime");
 const { buildWorkspaceManifest } = require("./workspace/manifest");
 const { createHistory, createHistoryRecord } = require("./workspace/history");
+const { extractXML } = require("./parse/xml-parse");
 const { EventEmitter } = require("events");
 const agentConfig = require("./config/agent-config");
 
@@ -29,8 +30,8 @@ class Agent extends EventEmitter {
         this.providerName = options.provider || "chatgpt";
         this.task = options.task;
 
-        this.maxSteps = options.maxSteps || agentConfig.agent.maxSteps;
-        this.maxProviderErrors = options.maxProviderErrors || agentConfig.agent.maxProviderErrors;
+        this.maxSteps = options.maxSteps ?? agentConfig.agent.maxSteps;
+        this.maxProviderErrors = options.maxProviderErrors ?? agentConfig.agent.maxProviderErrors;
 
         this.history = createHistory();
         this.runtime = createRuntime(this.workspace);
@@ -39,6 +40,7 @@ class Agent extends EventEmitter {
         this.status = "created";
         this.answer = null;
         this.error = null;
+        this.stopRequested = false;
     }
 
     emitEvent(type, data = {}) {
@@ -55,13 +57,14 @@ class Agent extends EventEmitter {
     }
 
     async run() {
-        if (this.status === "running") {
-            throw new Error("Agent is already running");
+        if (this.status !== "created") {
+            throw new Error("Agent can only be run once");
         }
 
         this.status = "running";
         this.answer = null;
         this.error = null;
+        this.stopRequested = false;
 
         try {
             const currentWorkspace = this.runtime.getWorkspace();
@@ -77,6 +80,7 @@ class Agent extends EventEmitter {
                 autoStart: agentConfig.browser.autoStart,
                 startTimeout: agentConfig.browser.startTimeout,
                 retryInterval: agentConfig.browser.retryInterval,
+                cdpUrl: agentConfig.browser.cdpUrl,
                 chromePath: agentConfig.browser.chromePath,
                 targetUrl: agentConfig.browser.targetUrls[this.providerName],
             });
@@ -86,6 +90,10 @@ class Agent extends EventEmitter {
             });
 
             await this.provider.start();
+
+            if (this.stopRequested || this.status !== "running") {
+                return this.getResult();
+            }
 
             this.emitEvent("provider.started", {
                 provider: this.providerName,
@@ -98,7 +106,7 @@ class Agent extends EventEmitter {
                 max: this.maxProviderErrors,
             };
 
-            while (this.step < this.maxSteps) {
+            while (this.step < this.maxSteps && this.status === "running") {
                 this.step++;
 
                 this.emitEvent("step.started", {
@@ -132,13 +140,18 @@ class Agent extends EventEmitter {
             return this.getResult();
         } catch (error) {
             this.error = error;
-            this.status = "error";
 
-            await this.closeProvider();
+            if (this.status !== "stopped" && !this.stopRequested) {
+                this.status = "error";
 
-            this.emitEvent("agent.error", {
-                error: error.message,
-            });
+                await this.closeProvider();
+
+                this.emitEvent("agent.error", {
+                    error: error.message,
+                });
+            } else {
+                await this.closeProvider();
+            }
 
             throw error;
         }
@@ -154,6 +167,13 @@ class Agent extends EventEmitter {
 
             response = await this.provider.send(prompt);
 
+            if (this.status !== "running" || this.stopRequested) {
+                return {
+                    stop: true,
+                    prompt: null,
+                };
+            }
+
             providerErrorState.count = 0;
 
             this.emitEvent("provider.response", {
@@ -161,6 +181,13 @@ class Agent extends EventEmitter {
                 length: response ? response.length : 0,
             });
         } catch (error) {
+            if (this.status === "stopped" || this.stopRequested) {
+                return {
+                    stop: true,
+                    prompt: null,
+                };
+            }
+
             providerErrorState.count++;
 
             this.emitEvent("provider.error", {
@@ -171,10 +198,9 @@ class Agent extends EventEmitter {
             });
 
             if (providerErrorState.count >= providerErrorState.max) {
-                return {
-                    stop: true,
-                    prompt: null,
-                };
+                throw new Error(
+                    `Provider failed ${providerErrorState.count} consecutive times: ${error.message}`
+                );
             }
 
             return {
@@ -186,7 +212,7 @@ class Agent extends EventEmitter {
         let action;
 
         try {
-            action = require("./parse/xml-parse").extractXML(response);
+            action = extractXML(response);
 
             this.emitEvent("action.parsed", {
                 step: this.step,
@@ -263,6 +289,7 @@ class Agent extends EventEmitter {
             return false;
         }
 
+        this.stopRequested = true;
         this.status = "stopped";
 
         this.emitEvent("agent.stopped", {
