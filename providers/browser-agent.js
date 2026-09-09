@@ -55,7 +55,6 @@ class BrowserAgent {
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
         this._inputCacheTTL = 5000;
-        this.keepBrowser = true
     }
 
     getNumberOption(optionValue, envValue, defaultValue) {
@@ -627,10 +626,9 @@ class BrowserAgent {
     }
 
     async close() {
-        if (this, keepBrowser) return
         if (this.browser) {
             try {
-                await this.browser.close();
+                // await this.browser.close();
             } catch (error) {
                 console.warn(
                     "[" + this.name + "] Error closing browser connection: " + error.message
@@ -640,7 +638,7 @@ class BrowserAgent {
 
         if (this.chromeProcess && !this.chromeProcess.killed) {
             try {
-                this.chromeProcess.kill();
+                // this.chromeProcess.kill();
 
                 console.log("[" + this.name + "] Chrome process killed: " + this.chromeProcess.pid);
             } catch (error) {
