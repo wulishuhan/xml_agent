@@ -528,7 +528,7 @@ font-size: 11px;;
 }
 
 .composer {
-max-width: 940px;
+max-width: 964px;
 margin: 0 auto;
 overflow: hidden;
 border: 1px solid #303b49;
@@ -553,20 +553,20 @@ gap: 8px;
 
 .composer-label {
 color: #aeb9c7;
-font-size: 11px;;
+font-size: 12px;;
 font-weight: 700;
 text-transform: uppercase;
 }
 
 .composer-hint {
 color: #4f5d6d;
-font-size: 10px;;
+font-size: 12px;;
 }
 
 .composer-provider {
 color: #657386;
 font-family: "Cascadia Code", Consolas, monospace;
-font-size: 10px;;
+font-size: 12px;;
 }
 
 .composer textarea {
