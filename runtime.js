@@ -3,6 +3,7 @@ const path = require("path");
 const { execSync, spawn } = require("child_process");
 const { getText } = require("./parse/xml-parse");
 const agentConfig = require("./config/agent-config");
+const logger = require("./logger");
 
 const MAX_FILE_SIZE = agentConfig.runtime.maxFileSize;
 const MAX_READ_SIZE = agentConfig.runtime.maxReadSize;
@@ -221,16 +222,14 @@ class Runtime {
             throw new Error("exec requires command");
         }
 
-        console.log("");
-        console.log("Executing command:");
-        console.log(command);
+        logger.info("Executing command:", command);
 
         const isBackground = command.includes(" --background");
 
         if (isBackground) {
             const cleanCommand = command.replace(/ --background/g, "");
 
-            console.log("Running as background process: " + cleanCommand);
+            logger.info("Running as background process: " + cleanCommand);
 
             try {
                 const child = spawn(cleanCommand, {
@@ -244,7 +243,7 @@ class Runtime {
 
                 child.unref();
 
-                console.log("Background process started with PID: " + child.pid);
+                logger.info("Background process started with PID: " + child.pid);
 
                 return {
                     ok: true,
@@ -255,6 +254,7 @@ class Runtime {
                     message: "Background process started with PID: " + child.pid,
                 };
             } catch (error) {
+                logger.error("Background process failed:", error.message);
                 return {
                     ok: false,
                     action: "exec",
@@ -287,6 +287,8 @@ class Runtime {
             // 分开截断 stdout 和 stderr
             const stdout = limitExecOutput(error.stdout);
             const stderr = limitExecOutput(error.stderr);
+
+            logger.error("Command failed:", command, "exitCode:", error.status);
 
             return {
                 ok: false,
@@ -337,10 +339,7 @@ class Runtime {
             throw new Error("Action name is required");
         }
 
-        console.log("");
-        console.log("==================================");
-        console.log("Runtime Action:", actionName);
-        console.log("==================================");
+        logger.debug("Runtime Action:", actionName);
 
         const handler = this.actionHandlers[actionName];
 
