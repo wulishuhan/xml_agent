@@ -1,3 +1,4 @@
+
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
@@ -22,6 +23,54 @@ function getSession(req, res) {
 
     return session;
 }
+
+app.get("/api/workspace/browse", (req, res) => {
+    const requestedPath =
+        typeof req.query.path === "string" && req.query.path.trim()
+            ? req.query.path.trim()
+            : path.parse(process.cwd()).root;
+
+    let targetPath;
+    try {
+        targetPath = path.resolve(requestedPath);
+    } catch (error) {
+        return res.status(400).json({
+            error: "Invalid path: " + error.message,
+        });
+    }
+
+    try {
+        const stat = fs.statSync(targetPath);
+
+        if (!stat.isDirectory()) {
+            return res.status(400).json({
+                error: "Not a directory: " + targetPath,
+            });
+        }
+
+        const entries = fs
+            .readdirSync(targetPath, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => ({
+                name: entry.name,
+                path: path.join(targetPath, entry.name),
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+        return res.json({
+            path: targetPath,
+            parent:
+                path.dirname(targetPath) === targetPath
+                    ? null
+                    : path.dirname(targetPath),
+            entries,
+        });
+    } catch (error) {
+        return res.status(400).json({
+            error: "Unable to browse path: " + error.message,
+        });
+    }
+});
 
 app.post("/api/run", (req, res) => {
     const { workspace, provider, task } = req.body;
@@ -207,6 +256,16 @@ app.delete("/api/sessions/:id", (req, res) => {
             error: error.message,
         });
     }
+});
+
+app.use("/api", (req, res) => {
+    res.status(404).json({
+        error: "API endpoint not found: " + req.method + " " + req.originalUrl,
+    });
+});
+
+app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "frontend", "dist", "index.html"));
 });
 
 let server = null;

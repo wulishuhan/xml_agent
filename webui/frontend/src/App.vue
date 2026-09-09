@@ -1,11 +1,7 @@
 <template>
     <div class="app-shell">
-        <SessionSidebar
-            :sessions="sessions"
-            :active-id="activeSessionId"
-            @select="selectSession"
-            @new-session="createNewSession"
-        />
+        <SessionSidebar :sessions="sessions" :active-id="activeSessionId" @select="selectSession"
+            @new-session="createNewSession" />
         <main class="workspace-view">
             <header class="workspace-header">
                 <div class="workspace-heading">
@@ -51,6 +47,7 @@
                 <div v-if="errorMessage" class="error-banner">
                     <strong>Agent error</strong> <span>{{ errorMessage }}</span>
                 </div>
+
                 <div v-if="!activeSession" class="welcome">
                     <div class="welcome-mark">&lt;/&gt;</div>
                     <h1>Build with your Agent</h1>
@@ -59,39 +56,34 @@
                         test your project.
                     </p>
                 </div>
+
                 <div class="composer-shell">
-                    <div
-                        class="workspace-input-row"
-                        :class="{ 'workspace-input-row--required': !workspace.trim() }"
-                    >
-                        <label class="workspace-input">
+                    <div class="workspace-input-row" :class="{ 'workspace-input-row--required': !workspace.trim() }">
+                        <div class="workspace-input">
                             <span class="workspace-input-label">Workspace</span>
 
-                            <input
-                                ref="workspaceInput"
-                                v-model="workspace"
-                                :disabled="running"
-                                type="text"
+                            <input ref="workspaceInput" v-model="workspace" :disabled="running" type="text"
                                 placeholder="Enter an absolute path, for example D:/projects/my-app"
-                                @keydown.enter="focusTask"
-                            />
-                        </label>
+                                @keydown.enter="focusTask" />
+
+                            <button type="button" class="btn workspace-browse-button" :disabled="running"
+                                @click="openWorkspacePicker">
+                                📁 Browse
+                            </button>
+                        </div>
 
                         <span v-if="!workspace.trim()" class="workspace-required-hint">
                             Required · this path is different on each computer
                         </span>
                     </div>
 
-                    <TaskComposer
-                        v-model:task="task"
-                        :provider="provider"
-                        :running="running"
-                        @run="runAgent"
-                        @stop="stopAgent"
-                    />
+                    <TaskComposer v-model:task="task" :provider="provider" :running="running" @run="runAgent"
+                        @stop="stopAgent" />
                 </div>
             </section>
         </main>
+
+        <WorkspacePicker v-if="showWorkspacePicker" @select="selectWorkspace" @close="closeWorkspacePicker" />
     </div>
 </template>
 <script setup>
@@ -99,6 +91,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import AgentConsole from "./components/AgentConsole.vue";
 import SessionSidebar from "./components/SessionSidebar.vue";
 import TaskComposer from "./components/TaskComposer.vue";
+import WorkspacePicker from "./components/WorkspacePicker.vue";
 import {
     deleteSession,
     getSession,
@@ -118,6 +111,7 @@ const workspace = ref("");
 const provider = ref("chatgpt");
 const task = ref("");
 const workspaceInput = ref(null);
+const showWorkspacePicker = ref(false);
 
 const sessionStatus = computed(() => {
     return activeSession.value?.status || "created";
@@ -340,6 +334,42 @@ function focusTask() {
     textarea?.focus();
 }
 
+function openWorkspacePicker() {
+    if (running.value) {
+        return;
+    }
+
+    showWorkspacePicker.value = true;
+}
+
+function closeWorkspacePicker() {
+    showWorkspacePicker.value = false;
+}
+
+function selectWorkspace(selectedPath) {
+    if (!selectedPath) {
+        return;
+    }
+
+    workspace.value = selectedPath;
+    showWorkspacePicker.value = false;
+    errorMessage.value = "";
+}
+
 onMounted(loadSessions);
 onUnmounted(closeEventSource);
 </script>
+<style scoped>
+.workspace-browse-button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.workspace-input {
+    width: 100%;
+}
+
+.workspace-input input {
+    width: 100%;
+}
+</style>

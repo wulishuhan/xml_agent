@@ -1,3 +1,4 @@
+
 export async function runAgent(data) {
     const response = await fetch("/api/run", {
         method: "POST",
@@ -18,8 +19,29 @@ export async function runAgent(data) {
     return result;
 }
 
+export async function browseWorkspace(targetPath) {
+    const query = targetPath ? "?path=" + encodeURIComponent(targetPath) : "";
+    const response = await fetch("/api/workspace/browse" + query);
+
+    if (!response.ok) {
+        const text = await response.text();
+        let message = "Failed to browse workspace";
+
+        try {
+            const result = JSON.parse(text);
+            message = result.error || message;
+        } catch (error) {
+            message = text || message;
+        }
+
+        throw new Error(message);
+    }
+
+    return response.json();
+}
+
 export async function getSession(sessionId) {
-    const response = await fetch(`/api/sessions/${sessionId}`);
+    const response = await fetch("/api/sessions/" + sessionId);
 
     const result = await response.json();
 
@@ -31,7 +53,7 @@ export async function getSession(sessionId) {
 }
 
 export async function getSessionOutput(sessionId) {
-    const response = await fetch(`/api/sessions/${sessionId}/output`);
+    const response = await fetch("/api/sessions/" + sessionId + "/output");
 
     const result = await response.json();
 
@@ -43,7 +65,7 @@ export async function getSessionOutput(sessionId) {
 }
 
 export async function stopSession(sessionId) {
-    const response = await fetch(`/api/sessions/${sessionId}/stop`, {
+    const response = await fetch("/api/sessions/" + sessionId + "/stop", {
         method: "POST",
     });
 
@@ -69,7 +91,7 @@ export async function getSessions() {
 }
 
 export async function deleteSession(sessionId) {
-    const response = await fetch(`/api/sessions/${sessionId}`, {
+    const response = await fetch("/api/sessions/" + sessionId, {
         method: "DELETE",
     });
 
