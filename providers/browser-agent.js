@@ -44,7 +44,13 @@ class BrowserAgent {
         );
 
         this.inputSelectors = options.inputSelectors || [];
-        this.targetUrl = options.targetUrl || "https://chatgpt.com";
+        this.targetUrl =
+            options.targetUrl !== undefined ? options.targetUrl : "https://chatgpt.com";
+
+        // 默认保持兼容行为：复用已有 Provider 页面。
+        // Session 场景可以设置为 false，让每个 Session 创建独立页面。
+        this.reuseExistingPage =
+            options.reuseExistingPage !== undefined ? options.reuseExistingPage : true;
 
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
@@ -56,10 +62,12 @@ class BrowserAgent {
         if (value === undefined || value === null || value === "") {
             return defaultValue;
         }
+
         const number = Number(value);
         if (!Number.isFinite(number) || number <= 0) {
             return defaultValue;
         }
+
         return number;
     }
 
@@ -83,10 +91,12 @@ class BrowserAgent {
                     response.resume();
                     resolve(response.statusCode === 200);
                 });
+
                 request.on("timeout", () => {
                     request.destroy();
                     resolve(false);
                 });
+
                 request.on("error", () => {
                     resolve(false);
                 });
@@ -150,10 +160,12 @@ class BrowserAgent {
 
         while (Date.now() - startTime < this.startTimeout) {
             const isReady = await this.checkCdpServer(this.cdpUrl);
+
             if (isReady) {
                 console.log("[" + this.name + "] CDP server is ready at " + this.cdpUrl);
                 return true;
             }
+
             await this.sleep(this.retryInterval);
         }
 
@@ -165,7 +177,8 @@ class BrowserAgent {
             throw new Error("Browser not connected");
         }
 
-        let contexts = this.browser.contexts();
+        const contexts = this.browser.contexts();
+
         if (!contexts || contexts.length === 0) {
             console.log("[" + this.name + "] No context found, creating new context...");
             this.context = await this.browser.newContext();
@@ -173,12 +186,41 @@ class BrowserAgent {
             this.context = contexts[0];
         }
 
-        let pages = this.context.pages();
-        if (!pages || pages.length === 0) {
-            console.log("[" + this.name + "] No page found, creating new page...");
+        const pages = this.context.pages();
+
+        // Session 隔离模式：不要抢占其他 Session 已经使用的页面。
+        // 在同一个 BrowserContext 中创建新页面，可以继续复用已有登录状态。
+        if (!this.reuseExistingPage) {
+            console.log("[" + this.name + "] Creating an isolated page for this session...");
+
             this.page = await this.context.newPage();
+
             if (this.targetUrl) {
                 console.log("[" + this.name + "] Navigating to " + this.targetUrl + "...");
+
+                try {
+                    await this.page.goto(this.targetUrl, {
+                        waitUntil: "domcontentloaded",
+                        timeout: 30000,
+                    });
+                } catch (error) {
+                    console.warn(
+                        "[" +
+                            this.name +
+                            "] Navigation to " +
+                            this.targetUrl +
+                            " timed out, continuing..."
+                    );
+                }
+            }
+        } else if (!pages || pages.length === 0) {
+            console.log("[" + this.name + "] No page found, creating new page...");
+
+            this.page = await this.context.newPage();
+
+            if (this.targetUrl) {
+                console.log("[" + this.name + "] Navigating to " + this.targetUrl + "...");
+
                 try {
                     await this.page.goto(this.targetUrl, {
                         waitUntil: "domcontentloaded",
@@ -196,6 +238,7 @@ class BrowserAgent {
             }
         } else {
             this.page = null;
+
             for (const page of pages) {
                 try {
                     if (await this.matchPage(page)) {
@@ -215,6 +258,7 @@ class BrowserAgent {
                         return "unknown";
                     }
                 });
+
                 throw new Error(
                     "[" +
                         this.name +
@@ -259,13 +303,14 @@ class BrowserAgent {
             console.log("[" + this.name + "] Connected to CDP server");
 
             await this.ensurePage();
-
             await this.waitForInput();
+
             console.log("[" + this.name + "] Connected successfully");
         } catch (error) {
             this.page = null;
             this.context = null;
             this.browser = null;
+
             throw new Error("[" + this.name + "] Failed to start browser agent: " + error.message);
         }
     }
@@ -283,29 +328,36 @@ class BrowserAgent {
             try {
                 const isVisible = await this._cachedInput.isVisible().catch(() => false);
                 const isEnabled = !(await this._cachedInput.isDisabled().catch(() => false));
+
                 if (isVisible && isEnabled) {
                     return this._cachedInput;
                 }
             } catch (error) {
                 // 缓存失效，继续查找
             }
+
             this._cachedInput = null;
         }
 
         for (const selector of this.inputSelectors) {
             try {
                 const locator = this.page.locator(selector).first();
+
                 if (!(await locator.count())) continue;
                 if (!(await locator.isVisible())) continue;
                 if (await locator.isDisabled()) continue;
+
                 console.log("[" + this.name + "] Found input using selector: " + selector);
+
                 this._cachedInput = locator;
                 this._cachedInputTimestamp = Date.now();
+
                 return locator;
             } catch (error) {
                 continue;
             }
         }
+
         return null;
     }
 
@@ -317,28 +369,35 @@ class BrowserAgent {
             if (!this.isPageAlive()) {
                 throw new Error("[" + this.name + "] page was closed while waiting for input");
             }
+
             try {
                 const input = await this.getInput();
+
                 if (input) {
                     return input;
                 }
             } catch (error) {
                 // continue
             }
+
             await this.sleep(500);
         }
+
         throw new Error("[" + this.name + "] input not found within " + timeout + "ms");
     }
 
     async getInputValue(input) {
         if (!input) return "";
+
         try {
             const tagName = await input.evaluate(function (element) {
                 return element.tagName.toLowerCase();
             });
+
             if (tagName === "input" || tagName === "textarea") {
                 return await input.inputValue();
             }
+
             return await input.innerText();
         } catch (error) {
             try {
@@ -351,11 +410,13 @@ class BrowserAgent {
 
     async insertMessage(message) {
         console.log("[" + this.name + "] Inserting message: " + JSON.stringify(message));
+
         if (!this.isPageAlive()) {
             throw new Error("[" + this.name + "] page is not available");
         }
 
         const input = await this.getInput(true);
+
         if (!input) {
             throw new Error("[" + this.name + "] input not found");
         }
@@ -370,19 +431,23 @@ class BrowserAgent {
             } catch (clickError) {
                 await input.evaluate((el) => {
                     el.focus();
+
                     if (el.isContentEditable) {
                         const range = document.createRange();
                         const sel = window.getSelection();
+
                         if (el.childNodes.length > 0) {
                             range.setStartAfter(el.childNodes[el.childNodes.length - 1]);
                         } else {
                             range.setStart(el, 0);
                         }
+
                         range.collapse(false);
                         sel.removeAllRanges();
                         sel.addRange(range);
                     }
                 });
+
                 await this.sleep(200);
             }
         }
@@ -395,6 +460,7 @@ class BrowserAgent {
             fillSuccess = true;
         } catch (fillError) {
             console.warn("[" + this.name + "] Fill failed: " + fillError.message);
+
             try {
                 await input.evaluate((el, msg) => {
                     if (el.isContentEditable) {
@@ -403,9 +469,11 @@ class BrowserAgent {
                     } else {
                         el.value = msg;
                     }
+
                     const event = new Event("input", { bubbles: true });
                     el.dispatchEvent(event);
                 }, message);
+
                 await this.sleep(300);
                 fillSuccess = true;
             } catch (evaluateError) {
@@ -414,19 +482,23 @@ class BrowserAgent {
         }
 
         const actualValue = await this.getInputValue(input);
+
         if (!actualValue || !actualValue.trim()) {
             try {
                 await input.click({ timeout: 3000 });
                 await this.sleep(200);
                 await this.page.keyboard.type(message);
                 await this.sleep(300);
+
                 const finalValue = await this.getInputValue(input);
+
                 if (finalValue && finalValue.trim()) {
                     fillSuccess = true;
                 }
             } catch (e) {
                 throw new Error("[" + this.name + "] failed to insert message: all methods failed");
             }
+
             if (!fillSuccess) {
                 throw new Error(
                     "[" + this.name + "] failed to insert message: input value is empty after fill"
@@ -447,13 +519,17 @@ class BrowserAgent {
                     "[" + this.name + "] page was closed while waiting for input clear"
                 );
             }
+
             try {
                 const input = await this.getInput(true);
+
                 if (!input) {
                     await this.sleep(300);
                     continue;
                 }
+
                 const value = await this.getInputValue(input);
+
                 if (!value || !value.trim()) {
                     this._cachedInput = null;
                     return true;
@@ -461,13 +537,16 @@ class BrowserAgent {
             } catch (error) {
                 // continue
             }
+
             await this.sleep(300);
         }
+
         return false;
     }
 
     async waitForStableResponse(getResponse, options) {
         options = options || {};
+
         const timeout = options.timeout || this.responseTimeout;
         const stableTime = options.stableTime || this.responseStableTime;
         const pollInterval = options.pollInterval || this.responsePollInterval;
@@ -490,6 +569,7 @@ class BrowserAgent {
             }
 
             let response = "";
+
             try {
                 response = await getResponse();
             } catch (error) {
@@ -509,6 +589,7 @@ class BrowserAgent {
                             "ms"
                     );
                 }
+
                 await this.sleep(pollInterval);
                 continue;
             }
@@ -529,9 +610,11 @@ class BrowserAgent {
             }
 
             const stableDuration = now - lastChangeTime;
+
             if (stableDuration >= stableTime) {
                 return response;
             }
+
             await this.sleep(pollInterval);
         }
     }
@@ -556,6 +639,7 @@ class BrowserAgent {
         if (this.chromeProcess && !this.chromeProcess.killed) {
             try {
                 this.chromeProcess.kill();
+
                 console.log("[" + this.name + "] Chrome process killed: " + this.chromeProcess.pid);
             } catch (error) {
                 console.warn("[" + this.name + "] Error killing Chrome process: " + error.message);

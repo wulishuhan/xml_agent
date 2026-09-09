@@ -83,6 +83,7 @@ class Agent extends EventEmitter {
                 cdpUrl: agentConfig.browser.cdpUrl,
                 chromePath: agentConfig.browser.chromePath,
                 targetUrl: agentConfig.browser.targetUrls[this.providerName],
+                reuseExistingPage: agentConfig.browser.reuseExistingPage,
             });
 
             this.emitEvent("provider.starting", {

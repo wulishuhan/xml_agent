@@ -49,17 +49,20 @@ class ChatGPTProvider extends BrowserAgent {
             const visible = await last.isVisible().catch(() => false);
             if (!visible) return "";
 
-            await last.evaluate((element) => {
-                const markdownElements = element.querySelectorAll(".markdown");
-                markdownElements.forEach((markdown) => {
-                    const selectNoneElements = markdown.querySelectorAll(".select-none");
-                    selectNoneElements.forEach((selectNone) => {
-                        selectNone.remove();
-                    });
-                });
-            });
+            // 只处理克隆节点，绝不修改 ChatGPT 页面中的真实 DOM。
+            // 这样读取响应不会破坏页面结构，也不会影响后续消息交互。
+            const text = await last
+                .evaluate((element) => {
+                    const clone = element.cloneNode(true);
 
-            const text = await last.innerText().catch(() => "");
+                    clone.querySelectorAll(".markdown .select-none").forEach((node) => {
+                        node.remove();
+                    });
+
+                    return clone.innerText || clone.textContent || "";
+                })
+                .catch(() => "");
+
             return (text || "").trim();
         } catch (error) {
             return "";
@@ -106,6 +109,83 @@ class ChatGPTProvider extends BrowserAgent {
         throw new Error("ChatGPT did not start a response within " + timeout + "ms");
     }
 
+    // 重写 insertMessage 方法，使用更可靠的方式填充 ChatGPT 输入框
+    async insertMessage(message) {
+        console.log("[ChatGPT] Inserting message: " + JSON.stringify(message));
+        if (!this.isPageAlive()) {
+            throw new Error("[ChatGPT] page is not available");
+        }
+
+        const input = await this.getInput();
+        if (!input) {
+            throw new Error("[ChatGPT] input not found");
+        }
+
+        // 先点击输入框获取焦点
+        try {
+            await input.click({ timeout: 3000 });
+            await this.sleep(300);
+        } catch (error) {
+            console.warn("[ChatGPT] Click input failed: " + error.message);
+            try {
+                await input.focus();
+                await this.sleep(300);
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        // 对于 contenteditable 元素，使用 evaluate 直接设置内容
+        try {
+            const tagName = await input.evaluate((el) => el.tagName.toLowerCase());
+            const isContentEditable = await input.evaluate((el) => el.isContentEditable);
+
+            if (isContentEditable || tagName === "div") {
+                await input.evaluate((el, msg) => {
+                    el.innerHTML = "";
+                    el.textContent = msg;
+
+                    const event = new Event("input", { bubbles: true });
+                    el.dispatchEvent(event);
+
+                    const changeEvent = new Event("change", { bubbles: true });
+                    el.dispatchEvent(changeEvent);
+                }, message);
+
+                await this.sleep(300);
+
+                const actualValue = await this.getInputValue(input);
+                if (!actualValue || !actualValue.trim()) {
+                    await input.fill(message);
+                    await this.sleep(300);
+                }
+            } else {
+                await input.fill(message);
+                await this.sleep(300);
+            }
+        } catch (error) {
+            console.warn("[ChatGPT] Evaluate fill failed: " + error.message);
+
+            try {
+                await input.fill(message);
+                await this.sleep(300);
+            } catch (e) {
+                throw new Error("[ChatGPT] failed to insert message: " + error.message);
+            }
+        }
+
+        const finalValue = await this.getInputValue(input);
+        if (!finalValue || !finalValue.trim()) {
+            throw new Error("[ChatGPT] Input value is empty after fill");
+        }
+
+        console.log(
+            "[ChatGPT] Message inserted successfully, value length: " + (finalValue || "").length
+        );
+
+        return true;
+    }
+
     async send(message) {
         if (!message || !message.trim()) {
             throw new Error("ChatGPT message cannot be empty");
@@ -147,6 +227,7 @@ class ChatGPTProvider extends BrowserAgent {
                 for (const selector of sendButtonSelectors) {
                     try {
                         const button = this.page.locator(selector).first();
+
                         if ((await button.count()) > 0 && (await button.isVisible())) {
                             await button.click();
                             console.log("[ChatGPT] Clicked send button: " + selector);
@@ -159,13 +240,17 @@ class ChatGPTProvider extends BrowserAgent {
                 }
             } catch (error) {
                 console.warn("[ChatGPT] Send button click failed: " + error.message);
-                if (!sendError) sendError = error;
+
+                if (!sendError) {
+                    sendError = error;
+                }
             }
         }
 
         if (!sent) {
             try {
                 const input = await this.getInput();
+
                 if (input) {
                     await input.press("Enter");
                     console.log("[ChatGPT] Pressed Enter on input element");
@@ -173,7 +258,10 @@ class ChatGPTProvider extends BrowserAgent {
                 }
             } catch (error) {
                 console.warn("[ChatGPT] Input Enter failed: " + error.message);
-                if (!sendError) sendError = error;
+
+                if (!sendError) {
+                    sendError = error;
+                }
             }
         }
 
@@ -184,36 +272,16 @@ class ChatGPTProvider extends BrowserAgent {
             );
         }
 
-        let inputCleared = false;
-        for (let retry = 0; retry < 3; retry++) {
-            inputCleared = await this.waitForInputClear(5000);
-            if (inputCleared) {
-                console.log("[ChatGPT] Input cleared successfully");
-                break;
-            }
-            console.warn("[ChatGPT] Input did not clear, retry " + (retry + 1) + "/3");
-            try {
-                await this.page.keyboard.press("Enter");
-                await this.sleep(500);
-            } catch (e) {
-                // ignore
-            }
-        }
+        // 输入框清空只是辅助状态，不再因为没有及时清空而重复发送 Enter。
+        // 重复发送是高风险操作：第一次发送可能已经成功，只是 UI 尚未完成更新。
+        const inputCleared = await this.waitForInputClear(5000);
 
-        if (!inputCleared) {
-            console.warn("[ChatGPT] Input not cleared after retries, but continuing...");
-            const newCount = await this.getAssistantCount();
-            if (newCount > oldAssistantCount) {
-                console.log("[ChatGPT] New assistant message detected despite input not cleared");
-            } else {
-                console.warn("[ChatGPT] Attempting final send via Enter...");
-                try {
-                    await this.page.keyboard.press("Enter");
-                    await this.sleep(1000);
-                } catch (e) {
-                    // ignore
-                }
-            }
+        if (inputCleared) {
+            console.log("[ChatGPT] Input cleared successfully");
+        } else {
+            console.warn(
+                "[ChatGPT] Input did not clear within 5000ms; waiting for response without retrying send"
+            );
         }
 
         await this.waitForResponseStart(oldAssistantCount, oldResponse);
@@ -229,6 +297,7 @@ class ChatGPTProvider extends BrowserAgent {
         }
 
         console.log("[ChatGPT] Response received, length: " + response.length);
+
         return response;
     }
 }
