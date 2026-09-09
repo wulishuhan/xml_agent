@@ -55,6 +55,7 @@ class BrowserAgent {
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
         this._inputCacheTTL = 5000;
+        this.keepBrowser = true
     }
 
     getNumberOption(optionValue, envValue, defaultValue) {
@@ -206,10 +207,10 @@ class BrowserAgent {
                 } catch (error) {
                     console.warn(
                         "[" +
-                            this.name +
-                            "] Navigation to " +
-                            this.targetUrl +
-                            " timed out, continuing..."
+                        this.name +
+                        "] Navigation to " +
+                        this.targetUrl +
+                        " timed out, continuing..."
                     );
                 }
             }
@@ -229,10 +230,10 @@ class BrowserAgent {
                 } catch (error) {
                     console.warn(
                         "[" +
-                            this.name +
-                            "] Navigation to " +
-                            this.targetUrl +
-                            " timed out, continuing..."
+                        this.name +
+                        "] Navigation to " +
+                        this.targetUrl +
+                        " timed out, continuing..."
                     );
                 }
             }
@@ -261,11 +262,11 @@ class BrowserAgent {
 
                 throw new Error(
                     "[" +
-                        this.name +
-                        "] No matching page found for " +
-                        this.targetUrl +
-                        ". Available pages: " +
-                        availableUrls.join(", ")
+                    this.name +
+                    "] No matching page found for " +
+                    this.targetUrl +
+                    ". Available pages: " +
+                    availableUrls.join(", ")
                 );
             }
         }
@@ -583,10 +584,10 @@ class BrowserAgent {
                 if (now - startTime >= initialTimeout) {
                     throw new Error(
                         "[" +
-                            this.name +
-                            "] did not receive any response within " +
-                            initialTimeout +
-                            "ms"
+                        this.name +
+                        "] did not receive any response within " +
+                        initialTimeout +
+                        "ms"
                     );
                 }
 
@@ -626,6 +627,7 @@ class BrowserAgent {
     }
 
     async close() {
+        if (this, keepBrowser) return
         if (this.browser) {
             try {
                 await this.browser.close();

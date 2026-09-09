@@ -51,8 +51,8 @@ const agentConfig = {
         // CDP 服务器 URL
         cdpUrl: "http://127.0.0.1:9222",
         // Chrome.exe Path
-        // chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-        chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
+        chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        // chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
 
         // 默认复用已有 Provider Page。
         // 如果需要为每个 Agent Session 创建独立 Page，手动改为 false。
