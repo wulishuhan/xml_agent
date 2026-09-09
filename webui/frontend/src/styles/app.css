@@ -1,4 +1,5 @@
 
+@import "./console.css";
 
 {
 box-sizing: border-box;
@@ -110,12 +111,16 @@ white-space: nowrap;
 
 .brand-copy span {
 color: #687484;
-font-size: 11px;
+font-size: 12px;;
 }
 
 .icon-button {
+display: inline-flex;
+align-items: center;
+justify-content: center;
 width: 32px;
 height: 32px;
+padding: 0;
 border: 1px solid #303b49;
 border-radius: 7px;
 background: #151b24;
@@ -138,7 +143,7 @@ padding: 17px 16px 10px;
 
 .sidebar-label {
 color: #788595;
-font-size: 11px;
+font-size: 12px;;
 font-weight: 700;
 letter-spacing: 0.09em;
 text-transform: uppercase;
@@ -150,7 +155,7 @@ padding: 2px 7px;
 border-radius: 10px;
 background: #19212c;
 color: #8d9bad;
-font-size: 11px;
+font-size: 12px;;
 text-align: center;
 }
 
@@ -179,7 +184,7 @@ flex-direction: column;
 gap: 7px;
 margin: 36px 15px;
 color: #667281;
-font-size: 12px;
+font-size: 13px;;
 text-align: center;
 }
 
@@ -254,7 +259,7 @@ gap: 4px;
 .session-item-content strong {
 overflow: hidden;
 color: #dce3eb;
-font-size: 12px;
+font-size: 13px;;
 font-weight: 600;
 line-height: 1.45;
 text-overflow: ellipsis;
@@ -265,7 +270,7 @@ white-space: nowrap;
 overflow: hidden;
 color: #758294;
 font-family: "Cascadia Code", Consolas, monospace;
-font-size: 10px;
+font-size: 11px;;
 text-overflow: ellipsis;
 white-space: nowrap;
 }
@@ -274,7 +279,7 @@ white-space: nowrap;
 display: flex;
 gap: 5px;
 color: #566273;
-font-size: 10px;
+font-size: 11px;;
 }
 
 .session-running {
@@ -292,7 +297,7 @@ display: flex;
 align-items: center;
 gap: 7px;
 color: #667383;
-font-size: 11px;
+font-size: 12px;;
 }
 
 .connection-dot {
@@ -357,9 +362,9 @@ white-space: nowrap;
 overflow: hidden;
 max-width: min(620px, 50vw);
 margin-top: 3px;
-color: #697687;
+color: #97a4b5;
 font-family: "Cascadia Code", Consolas, monospace;
-font-size: 10px;
+font-size: 13px;
 text-overflow: ellipsis;
 white-space: nowrap;
 }
@@ -378,7 +383,7 @@ border-color: #2b3542;
 border-radius: 7px;
 background: #111720;
 color: #aeb9c7;
-font-size: 11px;
+font-size: 12px;;
 }
 
 .status-badge {
@@ -435,216 +440,27 @@ display: flex;
 align-items: center;
 gap: 7px;
 min-width: 0;
-color: #a0acba;
-font-size: 11px;
+color: #c2ccd8;
+font-size: 14px;
 }
 
 .context-label {
-color: #596777;
-font-size: 10px;
+color: #8492a3;
+font-size: 12px;
 text-transform: uppercase;
 }
 
 .context-item code {
 overflow: hidden;
-max-width: 350px;
-color: #8299b5;
+max-width: 380px;
+color: #a8bcd6;
 font-family: "Cascadia Code", Consolas, monospace;
-font-size: 10px;
+font-size: 14px;
 text-overflow: ellipsis;
 white-space: nowrap;
 }
 
 /* Agent event stream */
-
-.agent-stream {
-display: flex;
-min-height: 0;
-flex: 1;
-flex-direction: column;
-}
-
-.stream-header {
-display: flex;
-min-height: 43px;
-align-items: center;
-justify-content: space-between;
-padding: 0 25px;
-border-bottom: 1px solid #1c242e;
-}
-
-.stream-header > div {
-display: flex;
-align-items: center;
-gap: 9px;
-}
-
-.stream-title {
-color: #aeb8c5;
-font-size: 11px;
-font-weight: 650;
-}
-
-.stream-count {
-color: #4f5c6c;
-font-size: 10px;
-}
-
-.stream-clear {
-border: 0;
-background: transparent;
-color: #657283;
-font-size: 10px;
-}
-
-.stream-clear:hover {
-color: #9aa7b7;
-}
-
-.stream-body {
-min-height: 0;
-flex: 1;
-overflow-y: auto;
-padding: 19px 25px 14px;
-}
-
-.stream-empty {
-display: flex;
-align-items: center;
-justify-content: center;
-flex-direction: column;
-min-height: 190px;
-gap: 7px;
-color: #566374;
-text-align: center;
-}
-
-.stream-empty strong {
-color: #8490a0;
-font-size: 12px;
-}
-
-.stream-empty span {
-max-width: 390px;
-font-size: 11px;
-line-height: 1.6;
-}
-
-.empty-orb {
-display: grid;
-width: 42px;
-height: 42px;
-margin-bottom: 5px;
-place-items: center;
-border: 1px solid #293544;
-border-radius: 50%;
-background: #111821;
-color: #7189a5;
-}
-
-.event-card {
-display: flex;
-max-width: 940px;
-gap: 12px;
-margin: 0 auto 13px;
-}
-
-.event-marker {
-position: relative;
-display: flex;
-width: 22px;
-flex: 0 0 22px;
-justify-content: center;
-}
-
-.event-marker::after {
-position: absolute;
-top: 19px;
-bottom: -15px;
-left: 10px;
-width: 1px;
-background: #202934;
-content: "";
-}
-
-.event-card:last-child .event-marker::after {
-display: none;
-}
-
-.event-marker span {
-display: grid;
-width: 21px;
-height: 21px;
-place-items: center;
-border: 1px solid #293443;
-border-radius: 6px;
-background: #111720;
-color: #728196;
-font-family: "Cascadia Code", Consolas, monospace;
-font-size: 10px;
-font-weight: 700;
-}
-
-.event-content {
-min-width: 0;
-flex: 1;
-padding: 1px 0 2px;
-}
-
-.event-meta {
-display: flex;
-align-items: center;
-gap: 9px;
-margin-bottom: 4px;
-}
-
-.event-type {
-color: #8592a2;
-font-size: 10px;
-font-weight: 650;
-}
-
-.event-meta time {
-color: #465261;
-font-size: 9px;
-}
-
-.event-text,
-.event-content pre {
-margin: 0;
-color: #aab5c2;
-font-family: "Cascadia Code", Consolas, monospace;
-font-size: 11px;
-line-height: 1.65;
-white-space: pre-wrap;
-word-break: break-word;
-}
-
-.event-content pre {
-padding: 9px 11px;
-border: 1px solid #202a35;
-border-radius: 6px;
-background: #0b1016;
-color: #8f9eaf;
-}
-
-.event-stdout .event-marker span {
-border-color: #304968;
-background: #111d2b;
-color: #72a9ed;
-}
-
-.event-stderr .event-marker span,
-.event-error .event-marker span {
-border-color: #57302e;
-background: #211313;
-color: #f2766f;
-}
-
-.event-error .event-text,
-.event-stderr .event-text {
-color: #d77b75;
-}
 
 /* Composer */
 
@@ -674,7 +490,7 @@ display: flex;
 align-items: center;
 gap: 10px;
 color: #aeb9c7;
-font-size: 11px;
+font-size: 12px;;
 }
 
 .workspace-input-label {
@@ -693,7 +509,7 @@ border: 0;
 background: transparent;
 color: #d7dee7;
 font-family: "Cascadia Code", Consolas, monospace;
-font-size: 11px;
+font-size: 13px;;
 }
 
 .workspace-input input::placeholder {
@@ -708,7 +524,7 @@ outline: none;
 display: block;
 margin-top: 5px;
 color: #e0a66e;
-font-size: 10px;
+font-size: 11px;;
 }
 
 .composer {
@@ -737,20 +553,20 @@ gap: 8px;
 
 .composer-label {
 color: #aeb9c7;
-font-size: 10px;
+font-size: 11px;;
 font-weight: 700;
 text-transform: uppercase;
 }
 
 .composer-hint {
 color: #4f5d6d;
-font-size: 9px;
+font-size: 10px;;
 }
 
 .composer-provider {
 color: #657386;
 font-family: "Cascadia Code", Consolas, monospace;
-font-size: 9px;
+font-size: 10px;;
 }
 
 .composer textarea {
@@ -764,7 +580,7 @@ border-radius: 0;
 outline: none;
 background: transparent;
 color: #d5dce5;
-font-size: 12px;
+font-size: 14px;;
 line-height: 1.65;
 }
 
@@ -813,7 +629,7 @@ border: 1px solid #303b49;
 border-radius: 6px;
 background: #171e27;
 color: #aeb9c7;
-font-size: 10px;
+font-size: 11px;;
 }
 
 .btn:hover:not(:disabled) {
@@ -852,7 +668,7 @@ border: 1px solid #5b302e;
 border-radius: 7px;
 background: #211414;
 color: #d77972;
-font-size: 10px;
+font-size: 11px;;
 }
 
 .error-banner strong {
@@ -899,7 +715,7 @@ font-weight: 600;
 max-width: 470px;
 margin: 9px 0 0;
 color: #657384;
-font-size: 12px;
+font-size: 13px;;
 line-height: 1.7;
 }
 
