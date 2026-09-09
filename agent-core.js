@@ -14,6 +14,11 @@ const { extractXML } = require("./parse/xml-parse");
 const { EventEmitter } = require("events");
 const agentConfig = require("./config/agent-config");
 
+// 辅助：延迟函数
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 class Agent extends EventEmitter {
     constructor(options = {}) {
         super();
@@ -191,6 +196,17 @@ class Agent extends EventEmitter {
 
             providerErrorState.count++;
 
+            // 指数退避延迟，最多30秒
+            const delay = Math.min(1000 * Math.pow(2, providerErrorState.count - 1), 30000);
+            this.emitEvent("provider.retry", {
+                step: this.step,
+                error: error.message,
+                count: providerErrorState.count,
+                max: providerErrorState.max,
+                delay,
+            });
+            await sleep(delay);
+
             this.emitEvent("provider.error", {
                 step: this.step,
                 error: error.message,
@@ -200,7 +216,10 @@ class Agent extends EventEmitter {
 
             if (providerErrorState.count >= providerErrorState.max) {
                 throw new Error(
-                    `Provider failed ${providerErrorState.count} consecutive times: ${error.message}`
+                    "Provider failed " +
+                        providerErrorState.count +
+                        " consecutive times: " +
+                        error.message
                 );
             }
 

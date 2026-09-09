@@ -7,6 +7,37 @@ const agentConfig = require("./config/agent-config");
 const MAX_FILE_SIZE = agentConfig.runtime.maxFileSize;
 const MAX_READ_SIZE = agentConfig.runtime.maxReadSize;
 const MAX_EXEC_TIMEOUT = agentConfig.runtime.maxExecTimeout;
+const MAX_EXEC_OUTPUT_SIZE = agentConfig.runtime.maxExecOutputSize;
+
+function limitExecOutput(value, maxSize = MAX_EXEC_OUTPUT_SIZE) {
+    const text = value || "";
+    const buffer = Buffer.from(text, "utf8");
+
+    if (buffer.length <= maxSize) {
+        return {
+            value: text,
+            truncated: false,
+        };
+    }
+
+    return {
+        value: buffer.subarray(0, maxSize).toString("utf8"),
+        truncated: true,
+    };
+}
+
+// 验证写入内容（可选）
+function validateContent(filePath, content) {
+    // 如果是 JSON 文件，尝试解析
+    if (filePath.endsWith(".json")) {
+        try {
+            JSON.parse(content);
+        } catch (e) {
+            throw new Error("Invalid JSON content: " + e.message);
+        }
+    }
+    // 可扩展其他验证
+}
 
 class Runtime {
     constructor(workspace = null) {
@@ -147,11 +178,32 @@ class Runtime {
             };
         }
 
-        fs.mkdirSync(path.dirname(fullPath), {
-            recursive: true,
-        });
+        // 内容验证（仅对特定类型）
+        try {
+            validateContent(filePath, content);
+        } catch (validationError) {
+            return {
+                ok: false,
+                action: "write",
+                path: filePath,
+                error: "Content validation failed: " + validationError.message,
+            };
+        }
 
-        fs.writeFileSync(fullPath, content, "utf8");
+        // 原子写入：先写入临时文件，再重命名
+        const dir = path.dirname(fullPath);
+        fs.mkdirSync(dir, { recursive: true });
+        const tempPath = fullPath + ".tmp." + Date.now();
+        try {
+            fs.writeFileSync(tempPath, content, "utf8");
+            fs.renameSync(tempPath, fullPath);
+        } catch (err) {
+            // 清理临时文件
+            try {
+                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+            } catch (_) {}
+            throw err;
+        }
 
         return {
             ok: true,
@@ -217,24 +269,34 @@ class Runtime {
                 cwd: workspace,
                 encoding: "utf8",
                 timeout: MAX_EXEC_TIMEOUT,
+                maxBuffer: MAX_EXEC_OUTPUT_SIZE,
                 stdio: ["pipe", "pipe", "pipe"],
                 windowsHide: false,
             });
+
+            const limitedOutput = limitExecOutput(output);
 
             return {
                 ok: true,
                 action: "exec",
                 command,
-                output,
+                output: limitedOutput.value,
+                outputTruncated: limitedOutput.truncated,
             };
         } catch (error) {
+            // 分开截断 stdout 和 stderr
+            const stdout = limitExecOutput(error.stdout);
+            const stderr = limitExecOutput(error.stderr);
+
             return {
                 ok: false,
                 action: "exec",
                 command,
                 exitCode: error.status ?? null,
-                stdout: error.stdout || "",
-                stderr: error.stderr || "",
+                stdout: stdout.value,
+                stderr: stderr.value,
+                stdoutTruncated: stdout.truncated,
+                stderrTruncated: stderr.truncated,
                 error: error.message,
             };
         }
@@ -304,20 +366,6 @@ function createRuntime(workspace) {
     return new Runtime(workspace);
 }
 
-/*
-
-Legacy singleton API.
-
-Existing callers can continue to use:
-
-setWorkspace(workspace);
-
-run(action);
-
-New Agent instances should create their own Runtime instance through
-
-createRuntime(workspace), which keeps workspace state isolated.
-*/
 const legacyRuntime = createRuntime();
 
 function setWorkspace(workspace) {
