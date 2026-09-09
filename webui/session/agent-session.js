@@ -164,14 +164,17 @@ class AgentSession extends EventEmitter {
 
             return result;
         } catch (error) {
-            this.error = error.message;
-            this.status = "error";
-            this.exitCode = 1;
+            if (this.status !== "stopped") {
+                this.error = error.message;
+                this.status = "error";
+                this.exitCode = 1;
+
+                this.addOutput("stderr", "Agent process error: " + error.message);
+
+                this.emit("session.error", error);
+            }
+
             this.finishedAt = Date.now();
-
-            this.addOutput("stderr", "Agent process error: " + error.message);
-
-            this.emit("session.error", error);
             this.emit("finished", this.getInfo());
 
             throw error;

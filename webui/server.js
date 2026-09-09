@@ -114,17 +114,37 @@ app.get("/api/sessions/:id/events", (req, res) => {
     const sendFinished = (info) => send("finished", info);
     const sendError = (error) => send("error", { message: error.message });
 
-    for (const output of session.getOutput()) {
+    let replaying = true;
+    const pendingOutputs = [];
+
+    const handleOutput = (output) => {
+        if (replaying) {
+            pendingOutputs.push(output);
+            return;
+        }
+
+        sendOutput(output);
+    };
+
+    session.on("output", handleOutput);
+    session.on("finished", sendFinished);
+    session.on("session.error", sendError);
+
+    const existingOutput = session.getOutput();
+
+    for (const output of existingOutput) {
+        sendOutput(output);
+    }
+
+    replaying = false;
+
+    for (const output of pendingOutputs) {
         sendOutput(output);
     }
 
     if (!session.isRunning()) {
         sendFinished(session.getInfo());
     }
-
-    session.on("output", sendOutput);
-    session.on("finished", sendFinished);
-    session.on("session.error", sendError);
 
     const heartbeat = setInterval(() => {
         if (res.writableEnded) return;
@@ -133,7 +153,7 @@ app.get("/api/sessions/:id/events", (req, res) => {
 
     req.on("close", () => {
         clearInterval(heartbeat);
-        session.removeListener("output", sendOutput);
+        session.removeListener("output", handleOutput);
         session.removeListener("finished", sendFinished);
         session.removeListener("session.error", sendError);
     });
