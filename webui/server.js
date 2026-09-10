@@ -2,17 +2,13 @@ const express = require("express");
 const path = require("path");
 const fs = require("fs");
 const { SessionManager } = require("./session/session-manager");
-
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const sessionManager = new SessionManager();
-
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "frontend", "dist")));
-
 function getSession(req, res) {
     const session = sessionManager.get(req.params.id);
-
     if (!session) {
         res.status(404).json({
             error: "Session not found",
@@ -22,21 +18,47 @@ function getSession(req, res) {
 
     return session;
 }
+function getWindowsDrives() {
+    const drives = [];
+    for (let code = 65; code <= 90; code += 1) {
+        const drive = String.fromCharCode(code) + ":\\";
+        try {
+            if (fs.statSync(drive).isDirectory()) {
+                drives.push({
+                    name: String.fromCharCode(code) + ":",
+                    path: drive,
+                });
+            }
+        } catch (error) {
+            // Drive is unavailable or inaccessible.
+        }
+    }
 
+    return drives;
+}
+function getDirectoryEntries(targetPath) {
+    return fs
+        .readdirSync(targetPath, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => ({
+            name: entry.name,
+            path: path.join(targetPath, entry.name),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
 app.get("/api/workspace/browse", (req, res) => {
-    const requestedPath =
-        typeof req.query.path === "string" && req.query.path.trim()
-            ? req.query.path.trim()
-            : path.parse(process.cwd()).root;
-
-    let targetPath;
-    try {
-        targetPath = path.resolve(requestedPath);
-    } catch (error) {
-        return res.status(400).json({
-            error: "Invalid path: " + error.message,
+    const requestedPath = typeof req.query.path === "string" ? req.query.path.trim() : "";
+    if (!requestedPath && process.platform === "win32") {
+        return res.json({
+            path: "",
+            displayPath: "This PC",
+            parent: null,
+            isRootList: true,
+            entries: getWindowsDrives(),
         });
     }
+
+    const targetPath = requestedPath ? path.resolve(requestedPath) : path.parse(process.cwd()).root;
 
     try {
         const stat = fs.statSync(targetPath);
@@ -47,19 +69,12 @@ app.get("/api/workspace/browse", (req, res) => {
             });
         }
 
-        const entries = fs
-            .readdirSync(targetPath, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => ({
-                name: entry.name,
-                path: path.join(targetPath, entry.name),
-            }))
-            .sort((a, b) => a.name.localeCompare(b.name));
-
         return res.json({
             path: targetPath,
+            displayPath: targetPath,
             parent: path.dirname(targetPath) === targetPath ? null : path.dirname(targetPath),
-            entries,
+            isRootList: false,
+            entries: getDirectoryEntries(targetPath),
         });
     } catch (error) {
         return res.status(400).json({
@@ -67,10 +82,8 @@ app.get("/api/workspace/browse", (req, res) => {
         });
     }
 });
-
 app.post("/api/run", (req, res) => {
     const { workspace, provider, task } = req.body;
-
     if (!workspace || !task) {
         return res.status(400).json({
             error: "Workspace and task are required",
@@ -119,28 +132,22 @@ app.post("/api/run", (req, res) => {
         });
     }
 });
-
 app.get("/api/sessions/:id", (req, res) => {
     const session = getSession(req, res);
     if (!session) return;
-
     res.json(session.getInfo());
 });
-
 app.get("/api/sessions/:id/output", (req, res) => {
     const session = getSession(req, res);
     if (!session) return;
-
     res.json({
         running: session.isRunning(),
         output: session.getOutput(),
     });
 });
-
 app.get("/api/sessions/:id/events", (req, res) => {
     const session = getSession(req, res);
     if (!session) return;
-
     res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -203,11 +210,9 @@ app.get("/api/sessions/:id/events", (req, res) => {
         session.removeListener("session.error", sendError);
     });
 });
-
 app.post("/api/sessions/:id/stop", async (req, res) => {
     const session = getSession(req, res);
     if (!session) return;
-
     if (!session.isRunning()) {
         return res.status(400).json({
             error: "Agent is not running",
@@ -229,17 +234,14 @@ app.post("/api/sessions/:id/stop", async (req, res) => {
         });
     }
 });
-
 app.get("/api/sessions", (req, res) => {
     res.json({
         sessions: sessionManager.list().map((session) => session.getInfo()),
     });
 });
-
 app.delete("/api/sessions/:id", (req, res) => {
     const session = getSession(req, res);
     if (!session) return;
-
     try {
         sessionManager.remove(session.id);
 
@@ -253,24 +255,16 @@ app.delete("/api/sessions/:id", (req, res) => {
         });
     }
 });
-
 app.use("/api", (req, res) => {
     res.status(404).json({
         error: "API endpoint not found: " + req.method + " " + req.originalUrl,
     });
 });
-
-// app.get("*", (req, res) => {
-//     res.sendFile(path.join(__dirname, "frontend", "dist", "index.html"));
-// });
-
 let server = null;
-
 function startServer() {
     if (server) {
         return server;
     }
-
     server = app.listen(PORT, "127.0.0.1", () => {
         console.log("[WebUI] Server running on localhost port " + PORT);
         console.log("[WebUI] Open your browser on localhost port " + PORT);
@@ -278,10 +272,8 @@ function startServer() {
 
     return server;
 }
-
 async function shutdown() {
     console.log("[WebUI] Shutting down...");
-
     try {
         await sessionManager.stopAll();
     } catch (error) {
@@ -299,16 +291,13 @@ async function shutdown() {
         });
     });
 }
-
 if (require.main === module) {
     startServer();
-
     process.on("SIGINT", async () => {
         await shutdown();
         process.exit(0);
     });
 }
-
 module.exports = {
     app,
     startServer,

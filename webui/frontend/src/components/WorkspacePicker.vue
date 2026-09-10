@@ -1,6 +1,11 @@
 <template>
     <div class="workspace-picker-mask" @click.self="$emit('close')">
-        <section class="workspace-picker" role="dialog" aria-modal="true" aria-labelledby="workspace-picker-title">
+        <section
+            class="workspace-picker"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workspace-picker-title"
+        >
             <header class="workspace-picker-header">
                 <div class="workspace-picker-heading">
                     <div class="workspace-picker-icon">📁</div>
@@ -9,23 +14,40 @@
                         <span>Choose a project directory</span>
                     </div>
                 </div>
-                <button class="icon-button" type="button" aria-label="Close" @click="$emit('close')">
+                <button
+                    class="icon-button"
+                    type="button"
+                    aria-label="Close"
+                    @click="$emit('close')"
+                >
                     ×
                 </button>
             </header>
-
-            <div class="workspace-picker-path" :title="currentPath">
+            <div class="workspace-picker-path" :title="displayPath">
                 <span>Location</span>
-                <code>{{ currentPath || "Loading..." }}</code>
+                <code>{{ displayPath || "Loading..." }}</code>
             </div>
-
             <div class="workspace-picker-toolbar">
-                <button type="button" class="btn" :disabled="!parentPath || loading" @click="goUp">
+                <button type="button" class="btn" :disabled="!canGoUp || loading" @click="goUp">
                     ← Up
                 </button>
 
-                <button type="button" class="btn btn-primary" :disabled="!currentPath || loading"
-                    @click="selectCurrent">
+                <button
+                    v-if="showDrivesButton"
+                    type="button"
+                    class="btn"
+                    :disabled="loading"
+                    @click="goToDrives"
+                >
+                    Drives
+                </button>
+
+                <button
+                    type="button"
+                    class="btn btn-primary"
+                    :disabled="!currentPath || loading"
+                    @click="selectCurrent"
+                >
                     Select this folder
                 </button>
             </div>
@@ -48,8 +70,13 @@
                 </div>
 
                 <template v-else>
-                    <button v-for="entry in entries" :key="entry.path" class="workspace-picker-item" type="button"
-                        @click="enter(entry.path)">
+                    <button
+                        v-for="entry in entries"
+                        :key="entry.path"
+                        class="workspace-picker-item"
+                        type="button"
+                        @click="enter(entry.path)"
+                    >
                         <span class="workspace-picker-item-icon">📁</span>
                         <span class="workspace-picker-item-name">{{ entry.name }}</span>
                         <span class="workspace-picker-item-arrow">›</span>
@@ -58,34 +85,53 @@
             </div>
 
             <footer class="workspace-picker-footer">
-                <span>Only directories are shown</span>
+                <span v-if="isRootList">Select a drive to browse projects</span>
+                <span v-else>Only directories are shown</span>
                 <span>Double-click navigation is not required</span>
             </footer>
         </section>
     </div>
 </template>
 <script setup>
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { browseWorkspace } from "../services/agent-api.js";
-
 const emit = defineEmits(["select", "close"]);
-
 const currentPath = ref("");
+const displayPath = ref("");
 const parentPath = ref(null);
 const entries = ref([]);
+const isRootList = ref(false);
 const loading = ref(false);
 const errorMessage = ref("");
-
+const canGoUp = computed(() => {
+    if (isRootList.value || !currentPath.value) {
+        return false;
+    }
+    return Boolean(parentPath.value) || isFilesystemRoot(currentPath.value);
+});
+const showDrivesButton = computed(() => {
+    if (isRootList.value || !currentPath.value || !parentPath.value) {
+        return false;
+    }
+    return parentPath.value !== currentPath.value;
+});
+function isFilesystemRoot(targetPath) {
+    if (targetPath === "/") {
+        return true;
+    }
+    return /^[A-Za-z]:[\\/]+$/.test(targetPath);
+}
 async function load(targetPath) {
     loading.value = true;
     errorMessage.value = "";
-
     try {
         const result = await browseWorkspace(targetPath);
 
-        currentPath.value = result.path;
-        parentPath.value = result.parent;
+        currentPath.value = result.path || "";
+        displayPath.value = result.displayPath || result.path || "This PC";
+        parentPath.value = result.parent || null;
         entries.value = result.entries || [];
+        isRootList.value = result.isRootList === true;
     } catch (error) {
         errorMessage.value = error.message || "Failed to browse workspace";
         entries.value = [];
@@ -93,25 +139,31 @@ async function load(targetPath) {
         loading.value = false;
     }
 }
-
 function enter(targetPath) {
     load(targetPath);
 }
-
 function goUp() {
+    if (isRootList.value) {
+        return;
+    }
+    if (isFilesystemRoot(currentPath.value)) {
+        load("");
+        return;
+    }
+
     if (parentPath.value) {
         load(parentPath.value);
     }
 }
-
+function goToDrives() {
+    load("");
+}
 function selectCurrent() {
     if (!currentPath.value || loading.value) {
         return;
     }
-
     emit("select", currentPath.value);
 }
-
 onMounted(() => {
     load("");
 });
@@ -196,7 +248,7 @@ onMounted(() => {
     background: #0b1016;
 }
 
-.workspace-picker-path>span {
+.workspace-picker-path > span {
     flex: 0 0 auto;
     color: #68778a;
     font-size: 10px;
@@ -218,18 +270,18 @@ onMounted(() => {
 .workspace-picker-toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
     padding: 12px 18px;
     border-bottom: 1px solid #1d2732;
 }
 
-.workspace-picker-toolbar .btn {
+.workspace-picker-toolbar .btn:first-child {
     min-width: 82px;
 }
 
 .workspace-picker-toolbar .btn-primary {
     min-width: 142px;
+    margin-left: auto;
 }
 
 .workspace-picker-list {
