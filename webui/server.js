@@ -1,4 +1,3 @@
-
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
@@ -59,10 +58,7 @@ app.get("/api/workspace/browse", (req, res) => {
 
         return res.json({
             path: targetPath,
-            parent:
-                path.dirname(targetPath) === targetPath
-                    ? null
-                    : path.dirname(targetPath),
+            parent: path.dirname(targetPath) === targetPath ? null : path.dirname(targetPath),
             entries,
         });
     } catch (error) {
@@ -264,9 +260,9 @@ app.use("/api", (req, res) => {
     });
 });
 
-app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "frontend", "dist", "index.html"));
-});
+// app.get("*", (req, res) => {
+//     res.sendFile(path.join(__dirname, "frontend", "dist", "index.html"));
+// });
 
 let server = null;
 
