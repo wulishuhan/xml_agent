@@ -172,6 +172,31 @@ class BrowserAgent {
         throw new Error("Chrome CDP server did not start within " + this.startTimeout + "ms");
     }
 
+    async openNewPageForTarget() {
+        console.log("[" + this.name + "] Creating new page for target: " + this.targetUrl);
+
+        this.page = await this.context.newPage();
+
+        if (this.targetUrl) {
+            try {
+                await this.page.goto(this.targetUrl, {
+                    waitUntil: "domcontentloaded",
+                    timeout: 30000,
+                });
+            } catch (error) {
+                console.warn(
+                    "[" +
+                        this.name +
+                        "] Navigation to " +
+                        this.targetUrl +
+                        " timed out, continuing..."
+                );
+            }
+        }
+
+        return this.page;
+    }
+
     async ensurePage() {
         if (!this.browser) {
             throw new Error("Browser not connected");
@@ -192,50 +217,10 @@ class BrowserAgent {
         // 在同一个 BrowserContext 中创建新页面，可以继续复用已有登录状态。
         if (!this.reuseExistingPage) {
             console.log("[" + this.name + "] Creating an isolated page for this session...");
-
-            this.page = await this.context.newPage();
-
-            if (this.targetUrl) {
-                console.log("[" + this.name + "] Navigating to " + this.targetUrl + "...");
-
-                try {
-                    await this.page.goto(this.targetUrl, {
-                        waitUntil: "domcontentloaded",
-                        timeout: 30000,
-                    });
-                } catch (error) {
-                    console.warn(
-                        "[" +
-                        this.name +
-                        "] Navigation to " +
-                        this.targetUrl +
-                        " timed out, continuing..."
-                    );
-                }
-            }
+            await this.openNewPageForTarget();
         } else if (!pages || pages.length === 0) {
             console.log("[" + this.name + "] No page found, creating new page...");
-
-            this.page = await this.context.newPage();
-
-            if (this.targetUrl) {
-                console.log("[" + this.name + "] Navigating to " + this.targetUrl + "...");
-
-                try {
-                    await this.page.goto(this.targetUrl, {
-                        waitUntil: "domcontentloaded",
-                        timeout: 30000,
-                    });
-                } catch (error) {
-                    console.warn(
-                        "[" +
-                        this.name +
-                        "] Navigation to " +
-                        this.targetUrl +
-                        " timed out, continuing..."
-                    );
-                }
-            }
+            await this.openNewPageForTarget();
         } else {
             this.page = null;
 
@@ -259,14 +244,16 @@ class BrowserAgent {
                     }
                 });
 
-                throw new Error(
+                console.log(
                     "[" +
-                    this.name +
-                    "] No matching page found for " +
-                    this.targetUrl +
-                    ". Available pages: " +
-                    availableUrls.join(", ")
+                        this.name +
+                        "] No matching page found for " +
+                        this.targetUrl +
+                        ", creating a new page. Available pages: " +
+                        availableUrls.join(", ")
                 );
+
+                await this.openNewPageForTarget();
             }
         }
 
@@ -583,10 +570,10 @@ class BrowserAgent {
                 if (now - startTime >= initialTimeout) {
                     throw new Error(
                         "[" +
-                        this.name +
-                        "] did not receive any response within " +
-                        initialTimeout +
-                        "ms"
+                            this.name +
+                            "] did not receive any response within " +
+                            initialTimeout +
+                            "ms"
                     );
                 }
 
