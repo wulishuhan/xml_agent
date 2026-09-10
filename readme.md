@@ -56,7 +56,13 @@ cd xml_agent
 npm run webui
 ```
 
-另外一个终端启动dev页面
+访问页面
+
+```
+http://localhost:3000/xml_agent_web/
+```
+
+或启动开发版页面,另外一个终端启动dev页面
 
 ```
 cd xml_agent

@@ -10,7 +10,7 @@
         "start": "node agent.js",
         "browser": "node browser.js",
         "runtime": "node runtime.js",
-        "webui": "node webui/server.js",
+        "webui": "vite build --config webui/frontend/vite.config.js && node webui/server.js",
         "webui:dev": "vite --config webui/frontend/vite.config.js",
         "webui:build": "vite build --config webui/frontend/vite.config.js"
     },

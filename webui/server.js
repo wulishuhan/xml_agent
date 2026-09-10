@@ -5,8 +5,12 @@ const { SessionManager } = require("./session/session-manager");
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 const sessionManager = new SessionManager();
+const frontendDistPath = path.join(__dirname, "frontend", "dist");
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "frontend", "dist")));
+app.use(express.static(frontendDistPath));
+app.get("/xml_agent_web", (req, res) => {
+    res.sendFile(path.join(frontendDistPath, "index.html"));
+});
 function getSession(req, res) {
     const session = sessionManager.get(req.params.id);
     if (!session) {
@@ -15,7 +19,6 @@ function getSession(req, res) {
         });
         return null;
     }
-
     return session;
 }
 function getWindowsDrives() {
@@ -267,7 +270,7 @@ function startServer() {
     }
     server = app.listen(PORT, "127.0.0.1", () => {
         console.log("[WebUI] Server running on localhost port " + PORT);
-        console.log("[WebUI] Open your browser on localhost port " + PORT);
+        console.log("[WebUI] Open your browser on http://localhost:" + PORT + "/xml_agent_web/");
     });
 
     return server;
