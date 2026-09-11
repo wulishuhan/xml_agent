@@ -5,14 +5,20 @@
     "version": "1.0.0",
     "description": "agent for xml parsing using web browser",
     "private": true,
-    "main": "agent.js",
+    "main": "electron/main.js",
     "scripts": {
         "start": "node agent.js",
         "browser": "node browser.js",
         "runtime": "node runtime.js",
         "webui": "vite build --config webui/frontend/vite.config.js && node webui/server.js",
         "webui:dev": "vite --config webui/frontend/vite.config.js",
-        "webui:build": "vite build --config webui/frontend/vite.config.js"
+        "webui:build": "vite build --config webui/frontend/vite.config.js",
+        "electron:dev": "npm run webui:build && electron .",
+        "electron:start": "electron .",
+        "electron:prepare": "node scripts/prepare-electron-dist.js",
+        "electron:build": "node scripts/prepare-electron-dist.js && npm run webui:build && node scripts/build-windows.js",
+        "electron:build:simple": "node scripts/prepare-electron-dist.js && npm run webui:build && electron-builder && node scripts/postbuild-fix-exe.js",
+        "test:electron": "node test/test-electron-main.js && node test/test-electron-port.js && node test/test-electron-server-port.js && node test/test-electron-port-isolation.js && node test/test-electron-chrome-finder.js && node test/test-electron-settings.js && node test/test-electron-smoke.js"
     },
     "dependencies": {
         "express": "^5.2.1",
@@ -22,6 +28,65 @@
     },
     "devDependencies": {
         "@vitejs/plugin-vue": "^6.0.8",
+        "electron": "33.2.0",
+        "electron-builder": "25.1.8",
+        "prettier": "^3.9.6",
         "vite": "^7.3.6"
+    },
+    "build": {
+        "appId": "com.shuhan.xmlagent",
+        "productName": "XMLAgent",
+        "artifactName": "XMLAgent-${version}-${arch}.${ext}",
+        "asar": true,
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "electron/**/*",
+            "webui/**/*",
+            "config/**/*",
+            "parse/**/*",
+            "prompts/**/*",
+            "providers/**/*",
+            "workspace/**/*",
+            "agent.js",
+            "agent-core.js",
+            "runtime.js",
+            "logger.js",
+            "package.json",
+            "!**/*.map",
+            "!test/**/*",
+            "!webui/test/**/*",
+            "!webui/frontend/src/**/*",
+            "!release/**/*",
+            "!.electron-builder-cache/**/*"
+        ],
+        "extraMetadata": {
+            "main": "electron/main.js"
+        },
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                },
+                {
+                    "target": "portable",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ]
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "perMachine": false,
+            "createDesktopShortcut": true,
+            "createStartMenuShortcut": true,
+            "shortcutName": "XML Agent"
+        }
     }
 }

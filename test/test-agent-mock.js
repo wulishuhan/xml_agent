@@ -1,1 +1,1 @@
- console.log("Mock test file created"); 
+console.log("Mock test file created");

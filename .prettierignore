@@ -1,1 +1,1 @@
-node_modules/ dist/ build/ coverage/ *.log .env .env.* .DS_Store 
+ node_modules/ release/ dist/ build/ coverage/ .electron-builder-cache/ *.log .env .env.* .DS_Store package-lock.json webui/frontend/src/styles/app.css webui/frontend/src/styles/console.css 

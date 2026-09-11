@@ -1,7 +1,11 @@
 <template>
     <div class="app-shell">
-        <SessionSidebar :sessions="sessions" :active-id="activeSessionId" @select="selectSession"
-            @new-session="createNewSession" />
+        <SessionSidebar
+            :sessions="sessions"
+            :active-id="activeSessionId"
+            @select="selectSession"
+            @new-session="createNewSession"
+        />
         <main class="workspace-view">
             <header class="workspace-header">
                 <div class="workspace-heading">
@@ -24,6 +28,15 @@
                     <span class="status-badge" :class="'status-' + sessionStatus">
                         {{ statusText }}
                     </span>
+                    <button
+                        v-if="isElectron"
+                        type="button"
+                        class="btn"
+                        title="Desktop settings"
+                        @click="showSettings = true"
+                    >
+                        ⚙ Settings
+                    </button>
                 </div>
             </header>
             <section class="workspace-body">
@@ -40,6 +53,9 @@
                         <span class="context-label">Session</span>
                         <code>{{ shortId(activeSession.id) }}</code>
                     </div>
+                    <div v-if="isElectron" class="context-item">
+                        <span class="context-label">Port</span> <code>{{ electronPort }}</code>
+                    </div>
                 </div>
 
                 <AgentConsole :output="output" :session="activeSession" @clear="clearConsole" />
@@ -47,7 +63,6 @@
                 <div v-if="errorMessage" class="error-banner">
                     <strong>Agent error</strong> <span>{{ errorMessage }}</span>
                 </div>
-
                 <div v-if="!activeSession" class="welcome">
                     <div class="welcome-mark">&lt;/&gt;</div>
                     <h1>Build with your Agent</h1>
@@ -55,35 +70,63 @@
                         Create a session, choose a workspace, and let the Agent inspect, modify, and
                         test your project.
                     </p>
+                    <p v-if="isElectron" class="welcome-desktop-hint">
+                        Desktop mode · Chrome auto-detect enabled · click Settings to configure
+                    </p>
                 </div>
-
                 <div class="composer-shell">
-                    <div class="workspace-input-row" :class="{ 'workspace-input-row--required': !workspace.trim() }">
+                    <div
+                        class="workspace-input-row"
+                        :class="{ 'workspace-input-row--required': !workspace.trim() }"
+                    >
                         <div class="workspace-input">
                             <span class="workspace-input-label">Workspace</span>
 
-                            <input ref="workspaceInput" v-model="workspace" :disabled="running" type="text"
+                            <input
+                                ref="workspaceInput"
+                                v-model="workspace"
+                                :disabled="running"
+                                type="text"
                                 placeholder="Enter an absolute path, for example D:/projects/my-app"
-                                @keydown.enter="focusTask" />
+                                @keydown.enter="focusTask"
+                            />
 
-                            <button type="button" class="btn workspace-browse-button" :disabled="running"
-                                @click="openWorkspacePicker">
+                            <button
+                                type="button"
+                                class="btn workspace-browse-button"
+                                :disabled="running"
+                                @click="openWorkspacePicker"
+                            >
                                 📁 Browse
                             </button>
                         </div>
-
                         <span v-if="!workspace.trim()" class="workspace-required-hint">
                             Required · this path is different on each computer
                         </span>
                     </div>
 
-                    <TaskComposer v-model:task="task" :provider="provider" :running="running" @run="runAgent"
-                        @stop="stopAgent" />
+                    <TaskComposer
+                        v-model:task="task"
+                        :provider="provider"
+                        :running="running"
+                        @run="runAgent"
+                        @stop="stopAgent"
+                    />
                 </div>
             </section>
         </main>
 
-        <WorkspacePicker v-if="showWorkspacePicker" @select="selectWorkspace" @close="closeWorkspacePicker" />
+        <WorkspacePicker
+            v-if="showWorkspacePicker"
+            @select="selectWorkspace"
+            @close="closeWorkspacePicker"
+        />
+
+        <DesktopSettings
+            v-if="showSettings"
+            @close="showSettings = false"
+            @saved="onSettingsSaved"
+        />
     </div>
 </template>
 <script setup>
@@ -92,8 +135,9 @@ import AgentConsole from "./components/AgentConsole.vue";
 import SessionSidebar from "./components/SessionSidebar.vue";
 import TaskComposer from "./components/TaskComposer.vue";
 import WorkspacePicker from "./components/WorkspacePicker.vue";
+import DesktopSettings from "./components/DesktopSettings.vue";
 import {
-    deleteSession,
+    getEventSourceUrl,
     getSession,
     getSessionOutput,
     getSessions,
@@ -112,6 +156,23 @@ const provider = ref("chatgpt");
 const task = ref("");
 const workspaceInput = ref(null);
 const showWorkspacePicker = ref(false);
+const showSettings = ref(false);
+
+const isElectron = computed(() => {
+    return (
+        typeof window !== "undefined" &&
+        window.xmlAgentDesktop &&
+        window.xmlAgentDesktop.isElectron === true
+    );
+});
+
+const electronPort = computed(() => {
+    if (!isElectron.value) {
+        return "";
+    }
+
+    return String(window.xmlAgentDesktop.port || "");
+});
 
 const sessionStatus = computed(() => {
     return activeSession.value?.status || "created";
@@ -184,7 +245,7 @@ async function selectSession(sessionId) {
 
 function subscribeToSession(sessionId) {
     closeEventSource();
-    const source = new EventSource("/api/sessions/" + sessionId + "/events");
+    const source = new EventSource(getEventSourceUrl(sessionId));
 
     source.addEventListener("output", (event) => {
         try {
@@ -356,20 +417,29 @@ function selectWorkspace(selectedPath) {
     errorMessage.value = "";
 }
 
+function onSettingsSaved() {
+    // 提示用户新配置已生效。后续新启动的 Agent 会话会使用新的 Chrome 路径。
+    errorMessage.value = "";
+}
+
 onMounted(loadSessions);
 onUnmounted(closeEventSource);
 </script>
+
 <style scoped>
 .workspace-browse-button {
     flex: 0 0 auto;
     white-space: nowrap;
 }
-
 .workspace-input {
     width: 100%;
 }
-
 .workspace-input input {
     width: 100%;
+}
+.welcome-desktop-hint {
+    margin-top: 10px;
+    color: #566477;
+    font-size: 12px;
 }
 </style>

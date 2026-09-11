@@ -1,6 +1,19 @@
+// Electron 版会把端口通过 window.xmlAgentDesktop.port 注入，
+// 浏览器版没有该对象，此时回退到相对路径（同源）。
+function getBaseUrl() {
+    if (typeof window !== "undefined" && window.xmlAgentDesktop && window.xmlAgentDesktop.baseUrl) {
+        return window.xmlAgentDesktop.baseUrl;
+    }
+
+    return "";
+}
+
+function api(path) {
+    return getBaseUrl() + path;
+}
 
 export async function runAgent(data) {
-    const response = await fetch("/api/run", {
+    const response = await fetch(api("/api/run"), {
         method: "POST",
 
         headers: {
@@ -21,7 +34,7 @@ export async function runAgent(data) {
 
 export async function browseWorkspace(targetPath) {
     const query = targetPath ? "?path=" + encodeURIComponent(targetPath) : "";
-    const response = await fetch("/api/workspace/browse" + query);
+    const response = await fetch(api("/api/workspace/browse" + query));
 
     if (!response.ok) {
         const text = await response.text();
@@ -41,7 +54,7 @@ export async function browseWorkspace(targetPath) {
 }
 
 export async function getSession(sessionId) {
-    const response = await fetch("/api/sessions/" + sessionId);
+    const response = await fetch(api("/api/sessions/" + sessionId));
 
     const result = await response.json();
 
@@ -53,7 +66,7 @@ export async function getSession(sessionId) {
 }
 
 export async function getSessionOutput(sessionId) {
-    const response = await fetch("/api/sessions/" + sessionId + "/output");
+    const response = await fetch(api("/api/sessions/" + sessionId + "/output"));
 
     const result = await response.json();
 
@@ -65,7 +78,7 @@ export async function getSessionOutput(sessionId) {
 }
 
 export async function stopSession(sessionId) {
-    const response = await fetch("/api/sessions/" + sessionId + "/stop", {
+    const response = await fetch(api("/api/sessions/" + sessionId + "/stop"), {
         method: "POST",
     });
 
@@ -79,7 +92,7 @@ export async function stopSession(sessionId) {
 }
 
 export async function getSessions() {
-    const response = await fetch("/api/sessions");
+    const response = await fetch(api("/api/sessions"));
 
     const result = await response.json();
 
@@ -91,7 +104,7 @@ export async function getSessions() {
 }
 
 export async function deleteSession(sessionId) {
-    const response = await fetch("/api/sessions/" + sessionId, {
+    const response = await fetch(api("/api/sessions/" + sessionId), {
         method: "DELETE",
     });
 
@@ -102,4 +115,8 @@ export async function deleteSession(sessionId) {
     }
 
     return result;
+}
+
+export function getEventSourceUrl(sessionId) {
+    return api("/api/sessions/" + sessionId + "/events");
 }

@@ -3,9 +3,10 @@ const path = require("path");
 const fs = require("fs");
 const { SessionManager } = require("./session/session-manager");
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const sessionManager = new SessionManager();
 const frontendDistPath = path.join(__dirname, "frontend", "dist");
+const BACKSLASH = String.fromCharCode(92);
 app.use(express.json());
 app.use(express.static(frontendDistPath));
 app.get("/xml_agent_web", (req, res) => {
@@ -24,11 +25,12 @@ function getSession(req, res) {
 function getWindowsDrives() {
     const drives = [];
     for (let code = 65; code <= 90; code += 1) {
-        const drive = String.fromCharCode(code) + ":\\";
+        const letter = String.fromCharCode(code);
+        const drive = letter + ":" + BACKSLASH;
         try {
             if (fs.statSync(drive).isDirectory()) {
                 drives.push({
-                    name: String.fromCharCode(code) + ":",
+                    name: letter + ":",
                     path: drive,
                 });
             }
@@ -264,13 +266,16 @@ app.use("/api", (req, res) => {
     });
 });
 let server = null;
-function startServer() {
+function startServer(options = {}) {
     if (server) {
         return server;
     }
-    server = app.listen(PORT, "127.0.0.1", () => {
-        console.log("[WebUI] Server running on localhost port " + PORT);
-        console.log("[WebUI] Open your browser on http://localhost:" + PORT + "/xml_agent_web/");
+
+    const port = Number(options.port) || DEFAULT_PORT;
+
+    server = app.listen(port, "127.0.0.1", () => {
+        console.log("[WebUI] Server running on localhost port " + port);
+        console.log("[WebUI] Open your browser on http://localhost:" + port + "/xml_agent_web/");
     });
 
     return server;
