@@ -33,6 +33,7 @@ const ignoredDirs = new Set([
     ".cache",
     "tmp",
     "temp",
+    ".electron-builder-cache",
 ]);
 
 const ignoredFiles = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);

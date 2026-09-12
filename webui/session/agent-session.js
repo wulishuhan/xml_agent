@@ -3,7 +3,7 @@ const { EventEmitter } = require("events");
 const { Agent } = require("../../agent-core");
 
 class AgentSession extends EventEmitter {
-    constructor({ workspace, provider = "chatgpt", task }) {
+    constructor({ workspace, provider = "chatgpt", task, conversationId = null }) {
         super();
 
         if (!workspace) {
@@ -14,10 +14,15 @@ class AgentSession extends EventEmitter {
             throw new Error("Task is required");
         }
 
+        // 程序内部 id，用于 WebUI 内部定位；与 provider 页面的会话 id 无关
         this.id = crypto.randomUUID();
         this.workspace = workspace;
         this.provider = provider;
         this.task = task;
+
+        // provider 页面的会话 id（DeepSeek/ChatGPT/Qwen URL 中的 id）
+        // 有值表示"继续已有会话"，无值表示"新会话"
+        this.conversationId = conversationId || null;
 
         this.agent = null;
         this.output = [];
@@ -49,6 +54,18 @@ class AgentSession extends EventEmitter {
     }
 
     handleAgentEvent(event) {
+        // provider.conversation 事件用于同步 provider 页面的会话 id，
+        // 不写入控制台，只更新 session 状态并广播给前端。
+        if (event.type === "provider.conversation") {
+            if (event.conversationId && event.conversationId !== this.conversationId) {
+                this.conversationId = event.conversationId;
+                this.emit("conversation", {
+                    id: this.id,
+                    conversationId: this.conversationId,
+                });
+            }
+        }
+
         const content = this.formatEvent(event);
 
         if (content !== null) {
@@ -71,6 +88,9 @@ class AgentSession extends EventEmitter {
 
             case "provider.started":
                 return "Provider started: " + event.provider;
+
+            case "provider.conversation":
+                return "Provider conversation id: " + event.conversationId;
 
             case "provider.request":
                 return "Provider request (step " + event.step + ")";
@@ -130,6 +150,7 @@ class AgentSession extends EventEmitter {
             workspace: this.workspace,
             provider: this.provider,
             task: this.task,
+            conversationId: this.conversationId,
         });
 
         this.agent.on("event", (event) => {
@@ -155,6 +176,15 @@ class AgentSession extends EventEmitter {
 
             if (this.status !== "stopped") {
                 this.status = result.status === "error" ? "error" : "completed";
+            }
+
+            // 从 result 中同步 conversationId（可能是新会话首次分配，也可能是已有会话的更新）
+            if (result.conversationId && result.conversationId !== this.conversationId) {
+                this.conversationId = result.conversationId;
+                this.emit("conversation", {
+                    id: this.id,
+                    conversationId: this.conversationId,
+                });
             }
 
             this.exitCode = this.status === "error" ? 1 : 0;
@@ -213,6 +243,7 @@ class AgentSession extends EventEmitter {
     getInfo() {
         return {
             id: this.id,
+            conversationId: this.conversationId,
             workspace: this.workspace,
             provider: this.provider,
             task: this.task,

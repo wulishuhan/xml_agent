@@ -35,6 +35,13 @@ class Agent extends EventEmitter {
         this.providerName = options.provider || "chatgpt";
         this.task = options.task;
 
+        // 可选：provider 页面 URL 中的会话 ID。
+        // 有值时，Provider 会直接打开该会话的 URL；无值时表示新会话。
+        this.conversationId = options.conversationId || null;
+
+        // 运行时从 provider 同步到的最新会话 ID（消息发送后回填）
+        this.currentConversationId = this.conversationId;
+
         this.maxSteps = options.maxSteps ?? agentConfig.agent.maxSteps;
         this.maxProviderErrors = options.maxProviderErrors ?? agentConfig.agent.maxProviderErrors;
 
@@ -61,6 +68,35 @@ class Agent extends EventEmitter {
         return event;
     }
 
+    /**
+
+从 provider 同步 conversationId。
+
+只在发生变化时 emit 事件，避免刷屏。
+*/
+    syncConversationId() {
+        if (!this.provider) {
+            return null;
+        }
+
+        const cid = this.provider.currentConversationId || null;
+
+        if (!cid) {
+            return null;
+        }
+
+        if (cid !== this.currentConversationId) {
+            this.currentConversationId = cid;
+
+            this.emitEvent("provider.conversation", {
+                provider: this.providerName,
+                conversationId: cid,
+            });
+        }
+
+        return cid;
+    }
+
     async run() {
         if (this.status !== "created") {
             throw new Error("Agent can only be run once");
@@ -79,6 +115,7 @@ class Agent extends EventEmitter {
                 workspace: currentWorkspace,
                 provider: this.providerName,
                 task: this.task,
+                conversationId: this.conversationId,
             });
 
             this.provider = createProvider(this.providerName, {
@@ -89,6 +126,7 @@ class Agent extends EventEmitter {
                 chromePath: agentConfig.browser.chromePath,
                 targetUrl: agentConfig.browser.targetUrls[this.providerName],
                 reuseExistingPage: agentConfig.browser.reuseExistingPage,
+                conversationId: this.conversationId,
             });
 
             this.emitEvent("provider.starting", {
@@ -104,6 +142,9 @@ class Agent extends EventEmitter {
             this.emitEvent("provider.started", {
                 provider: this.providerName,
             });
+
+            // 启动后尝试同步一次会话 ID（如果页面已在某个 conversation 中）
+            this.syncConversationId();
 
             let prompt = getFirstPrompt(currentWorkspace, manifest, this.task);
 
@@ -141,6 +182,7 @@ class Agent extends EventEmitter {
                 status: this.status,
                 steps: this.step,
                 answer: this.answer,
+                conversationId: this.currentConversationId,
             });
 
             return this.getResult();
@@ -181,6 +223,9 @@ class Agent extends EventEmitter {
             }
 
             providerErrorState.count = 0;
+
+            // 每次响应后尝试同步 conversationId，让上层及时感知新会话 ID
+            this.syncConversationId();
 
             this.emitEvent("provider.response", {
                 step: this.step,
@@ -330,6 +375,18 @@ class Agent extends EventEmitter {
         this.provider = null;
 
         try {
+            // 关闭前再尝试同步一次 conversationId，避免丢失最后的会话信息
+            const cid = provider.currentConversationId;
+
+            if (cid && cid !== this.currentConversationId) {
+                this.currentConversationId = cid;
+
+                this.emitEvent("provider.conversation", {
+                    provider: this.providerName,
+                    conversationId: cid,
+                });
+            }
+
             await provider.close();
 
             this.emitEvent("provider.closed", {
@@ -351,6 +408,7 @@ class Agent extends EventEmitter {
             task: this.task,
             step: this.step,
             answer: this.answer,
+            conversationId: this.currentConversationId,
             error: this.error ? this.error.message : null,
             history: this.history,
         };

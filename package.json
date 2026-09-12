@@ -18,7 +18,10 @@
         "electron:prepare": "node scripts/prepare-electron-dist.js",
         "electron:build": "node scripts/prepare-electron-dist.js && npm run webui:build && node scripts/build-windows.js",
         "electron:build:simple": "node scripts/prepare-electron-dist.js && npm run webui:build && electron-builder && node scripts/postbuild-fix-exe.js",
-        "test:electron": "node test/test-electron-main.js && node test/test-electron-port.js && node test/test-electron-server-port.js && node test/test-electron-port-isolation.js && node test/test-electron-chrome-finder.js && node test/test-electron-settings.js && node test/test-electron-smoke.js"
+        "test:electron": "node test/test-electron-main.js && node test/test-electron-port.js && node test/test-electron-server-port.js && node test/test-electron-port-isolation.js && node test/test-electron-chrome-finder.js && node test/test-electron-settings.js && node test/test-electron-conversation.js && node test/test-electron-smoke.js",
+        "test:conversation": "node test/test-electron-conversation.js",
+        "test:session-conversation": "node test/test-session-conversation.js && node test/test-session-manager-conversation.js && node test/test-conversation-e2e.js",
+        "test:conversation:all": "npm run test:conversation && npm run test:session-conversation"
     },
     "dependencies": {
         "express": "^5.2.1",

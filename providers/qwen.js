@@ -1,12 +1,18 @@
 const { BrowserAgent } = require("./browser-agent");
 
+const QWEN_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
+const TRAILING_SLASH_PATTERN = new RegExp("/+$");
+
 class QwenProvider extends BrowserAgent {
     constructor(options = {}) {
         super({
             ...options,
             inputSelectors: [
                 ".message-input-textarea",
+                'div[contenteditable="true"][role="textbox"]',
+                'div[contenteditable="true"]',
                 '[contenteditable="true"]',
+                "[role='textbox']",
                 "#prompt-textarea",
                 "textarea",
             ],
@@ -28,9 +34,50 @@ class QwenProvider extends BrowserAgent {
     }
 
     /**
-  
-  获取所有 assistant 消息数量
-  */
+
+Qwen 会话 URL 形如：
+
+https://chat.qwen.ai/c/<uuid>
+
+从 URL 中提取会话 id。
+*/
+    getConversationIdFromUrl(url) {
+        if (!url || typeof url !== "string") {
+            return null;
+        }
+
+        const match = url.match(QWEN_CONVERSATION_PATTERN);
+
+        if (!match) {
+            return null;
+        }
+
+        return match[1];
+    }
+
+    /**
+
+构造目标 URL：
+
+无 conversationId：进入新会话入口 https://chat.qwen.ai
+
+有 conversationId：直接进入已有会话 https://chat.qwen.ai/c/<id>
+*/
+    buildTargetUrl() {
+        const base = this.targetUrl || "https://chat.qwen.ai";
+
+        if (!this.conversationId) {
+            return base;
+        }
+
+        const trimmed = base.replace(TRAILING_SLASH_PATTERN, "");
+        return trimmed + "/c/" + this.conversationId;
+    }
+
+    /**
+
+获取所有 assistant 消息数量
+*/
     async getAssistantCount() {
         if (!this.isPageAlive()) {
             return 0;
@@ -44,11 +91,11 @@ class QwenProvider extends BrowserAgent {
     }
 
     /**
-  
-  获取最后一条 assistant 回复
-  
-  修复：移除 markdown 代码块中的行号（margin 元素）
-  */
+
+获取最后一条 assistant 回复
+
+修复：移除 markdown 代码块中的行号（margin 元素）
+*/
     async getLastResponse() {
         if (!this.isPageAlive()) {
             return "";
@@ -100,9 +147,9 @@ class QwenProvider extends BrowserAgent {
     }
 
     /**
-  
-  获取当前 Qwen 回复状态
-  */
+
+获取当前 Qwen 回复状态
+*/
     async getResponseState() {
         return {
             count: await this.getAssistantCount(),
@@ -111,9 +158,9 @@ class QwenProvider extends BrowserAgent {
     }
 
     /**
-  
-  等待 Qwen 开始产生新的回复
-  */
+
+等待 Qwen 开始产生新的回复
+*/
     async waitForResponseStart(oldCount, oldResponse) {
         const start = Date.now();
         const timeout = this.responseTimeout;
@@ -152,9 +199,9 @@ class QwenProvider extends BrowserAgent {
     }
 
     /**
-  
-  发送消息
-  */
+
+发送消息
+*/
     async send(message) {
         if (!message || !message.trim()) {
             throw new Error("Qwen message cannot be empty");
@@ -171,18 +218,25 @@ class QwenProvider extends BrowserAgent {
 
         try {
             const input = await this.getInput();
+
             if (!input) {
                 throw new Error("Qwen input not found before pressing Enter");
             }
+
             await input.press("Enter");
         } catch (error) {
             throw new Error("Qwen failed to send message: " + error.message);
         }
 
         const inputCleared = await this.waitForInputClear();
+
         if (!inputCleared) {
             console.warn("[Qwen] Input did not clear within timeout, continuing...");
         }
+
+        // 发送后，页面 URL 通常会从 / 变为 /c/<id>，
+        // 这里主动刷新并同步 conversationId，让上层可感知会话 ID 变化。
+        this.refreshConversationId();
 
         await this.waitForResponseStart(oldAssistantCount, oldResponse);
 
@@ -195,6 +249,9 @@ class QwenProvider extends BrowserAgent {
         if (!response || !response.trim()) {
             throw new Error("Qwen returned an empty response");
         }
+
+        // 响应完成后再次同步会话 ID
+        this.refreshConversationId();
 
         return response;
     }

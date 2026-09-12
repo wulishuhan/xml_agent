@@ -1,10 +1,23 @@
 const { BrowserAgent } = require("./browser-agent");
 
+const DEEPSEEK_CONVERSATION_PATTERN = new RegExp("/a/chat/s/([0-9a-fA-F-]+)");
+const TRAILING_SLASH_PATTERN = new RegExp("/+$");
+
 class DeepSeekProvider extends BrowserAgent {
     constructor(options = {}) {
         super({
             ...options,
-            inputSelectors: ['[contenteditable="true"]', "#prompt-textarea", "textarea"],
+            // 基于现场 DOM 观察，DeepSeek 输入框通常出现在这些形态中，
+            // 追加 role=textbox、.ds-textarea、[data-placeholder] 等常见变体。
+            inputSelectors: [
+                'div[contenteditable="true"][role="textbox"]',
+                'div[contenteditable="true"][data-placeholder]',
+                'div[contenteditable="true"]',
+                "[role='textbox']",
+                "textarea",
+                "#prompt-textarea",
+                ".ds-textarea",
+            ],
         });
     }
 
@@ -19,6 +32,47 @@ class DeepSeekProvider extends BrowserAgent {
         } catch (error) {
             return false;
         }
+    }
+
+    /**
+
+DeepSeek 会话 URL 形如：
+
+https://chat.deepseek.com/a/chat/s/9efa4714-38db-4038-a971-226570f7155d
+
+从 URL 中提取会话 id（UUID）。
+*/
+    getConversationIdFromUrl(url) {
+        if (!url || typeof url !== "string") {
+            return null;
+        }
+
+        const match = url.match(DEEPSEEK_CONVERSATION_PATTERN);
+
+        if (!match) {
+            return null;
+        }
+
+        return match[1];
+    }
+
+    /**
+
+构造目标 URL：
+
+无 conversationId：进入新会话入口 https://chat.deepseek.com
+
+有 conversationId：直接进入已有会话 https://chat.deepseek.com/a/chat/s/<id>
+*/
+    buildTargetUrl() {
+        const base = this.targetUrl || "https://chat.deepseek.com";
+
+        if (!this.conversationId) {
+            return base;
+        }
+
+        const trimmed = base.replace(TRAILING_SLASH_PATTERN, "");
+        return trimmed + "/a/chat/s/" + this.conversationId;
     }
 
     async getAssistantCount() {
@@ -39,8 +93,8 @@ class DeepSeekProvider extends BrowserAgent {
         }
 
         try {
-            let messages = this.page.locator(".ds-assistant-message-main-content");
-            let count = await messages.count();
+            const messages = this.page.locator(".ds-assistant-message-main-content");
+            const count = await messages.count();
 
             if (!count) {
                 return "";
@@ -133,18 +187,25 @@ class DeepSeekProvider extends BrowserAgent {
 
         try {
             const input = await this.getInput();
+
             if (!input) {
                 throw new Error("DeepSeek input not found before pressing Enter");
             }
+
             await input.press("Enter");
         } catch (error) {
             throw new Error("DeepSeek failed to send message: " + error.message);
         }
 
         const inputCleared = await this.waitForInputClear();
+
         if (!inputCleared) {
             console.warn("[DeepSeek] Input did not clear within timeout, continuing...");
         }
+
+        // 发送后，页面 URL 通常会从 /a/chat/ 变为 /a/chat/s/<id>，
+        // 这里主动刷新并同步 conversationId，让上层可感知会话 ID 变化。
+        this.refreshConversationId();
 
         await this.waitForResponseStart(oldAssistantCount, oldResponse);
 
@@ -157,6 +218,9 @@ class DeepSeekProvider extends BrowserAgent {
         if (!response || !response.trim()) {
             throw new Error("DeepSeek returned an empty response");
         }
+
+        // 响应完成后再次同步会话 ID，防止 URL 在响应过程中才最终稳定
+        this.refreshConversationId();
 
         return response;
     }

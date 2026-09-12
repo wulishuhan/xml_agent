@@ -88,7 +88,7 @@ app.get("/api/workspace/browse", (req, res) => {
     }
 });
 app.post("/api/run", (req, res) => {
-    const { workspace, provider, task } = req.body;
+    const { workspace, provider, task, conversationId } = req.body;
     if (!workspace || !task) {
         return res.status(400).json({
             error: "Workspace and task are required",
@@ -101,13 +101,33 @@ app.post("/api/run", (req, res) => {
         });
     }
 
+    const providerName = provider || "chatgpt";
+    const cid =
+        typeof conversationId === "string" && conversationId.trim() ? conversationId.trim() : null;
+
+    // 如果指定了 conversationId，优先复用同一 provider 下相同会话 id 的 session，
+    // 避免对同一 DS/ChatGPT/Qwen 会话反复创建新的 program session。
+    if (cid) {
+        const existing = sessionManager.findByConversation(providerName, cid);
+
+        if (existing) {
+            return res.json({
+                message: "Session already exists for this conversation",
+                sessionId: existing.id,
+                conversationId: cid,
+                reused: true,
+            });
+        }
+    }
+
     let session;
 
     try {
         session = sessionManager.create({
             workspace,
-            provider: provider || "chatgpt",
+            provider: providerName,
             task,
+            conversationId: cid,
         });
 
         session.start();
@@ -117,6 +137,7 @@ app.post("/api/run", (req, res) => {
         return res.json({
             message: "Agent started successfully",
             sessionId: session.id,
+            conversationId: session.conversationId || null,
         });
     } catch (error) {
         if (session) {
@@ -170,6 +191,7 @@ app.get("/api/sessions/:id/events", (req, res) => {
     const sendOutput = (output) => send("output", output);
     const sendFinished = (info) => send("finished", info);
     const sendError = (error) => send("error", { message: error.message });
+    const sendConversation = (info) => send("conversation", info);
 
     let replaying = true;
     const pendingOutputs = [];
@@ -186,6 +208,7 @@ app.get("/api/sessions/:id/events", (req, res) => {
     session.on("output", handleOutput);
     session.on("finished", sendFinished);
     session.on("session.error", sendError);
+    session.on("conversation", sendConversation);
 
     const existingOutput = session.getOutput();
 
@@ -197,6 +220,14 @@ app.get("/api/sessions/:id/events", (req, res) => {
 
     for (const output of pendingOutputs) {
         sendOutput(output);
+    }
+
+    // 如果 session 已经关联了 conversationId，补发给前端，避免错过事件
+    if (session.conversationId) {
+        sendConversation({
+            id: session.id,
+            conversationId: session.conversationId,
+        });
     }
 
     if (!session.isRunning()) {
@@ -213,6 +244,7 @@ app.get("/api/sessions/:id/events", (req, res) => {
         session.removeListener("output", handleOutput);
         session.removeListener("finished", sendFinished);
         session.removeListener("session.error", sendError);
+        session.removeListener("conversation", sendConversation);
     });
 });
 app.post("/api/sessions/:id/stop", async (req, res) => {

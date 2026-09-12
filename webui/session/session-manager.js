@@ -7,11 +7,12 @@ class SessionManager extends EventEmitter {
         this.sessions = new Map();
     }
 
-    create({ workspace, provider = "chatgpt", task }) {
+    create({ workspace, provider = "chatgpt", task, conversationId = null }) {
         const session = new AgentSession({
             workspace,
             provider,
             task,
+            conversationId,
         });
 
         this.sessions.set(session.id, session);
@@ -22,6 +23,10 @@ class SessionManager extends EventEmitter {
 
         session.on("agent.event", (event) => {
             this.emit("session.event", session, event);
+        });
+
+        session.on("conversation", (info) => {
+            this.emit("session.conversation", session, info);
         });
 
         session.on("finished", (info) => {
@@ -39,6 +44,26 @@ class SessionManager extends EventEmitter {
 
     get(id) {
         return this.sessions.get(id) || null;
+    }
+
+    /**
+
+按 provider + conversationId 查找已有 session。
+
+用于"同一 provider 的同一会话 ID 复用同一个 session"。
+*/
+    findByConversation(provider, conversationId) {
+        if (!provider || !conversationId) {
+            return null;
+        }
+
+        for (const session of this.sessions.values()) {
+            if (session.provider === provider && session.conversationId === conversationId) {
+                return session;
+            }
+        }
+
+        return null;
     }
 
     list() {

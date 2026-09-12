@@ -47,10 +47,51 @@ class BrowserAgent {
         this.targetUrl =
             options.targetUrl !== undefined ? options.targetUrl : "https://chatgpt.com";
 
+        // 会话 ID（provider 页面 URL 中的 conversation id）。
+        // 为空表示"新会话"，非空表示"继续已有会话"。
+        this.conversationId = options.conversationId || null;
+
+        // 运行时从页面 URL 提取到的会话 ID。发送第一条消息后回填。
+        this.currentConversationId = this.conversationId;
+
         // 默认保持兼容行为：复用已有 Provider 页面。
         // Session 场景可以设置为 false，让每个 Session 创建独立页面。
+        // 当指定了 conversationId 时，必须新建页面，避免抢占其他会话。
         this.reuseExistingPage =
             options.reuseExistingPage !== undefined ? options.reuseExistingPage : true;
+
+        if (this.conversationId) {
+            this.reuseExistingPage = false;
+        }
+
+        // 页面导航超时（毫秒）。慢网络或首次进入时可通过参数或环境变量放大。
+        this.navigationTimeout = this.getNumberOption(
+            options.navigationTimeout,
+            process.env.XML_AGENT_NAVIGATION_TIMEOUT_MS,
+            45000
+        );
+
+        // 输入框等待超时（毫秒）。避免慢页面下 60s 不够。
+        this.inputTimeout = this.getNumberOption(
+            options.inputTimeout,
+            process.env.XML_AGENT_INPUT_TIMEOUT_MS,
+            120000
+        );
+
+        // 是否在 waitForInput 过程中打印诊断日志（每若干次轮询一次）
+        this.diagnosticsEnabled =
+            options.diagnosticsEnabled !== undefined ? options.diagnosticsEnabled : true;
+        this.diagnosticsIntervalMs = this.getNumberOption(
+            options.diagnosticsIntervalMs,
+            process.env.XML_AGENT_DIAGNOSTICS_INTERVAL_MS,
+            10000
+        );
+
+        // 是否在导航超时后继续尝试（保持原行为：true）
+        this.continueOnNavigationTimeout =
+            options.continueOnNavigationTimeout !== undefined
+                ? options.continueOnNavigationTimeout
+                : true;
 
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
@@ -77,6 +118,32 @@ class BrowserAgent {
 
     matchPage(page) {
         throw new Error("matchPage() must be implemented");
+    }
+
+    /**
+
+从页面 URL 中提取 provider 的会话 ID。
+
+子类必须实现；默认返回 null，表示不支持从 URL 提取。
+
+@param {string} url
+
+@returns {string|null}
+*/
+    getConversationIdFromUrl(url) {
+        return null;
+    }
+
+    /**
+
+根据 conversationId 生成具体的目标 URL。
+
+默认实现：直接返回 targetUrl，具体拼接方式由子类覆写。
+
+@returns {string}
+*/
+    buildTargetUrl() {
+        return this.targetUrl;
     }
 
     async checkCdpServer(cdpUrl) {
@@ -173,28 +240,53 @@ class BrowserAgent {
     }
 
     async openNewPageForTarget() {
-        console.log("[" + this.name + "] Creating new page for target: " + this.targetUrl);
+        const url = this.buildTargetUrl();
+
+        console.log("[" + this.name + "] Creating new page for target: " + url);
 
         this.page = await this.context.newPage();
 
-        if (this.targetUrl) {
+        if (url) {
             try {
-                await this.page.goto(this.targetUrl, {
+                await this.page.goto(url, {
                     waitUntil: "domcontentloaded",
-                    timeout: 30000,
+                    timeout: this.navigationTimeout,
                 });
             } catch (error) {
-                console.warn(
+                const msg =
                     "[" +
-                        this.name +
-                        "] Navigation to " +
-                        this.targetUrl +
-                        " timed out, continuing..."
-                );
+                    this.name +
+                    "] Navigation to " +
+                    url +
+                    " timed out after " +
+                    this.navigationTimeout +
+                    "ms, continuing...";
+
+                if (this.continueOnNavigationTimeout) {
+                    console.warn(msg);
+                } else {
+                    throw new Error(msg);
+                }
             }
         }
 
         return this.page;
+    }
+
+    /**
+
+返回当前页面对应的会话 ID（如果有）。
+*/
+    getPageConversationId(page) {
+        if (!page) {
+            return null;
+        }
+
+        try {
+            return this.getConversationIdFromUrl(page.url());
+        } catch (error) {
+            return null;
+        }
     }
 
     async ensurePage() {
@@ -213,9 +305,38 @@ class BrowserAgent {
 
         const pages = this.context.pages();
 
-        // Session 隔离模式：不要抢占其他 Session 已经使用的页面。
-        // 在同一个 BrowserContext 中创建新页面，可以继续复用已有登录状态。
-        if (!this.reuseExistingPage) {
+        // 如果指定了 conversationId，优先查找已经打开对应 URL 的页面
+        if (this.conversationId) {
+            for (const page of pages) {
+                const pageCid = this.getPageConversationId(page);
+
+                if (pageCid && pageCid === this.conversationId) {
+                    console.log(
+                        "[" +
+                            this.name +
+                            "] Found existing page for conversation " +
+                            this.conversationId
+                    );
+
+                    this.page = page;
+                    break;
+                }
+            }
+
+            if (!this.page) {
+                console.log(
+                    "[" +
+                        this.name +
+                        "] No page found for conversation " +
+                        this.conversationId +
+                        ", creating new one"
+                );
+
+                await this.openNewPageForTarget();
+            }
+        } else if (!this.reuseExistingPage) {
+            // Session 隔离模式：不要抢占其他 Session 已经使用的页面。
+            // 在同一个 BrowserContext 中创建新页面，可以继续复用已有登录状态。
             console.log("[" + this.name + "] Creating an isolated page for this session...");
             await this.openNewPageForTarget();
         } else if (!pages || pages.length === 0) {
@@ -271,6 +392,31 @@ class BrowserAgent {
         return this.page;
     }
 
+    /**
+
+刷新 currentConversationId。在消息发送后调用。
+
+@returns {string|null}
+*/
+    refreshConversationId() {
+        if (!this.isPageAlive()) {
+            return this.currentConversationId;
+        }
+
+        try {
+            const url = this.page.url();
+            const cid = this.getConversationIdFromUrl(url);
+
+            if (cid) {
+                this.currentConversationId = cid;
+            }
+
+            return this.currentConversationId;
+        } catch (error) {
+            return this.currentConversationId;
+        }
+    }
+
     async start() {
         try {
             const isRunning = await this.checkCdpServer(this.cdpUrl);
@@ -290,7 +436,18 @@ class BrowserAgent {
             console.log("[" + this.name + "] Connected to CDP server");
 
             await this.ensurePage();
+
+            const pageUrl = this.isPageAlive() ? this.page.url() : "(none)";
+            console.log("[" + this.name + "] Page URL: " + pageUrl);
+
             await this.waitForInput();
+
+            // 首次进入时，尝试从当前 URL 中同步一次 conversationId
+            const cid = this.refreshConversationId();
+
+            if (cid && !this.conversationId) {
+                this.conversationId = cid;
+            }
 
             console.log("[" + this.name + "] Connected successfully");
         } catch (error) {
@@ -348,11 +505,69 @@ class BrowserAgent {
         return null;
     }
 
-    async waitForInput(timeout) {
-        timeout = timeout || 60 * 1000;
-        const start = Date.now();
+    /**
 
-        while (Date.now() - start < timeout) {
+收集一次诊断信息，用于在输入框长时间未出现时排查问题。
+*/
+    async collectDiagnostics() {
+        const info = {
+            url: "(unknown)",
+            title: "(unknown)",
+            contentEditables: 0,
+            textareas: 0,
+            roleTextboxes: 0,
+            buttons: 0,
+        };
+
+        if (!this.isPageAlive()) {
+            return info;
+        }
+
+        try {
+            info.url = this.page.url();
+        } catch (error) {
+            // ignore
+        }
+
+        try {
+            info.title = await this.page.title();
+        } catch (error) {
+            // ignore
+        }
+
+        try {
+            info.contentEditables = await this.page.locator('[contenteditable="true"]').count();
+        } catch (error) {
+            // ignore
+        }
+
+        try {
+            info.textareas = await this.page.locator("textarea").count();
+        } catch (error) {
+            // ignore
+        }
+
+        try {
+            info.roleTextboxes = await this.page.locator("[role='textbox']").count();
+        } catch (error) {
+            // ignore
+        }
+
+        try {
+            info.buttons = await this.page.locator("button").count();
+        } catch (error) {
+            // ignore
+        }
+
+        return info;
+    }
+
+    async waitForInput(timeout) {
+        const effectiveTimeout = timeout || this.inputTimeout;
+        const start = Date.now();
+        let lastDiagnosticsAt = 0;
+
+        while (Date.now() - start < effectiveTimeout) {
             if (!this.isPageAlive()) {
                 throw new Error("[" + this.name + "] page was closed while waiting for input");
             }
@@ -367,10 +582,43 @@ class BrowserAgent {
                 // continue
             }
 
+            const now = Date.now();
+
+            if (this.diagnosticsEnabled && now - lastDiagnosticsAt >= this.diagnosticsIntervalMs) {
+                lastDiagnosticsAt = now;
+
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const diag = await this.collectDiagnostics();
+
+                    console.log(
+                        "[" +
+                            this.name +
+                            "] Waiting for input " +
+                            Math.round((now - start) / 1000) +
+                            "s" +
+                            " | url=" +
+                            diag.url +
+                            " | title=" +
+                            diag.title +
+                            " | contenteditable=" +
+                            diag.contentEditables +
+                            " | textarea=" +
+                            diag.textareas +
+                            " | role=textbox=" +
+                            diag.roleTextboxes +
+                            " | buttons=" +
+                            diag.buttons
+                    );
+                } catch (error) {
+                    // ignore
+                }
+            }
+
             await this.sleep(500);
         }
 
-        throw new Error("[" + this.name + "] input not found within " + timeout + "ms");
+        throw new Error("[" + this.name + "] input not found within " + effectiveTimeout + "ms");
     }
 
     async getInputValue(input) {

@@ -120,3 +120,33 @@ export async function deleteSession(sessionId) {
 export function getEventSourceUrl(sessionId) {
     return api("/api/sessions/" + sessionId + "/events");
 }
+
+/**
+
+从 provider 页面 URL 中提取 conversationId。
+
+前端不直接依赖 provider 逻辑，只做一点轻量解析，用于提示用户。
+
+@param {string} provider "chatgpt" | "deepseek" | "qwen"
+
+@param {string} url
+
+@returns {string|null}
+*/
+export function extractConversationId(provider, url) {
+    if (!url || typeof url !== "string") {
+        return null;
+    }
+
+    if (provider === "deepseek") {
+        const match = url.match(new RegExp("/a/chat/s/([0-9a-fA-F-]+)"));
+        return match ? match[1] : null;
+    }
+
+    if (provider === "chatgpt" || provider === "qwen") {
+        const match = url.match(new RegExp("/c/([0-9a-zA-Z-]+)"));
+        return match ? match[1] : null;
+    }
+
+    return null;
+}

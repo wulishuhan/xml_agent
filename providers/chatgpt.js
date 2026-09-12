@@ -1,5 +1,8 @@
 const { BrowserAgent } = require("./browser-agent");
 
+const CHATGPT_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
+const TRAILING_SLASH_PATTERN = new RegExp("/+$");
+
 class ChatGPTProvider extends BrowserAgent {
     constructor(options = {}) {
         super({
@@ -26,6 +29,47 @@ class ChatGPTProvider extends BrowserAgent {
         } catch (error) {
             return false;
         }
+    }
+
+    /**
+
+ChatGPT 会话 URL 形如：
+
+https://chatgpt.com/c/6712abcd-...
+
+从 URL 中提取会话 id（UUID）。
+*/
+    getConversationIdFromUrl(url) {
+        if (!url || typeof url !== "string") {
+            return null;
+        }
+
+        const match = url.match(CHATGPT_CONVERSATION_PATTERN);
+
+        if (!match) {
+            return null;
+        }
+
+        return match[1];
+    }
+
+    /**
+
+构造目标 URL：
+
+无 conversationId：进入新会话入口 https://chatgpt.com
+
+有 conversationId：直接进入已有会话 https://chatgpt.com/c/<id>
+*/
+    buildTargetUrl() {
+        const base = this.targetUrl || "https://chatgpt.com";
+
+        if (!this.conversationId) {
+            return base;
+        }
+
+        const trimmed = base.replace(TRAILING_SLASH_PATTERN, "");
+        return trimmed + "/c/" + this.conversationId;
     }
 
     async getAssistantCount() {
@@ -284,6 +328,10 @@ class ChatGPTProvider extends BrowserAgent {
             );
         }
 
+        // 发送后，页面 URL 通常会从 / 变为 /c/<id>，
+        // 这里主动刷新并同步 conversationId，让上层可感知会话 ID 变化。
+        this.refreshConversationId();
+
         await this.waitForResponseStart(oldAssistantCount, oldResponse);
 
         const response = await this.waitForStableResponse(() => this.getLastResponse(), {
@@ -295,6 +343,9 @@ class ChatGPTProvider extends BrowserAgent {
         if (!response || !response.trim()) {
             throw new Error("ChatGPT returned an empty response");
         }
+
+        // 响应完成后再次同步会话 ID，防止 URL 在响应过程中才最终稳定
+        this.refreshConversationId();
 
         console.log("[ChatGPT] Response received, length: " + response.length);
 

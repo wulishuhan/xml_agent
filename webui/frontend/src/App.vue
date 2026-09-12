@@ -35,7 +35,7 @@
                         title="Desktop settings"
                         @click="showSettings = true"
                     >
-                        ⚙ Settings
+                        Settings
                     </button>
                 </div>
             </header>
@@ -52,6 +52,12 @@
                     <div class="context-item">
                         <span class="context-label">Session</span>
                         <code>{{ shortId(activeSession.id) }}</code>
+                    </div>
+                    <div v-if="activeConversationId" class="context-item">
+                        <span class="context-label">Conversation</span>
+                        <code :title="activeConversationId">{{
+                            shortId(activeConversationId)
+                        }}</code>
                     </div>
                     <div v-if="isElectron" class="context-item">
                         <span class="context-label">Port</span> <code>{{ electronPort }}</code>
@@ -71,7 +77,7 @@
                         test your project.
                     </p>
                     <p v-if="isElectron" class="welcome-desktop-hint">
-                        Desktop mode · Chrome auto-detect enabled · click Settings to configure
+                        Desktop mode - Chrome auto-detect enabled - click Settings to configure
                     </p>
                 </div>
                 <div class="composer-shell">
@@ -81,7 +87,6 @@
                     >
                         <div class="workspace-input">
                             <span class="workspace-input-label">Workspace</span>
-
                             <input
                                 ref="workspaceInput"
                                 v-model="workspace"
@@ -90,23 +95,23 @@
                                 placeholder="Enter an absolute path, for example D:/projects/my-app"
                                 @keydown.enter="focusTask"
                             />
-
                             <button
                                 type="button"
                                 class="btn workspace-browse-button"
                                 :disabled="running"
                                 @click="openWorkspacePicker"
                             >
-                                📁 Browse
+                                Browse
                             </button>
                         </div>
                         <span v-if="!workspace.trim()" class="workspace-required-hint">
-                            Required · this path is different on each computer
+                            Required - this path is different on each computer
                         </span>
                     </div>
 
                     <TaskComposer
                         v-model:task="task"
+                        v-model:conversationId="conversationId"
                         :provider="provider"
                         :running="running"
                         @run="runAgent"
@@ -137,6 +142,7 @@ import TaskComposer from "./components/TaskComposer.vue";
 import WorkspacePicker from "./components/WorkspacePicker.vue";
 import DesktopSettings from "./components/DesktopSettings.vue";
 import {
+    extractConversationId,
     getEventSourceUrl,
     getSession,
     getSessionOutput,
@@ -144,7 +150,6 @@ import {
     runAgent as apiRunAgent,
     stopSession,
 } from "./services/agent-api.js";
-
 const sessions = ref([]);
 const activeSessionId = ref(null);
 const activeSession = ref(null);
@@ -153,279 +158,8 @@ const errorMessage = ref("");
 const eventSource = ref(null);
 const workspace = ref("");
 const provider = ref("chatgpt");
-const task = ref("");
-const workspaceInput = ref(null);
-const showWorkspacePicker = ref(false);
-const showSettings = ref(false);
-
-const isElectron = computed(() => {
-    return (
-        typeof window !== "undefined" &&
-        window.xmlAgentDesktop &&
-        window.xmlAgentDesktop.isElectron === true
-    );
-});
-
-const electronPort = computed(() => {
-    if (!isElectron.value) {
-        return "";
-    }
-
-    return String(window.xmlAgentDesktop.port || "");
-});
-
-const sessionStatus = computed(() => {
-    return activeSession.value?.status || "created";
-});
-
-const running = computed(() => {
-    return activeSession.value?.running === true;
-});
-
-const statusText = computed(() => {
-    const labels = {
-        created: "Ready",
-        running: "Running",
-        completed: "Completed",
-        stopped: "Stopped",
-        error: "Error",
-    };
-
-    return labels[sessionStatus.value] || sessionStatus.value;
-});
-
-async function loadSessions() {
-    try {
-        const result = await getSessions();
-        sessions.value = result.sessions || [];
-
-        if (activeSessionId.value) {
-            const existing = sessions.value.find((session) => session.id === activeSessionId.value);
-
-            if (existing) {
-                await selectSession(existing.id);
-                return;
-            }
-        }
-
-        if (sessions.value.length) {
-            await selectSession(sessions.value[0].id);
-        }
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
-}
-
-async function selectSession(sessionId) {
-    if (!sessionId) {
-        return;
-    }
-
-    activeSessionId.value = sessionId;
-    errorMessage.value = "";
-    closeEventSource();
-
-    try {
-        const [sessionResult, outputResult] = await Promise.all([
-            getSession(sessionId),
-            getSessionOutput(sessionId),
-        ]);
-
-        activeSession.value = sessionResult;
-        output.value = outputResult.output || [];
-        workspace.value = sessionResult.workspace || "";
-        provider.value = sessionResult.provider || provider.value;
-        task.value = sessionResult.task || "";
-
-        subscribeToSession(sessionId);
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
-}
-
-function subscribeToSession(sessionId) {
-    closeEventSource();
-    const source = new EventSource(getEventSourceUrl(sessionId));
-
-    source.addEventListener("output", (event) => {
-        try {
-            const record = JSON.parse(event.data);
-
-            if (
-                !output.value.some((item) => {
-                    return (
-                        item.timestamp === record.timestamp &&
-                        item.type === record.type &&
-                        item.content === record.content
-                    );
-                })
-            ) {
-                output.value.push(record);
-            }
-        } catch (error) {
-            errorMessage.value = error.message;
-        }
-    });
-
-    source.addEventListener("finished", (event) => {
-        try {
-            activeSession.value = JSON.parse(event.data);
-            updateSessionList(activeSession.value);
-        } catch (error) {
-            errorMessage.value = error.message;
-        }
-    });
-
-    source.addEventListener("error", (event) => {
-        if (event.data) {
-            try {
-                const result = JSON.parse(event.data);
-                errorMessage.value = result.message || "Agent error";
-            } catch {
-                errorMessage.value = "Agent event stream error";
-            }
-        }
-    });
-
-    eventSource.value = source;
-}
-
-async function runAgent() {
-    if (running.value) {
-        return;
-    }
-
-    if (!workspace.value.trim()) {
-        errorMessage.value = "Please enter a workspace path before running the agent.";
-        await nextTick();
-        workspaceInput.value?.focus();
-        return;
-    }
-
-    if (!task.value.trim()) {
-        errorMessage.value = "Please describe the task before running the agent.";
-        return;
-    }
-
-    errorMessage.value = "";
-
-    try {
-        const result = await apiRunAgent({
-            workspace: workspace.value.trim(),
-            provider: provider.value,
-            task: task.value.trim(),
-        });
-
-        activeSessionId.value = result.sessionId;
-        await loadSessions();
-        await selectSession(result.sessionId);
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
-}
-
-async function stopAgent() {
-    if (!activeSessionId.value || !running.value) {
-        return;
-    }
-
-    try {
-        await stopSession(activeSessionId.value);
-        await selectSession(activeSessionId.value);
-        await loadSessions();
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
-}
-
-function createNewSession() {
-    closeEventSource();
-    activeSessionId.value = null;
-    activeSession.value = null;
-    output.value = [];
-    errorMessage.value = "";
-    task.value = "";
-    workspace.value = "";
-}
-
-function clearConsole() {
-    output.value = [];
-}
-
-function updateSessionList(session) {
-    const index = sessions.value.findIndex((item) => item.id === session.id);
-
-    if (index === -1) {
-        sessions.value.unshift(session);
-        return;
-    }
-
-    sessions.value[index] = session;
-}
-
-function closeEventSource() {
-    if (!eventSource.value) {
-        return;
-    }
-
-    eventSource.value.close();
-    eventSource.value = null;
-}
-
-function sessionTitle(session) {
-    const value = (session.task || "").trim();
-
-    if (!value) {
-        return "Untitled session";
-    }
-
-    return value.length > 72 ? value.slice(0, 72) + "…" : value;
-}
-
-function shortId(id) {
-    return id ? id.slice(0, 8) : "-";
-}
-
-function focusTask() {
-    if (running.value) {
-        return;
-    }
-
-    const textarea = document.querySelector(".composer textarea");
-    textarea?.focus();
-}
-
-function openWorkspacePicker() {
-    if (running.value) {
-        return;
-    }
-
-    showWorkspacePicker.value = true;
-}
-
-function closeWorkspacePicker() {
-    showWorkspacePicker.value = false;
-}
-
-function selectWorkspace(selectedPath) {
-    if (!selectedPath) {
-        return;
-    }
-
-    workspace.value = selectedPath;
-    showWorkspacePicker.value = false;
-    errorMessage.value = "";
-}
-
-function onSettingsSaved() {
-    // 提示用户新配置已生效。后续新启动的 Agent 会话会使用新的 Chrome 路径。
-    errorMessage.value = "";
-}
-
-onMounted(loadSessions);
-onUnmounted(closeEventSource);
+const task = ref(""); // 用户在 TaskComposer 里输入的"继续已有会话"内容： // 既可以是完整的会话 URL，也可以直接是 conversation id。 const conversationId = ref(""); const workspaceInput = ref(null); const showWorkspacePicker = ref(false); const showSettings = ref(false); const isElectron = computed(() => { return ( typeof window !== "undefined" && window.xmlAgentDesktop && window.xmlAgentDesktop.isElectron === true ); }); const electronPort = computed(() => { if (!isElectron.value) { return ""; } return String(window.xmlAgentDesktop.port || ""); }); const activeConversationId = computed(() => { return activeSession.value?.conversationId || ""; }); const sessionStatus = computed(() => { return activeSession.value?.status || "created"; }); const running = computed(() => { return activeSession.value?.running === true; }); const statusText = computed(() => { const labels = { created: "Ready", running: "Running", completed: "Completed", stopped: "Stopped", error: "Error", }; return labels[sessionStatus.value] || sessionStatus.value; }); async function loadSessions() { try { const result = await getSessions(); sessions.value = result.sessions || []; if (activeSessionId.value) { const existing = sessions.value.find((session) => session.id === activeSessionId.value); if (existing) { await selectSession(existing.id); return; } } if (sessions.value.length) { await selectSession(sessions.value[0].id); } } catch (error) { errorMessage.value = error.message; } } async function selectSession(sessionId) { if (!sessionId) { return; } activeSessionId.value = sessionId; errorMessage.value = ""; closeEventSource(); try { const [sessionResult, outputResult] = await Promise.all([ getSession(sessionId), getSessionOutput(sessionId), ]); activeSession.value = sessionResult; output.value = outputResult.output || []; workspace.value = sessionResult.workspace || ""; provider.value = sessionResult.provider || provider.value; task.value = sessionResult.task || ""; // 选中已有 session 时，把该 session 的 conversationId 回填到输入框， // 便于用户查看或复用；用户也可以手动改掉它去开新的会话。 conversationId.value = sessionResult.conversationId || ""; subscribeToSession(sessionId); } catch (error) { errorMessage.value = error.message; } } function subscribeToSession(sessionId) { closeEventSource(); const source = new EventSource(getEventSourceUrl(sessionId)); source.addEventListener("output", (event) => { try { const record = JSON.parse(event.data); if ( !output.value.some((item) => { return ( item.timestamp === record.timestamp && item.type === record.type && item.content === record.content ); }) ) { output.value.push(record); } } catch (error) { errorMessage.value = error.message; } }); source.addEventListener("conversation", (event) => { try { const info = JSON.parse(event.data); if (info && info.conversationId) { if (activeSession.value) { activeSession.value = Object.assign({}, activeSession.value, { conversationId: info.conversationId, }); updateSessionList(activeSession.value); } // 同步到输入框，让用户看到当前会话 id conversationId.value = info.conversationId; } } catch (error) { errorMessage.value = error.message; } }); source.addEventListener("finished", (event) => { try { activeSession.value = JSON.parse(event.data); updateSessionList(activeSession.value); } catch (error) { errorMessage.value = error.message; } }); source.addEventListener("error", (event) => { if (event.data) { try { const result = JSON.parse(event.data); errorMessage.value = result.message || "Agent error"; } catch { errorMessage.value = "Agent event stream error"; } } }); eventSource.value = source; } /** * 把用户在 conversationId 输入框中填写的内容转换为纯粹的 conversation id。 * * 允许用户粘贴： * - 完整的会话 URL * - 或者直接一个 id */ function normalizeConversationId() { const raw = (conversationId.value || "").trim(); if (!raw) { return ""; } const parsed = extractConversationId(provider.value, raw); if (parsed) { return parsed; } return raw; } async function runAgent() { if (running.value) { return; } if (!workspace.value.trim()) { errorMessage.value = "Please enter a workspace path before running the agent."; await nextTick(); workspaceInput.value?.focus(); return; } if (!task.value.trim()) { errorMessage.value = "Please describe the task before running the agent."; return; } errorMessage.value = ""; try { const payload = { workspace: workspace.value.trim(), provider: provider.value, task: task.value.trim(), }; const cid = normalizeConversationId(); if (cid) { payload.conversationId = cid; } const result = await apiRunAgent(payload); activeSessionId.value = result.sessionId; await loadSessions(); await selectSession(result.sessionId); } catch (error) { errorMessage.value = error.message; } } async function stopAgent() { if (!activeSessionId.value || !running.value) { return; } try { await stopSession(activeSessionId.value); await selectSession(activeSessionId.value); await loadSessions(); } catch (error) { errorMessage.value = error.message; } } function createNewSession() { closeEventSource(); activeSessionId.value = null; activeSession.value = null; output.value = []; errorMessage.value = ""; task.value = ""; workspace.value = ""; conversationId.value = ""; } function clearConsole() { output.value = []; } function updateSessionList(session) { const index = sessions.value.findIndex((item) => item.id === session.id); if (index === -1) { sessions.value.unshift(session); return; } sessions.value[index] = session; } function closeEventSource() { if (!eventSource.value) { return; } eventSource.value.close(); eventSource.value = null; } function sessionTitle(session) { const value = (session.task || "").trim(); if (!value) { return "Untitled session"; } return value.length > 72 ? value.slice(0, 72) + "..." : value; } function shortId(id) { return id ? id.slice(0, 8) : "-"; } function focusTask() { if (running.value) { return; } const textarea = document.querySelector(".composer textarea"); textarea?.focus(); } function openWorkspacePicker() { if (running.value) { return; } showWorkspacePicker.value = true; } function closeWorkspacePicker() { showWorkspacePicker.value = false; } function selectWorkspace(selectedPath) { if (!selectedPath) { return; } workspace.value = selectedPath; showWorkspacePicker.value = false; errorMessage.value = ""; } function onSettingsSaved() { // 提示用户新配置已生效。后续新启动的 Agent 会话会使用新的 Chrome 路径。 errorMessage.value = ""; } onMounted(loadSessions); onUnmounted(closeEventSource);
 </script>
-
 <style scoped>
 .workspace-browse-button {
     flex: 0 0 auto;
