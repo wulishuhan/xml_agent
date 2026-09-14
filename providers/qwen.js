@@ -208,7 +208,12 @@ https://chat.qwen.ai/c/<uuid>
         }
 
         if (!this.isPageAlive()) {
-            throw new Error("Qwen page is not available");
+            // 页面丢失时先尝试自动恢复
+            const recovered = await this.ensurePageAlive();
+
+            if (!recovered || !this.isPageAlive()) {
+                throw new Error("Qwen page is not available");
+            }
         }
 
         const oldAssistantCount = await this.getAssistantCount();

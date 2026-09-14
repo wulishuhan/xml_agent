@@ -96,6 +96,10 @@ class BrowserAgent {
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
         this._inputCacheTTL = 5000;
+
+        // 防止并发恢复：如果同时有多个 send 请求尝试恢复页面，
+        // 只保留第一个恢复流程，其它等它完成。
+        this._recoveringPromise = null;
     }
 
     getNumberOption(optionValue, envValue, defaultValue) {
@@ -414,6 +418,90 @@ class BrowserAgent {
             return this.currentConversationId;
         } catch (error) {
             return this.currentConversationId;
+        }
+    }
+
+    /**
+
+当页面丢失（用户关闭、崩溃、被替换、CDP 连接断开）时，尝试恢复：
+重新连接 CDP，并打开目标页面。
+
+必须在 provider 的 send() 之前调用，这样 send() 检测到页面不可用
+时可以先尝试自动恢复，避免 agent 因为暂时页面丢失就连续重试失败。
+
+@returns {Promise<boolean>} 是否恢复成功
+*/
+    async ensurePageAlive() {
+        if (this.isPageAlive()) {
+            return true;
+        }
+
+        // 避免并发恢复：如果已有恢复流程在跑，复用它。
+        if (this._recoveringPromise) {
+            return this._recoveringPromise;
+        }
+
+        const self = this;
+
+        this._recoveringPromise = (async function () {
+            console.log("[" + self.name + "] Page is not alive, attempting to recover...");
+
+            // 清理可能已失效的引用
+            self.page = null;
+            self.context = null;
+            self._cachedInput = null;
+
+            try {
+                // 如果之前已经同步过 conversationId，优先恢复该会话页面
+                if (self.currentConversationId) {
+                    self.conversationId = self.currentConversationId;
+                    self.reuseExistingPage = false;
+                }
+
+                const isRunning = await self.checkCdpServer(self.cdpUrl);
+
+                if (!isRunning) {
+                    if (self.autoStart) {
+                        await self.startChromeCdpServer();
+                    } else {
+                        console.warn(
+                            "[" + self.name + "] CDP server not running and autoStart disabled"
+                        );
+                        return false;
+                    }
+                }
+
+                // 重新建立 CDP 连接；旧连接已经失效，直接覆盖
+                self.browser = await chromium.connectOverCDP(self.cdpUrl);
+
+                await self.ensurePage();
+                await self.waitForInput();
+
+                const cid = self.refreshConversationId();
+
+                if (cid && !self.conversationId) {
+                    self.conversationId = cid;
+                }
+
+                const url = self.page ? self.page.url() : "(none)";
+                console.log("[" + self.name + "] Page recovered: " + url);
+
+                return self.isPageAlive();
+            } catch (error) {
+                console.error("[" + self.name + "] Failed to recover page: " + error.message);
+
+                self.page = null;
+                self.context = null;
+                self.browser = null;
+
+                return false;
+            }
+        })();
+
+        try {
+            return await this._recoveringPromise;
+        } finally {
+            this._recoveringPromise = null;
         }
     }
 

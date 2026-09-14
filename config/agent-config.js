@@ -51,13 +51,15 @@ const agentConfig = {
         // CDP 服务器 URL
         cdpUrl: "http://127.0.0.1:9222",
         // Chrome.exe Path
-        chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-        // chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
+        // chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
 
-        // 默认复用已有 Provider Page。
-        // 如果需要为每个 Agent Session 创建独立 Page，手动改为 false。
-        // Page 仍然共享 CDP BrowserContext，因此可以复用登录状态。
-        reuseExistingPage: true,
+        // 默认值为 false：每个 Agent Session 都会创建独立 Page，
+        // 避免新会话复用已有对话的标签页（导致多个 Session 串到同一个 Conversation）。
+        // 如需在同一个 Provider 标签页中继续对话，可手动改为 true，
+        // 或设置环境变量 BROWSER_REUSE_PAGE=true。
+        // Page 仍然共享同一个 CDP BrowserContext，因此登录状态可以复用。
+        reuseExistingPage: false,
 
         // web ai url
         targetUrls: {

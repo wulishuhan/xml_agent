@@ -177,7 +177,13 @@ https://chat.deepseek.com/a/chat/s/9efa4714-38db-4038-a971-226570f7155d
         }
 
         if (!this.isPageAlive()) {
-            throw new Error("DeepSeek page is not available");
+            // 页面可能被用户关闭、Chrome 崩溃或 CDP 连接中断。
+            // 这里先尝试自动恢复，而不是直接抛错，避免 Agent 因暂时失效连续重试失败。
+            const recovered = await this.ensurePageAlive();
+
+            if (!recovered || !this.isPageAlive()) {
+                throw new Error("DeepSeek page is not available");
+            }
         }
 
         const oldAssistantCount = await this.getAssistantCount();

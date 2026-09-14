@@ -1,8 +1,6 @@
 const { BrowserAgent } = require("./browser-agent");
-
 const CHATGPT_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
-const TRAILING_SLASH_PATTERN = new RegExp("/+$");
-
+const TRAILING_SLASH_PATTERN = new RegExp("/+$/");
 class ChatGPTProvider extends BrowserAgent {
     constructor(options = {}) {
         super({
@@ -17,7 +15,6 @@ class ChatGPTProvider extends BrowserAgent {
             ],
         });
     }
-
     get name() {
         return "ChatGPT";
     }
@@ -31,14 +28,6 @@ class ChatGPTProvider extends BrowserAgent {
         }
     }
 
-    /**
-
-ChatGPT 会话 URL 形如：
-
-https://chatgpt.com/c/6712abcd-...
-
-从 URL 中提取会话 id（UUID）。
-*/
     getConversationIdFromUrl(url) {
         if (!url || typeof url !== "string") {
             return null;
@@ -53,14 +42,6 @@ https://chatgpt.com/c/6712abcd-...
         return match[1];
     }
 
-    /**
-
-构造目标 URL：
-
-无 conversationId：进入新会话入口 https://chatgpt.com
-
-有 conversationId：直接进入已有会话 https://chatgpt.com/c/<id>
-*/
     buildTargetUrl() {
         const base = this.targetUrl || "https://chatgpt.com";
 
@@ -74,6 +55,7 @@ https://chatgpt.com/c/6712abcd-...
 
     async getAssistantCount() {
         if (!this.isPageAlive()) return 0;
+
         try {
             return await this.page.locator('[data-message-author-role="assistant"]').count();
         } catch (error) {
@@ -87,14 +69,14 @@ https://chatgpt.com/c/6712abcd-...
         try {
             const messages = this.page.locator('[data-message-author-role="assistant"]');
             const count = await messages.count();
+
             if (!count) return "";
 
             const last = messages.nth(count - 1);
             const visible = await last.isVisible().catch(() => false);
+
             if (!visible) return "";
 
-            // 只处理克隆节点，绝不修改 ChatGPT 页面中的真实 DOM。
-            // 这样读取响应不会破坏页面结构，也不会影响后续消息交互。
             const text = await last
                 .evaluate((element) => {
                     const clone = element.cloneNode(true);
@@ -153,81 +135,161 @@ https://chatgpt.com/c/6712abcd-...
         throw new Error("ChatGPT did not start a response within " + timeout + "ms");
     }
 
-    // 重写 insertMessage 方法，使用更可靠的方式填充 ChatGPT 输入框
-    async insertMessage(message) {
-        console.log("[ChatGPT] Inserting message: " + JSON.stringify(message));
+    /**
+
+ChatGPT 输入框会在页面更新时动态切换：
+
+可见的 contenteditable / role=textbox
+
+隐藏的 fallback textarea
+
+因此不能只依赖 BrowserAgent 的缓存 Locator。
+
+每次真正写入前重新寻找当前可见、可编辑的元素。
+*/
+    async getChatGPTInput() {
         if (!this.isPageAlive()) {
             throw new Error("[ChatGPT] page is not available");
         }
 
-        const input = await this.getInput();
-        if (!input) {
-            throw new Error("[ChatGPT] input not found");
-        }
+        const selectors = [
+            "div[role='textbox']",
+            ".ProseMirror",
+            "[contenteditable='true']",
+            "#prompt-textarea",
+            "textarea[name='prompt-textarea']",
+            "textarea",
+        ];
 
-        // 先点击输入框获取焦点
-        try {
-            await input.click({ timeout: 3000 });
-            await this.sleep(300);
-        } catch (error) {
-            console.warn("[ChatGPT] Click input failed: " + error.message);
-            try {
-                await input.focus();
-                await this.sleep(300);
-            } catch (e) {
-                // ignore
+        for (let attempt = 0; attempt < 3; attempt++) {
+            for (const selector of selectors) {
+                try {
+                    const locator = this.page.locator(selector);
+
+                    const count = await locator.count();
+
+                    for (let index = 0; index < count; index++) {
+                        const candidate = locator.nth(index);
+
+                        if (!(await candidate.isVisible().catch(() => false))) {
+                            continue;
+                        }
+
+                        if (await candidate.isDisabled().catch(() => false)) {
+                            continue;
+                        }
+
+                        const box = await candidate.boundingBox().catch(() => null);
+
+                        if (!box || box.width <= 0 || box.height <= 0) {
+                            continue;
+                        }
+
+                        return candidate;
+                    }
+                } catch (error) {
+                    // ChatGPT 页面正在切换 DOM，继续寻找
+                }
             }
+
+            await this.sleep(150);
         }
 
-        // 对于 contenteditable 元素，使用 evaluate 直接设置内容
-        try {
-            const tagName = await input.evaluate((el) => el.tagName.toLowerCase());
-            const isContentEditable = await input.evaluate((el) => el.isContentEditable);
+        return null;
+    }
 
-            if (isContentEditable || tagName === "div") {
-                await input.evaluate((el, msg) => {
-                    el.innerHTML = "";
-                    el.textContent = msg;
+    async insertMessage(message) {
+        console.log("[ChatGPT] Inserting message: " + JSON.stringify(message));
 
-                    const event = new Event("input", { bubbles: true });
-                    el.dispatchEvent(event);
+        if (!this.isPageAlive()) {
+            throw new Error("[ChatGPT] page is not available");
+        }
 
-                    const changeEvent = new Event("change", { bubbles: true });
-                    el.dispatchEvent(changeEvent);
-                }, message);
+        let lastError = null;
+
+        // ChatGPT 新版输入区域可能在消息发送、页面 hydration、
+        // 虚拟键盘切换过程中替换 DOM，因此整个插入过程允许重新获取输入框。
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const input = await this.getChatGPTInput();
+
+            if (!input) {
+                await this.sleep(300);
+                continue;
+            }
+
+            try {
+                // 先确认当前 Locator 仍然是可见元素。
+                if (!(await input.isVisible())) {
+                    await this.sleep(200);
+                    continue;
+                }
+
+                try {
+                    await input.click({ timeout: 3000 });
+                } catch (clickError) {
+                    await input.focus({ timeout: 3000 });
+                }
+
+                await this.sleep(150);
+
+                const tagName = await input.evaluate((el) => el.tagName.toLowerCase());
+
+                const isContentEditable = await input.evaluate((el) => el.isContentEditable);
+
+                if (isContentEditable || tagName === "div") {
+                    await input.evaluate((el, msg) => {
+                        el.focus();
+                        el.innerHTML = "";
+                        el.textContent = msg;
+
+                        el.dispatchEvent(
+                            new InputEvent("input", {
+                                bubbles: true,
+                                inputType: "insertText",
+                                data: msg,
+                            })
+                        );
+                    }, message);
+                } else {
+                    // 不直接对可能已经被 ChatGPT 隐藏的 textarea 调用 fill。
+                    // fill 前再次确认元素仍然可见。
+                    if (!(await input.isVisible())) {
+                        throw new Error("ChatGPT input became hidden before fill");
+                    }
+
+                    await input.fill(message);
+                }
 
                 await this.sleep(300);
 
                 const actualValue = await this.getInputValue(input);
-                if (!actualValue || !actualValue.trim()) {
-                    await input.fill(message);
-                    await this.sleep(300);
+
+                if (actualValue && actualValue.trim()) {
+                    console.log(
+                        "[ChatGPT] Message inserted successfully, value length: " +
+                            actualValue.length
+                    );
+                    return true;
                 }
-            } else {
-                await input.fill(message);
-                await this.sleep(300);
-            }
-        } catch (error) {
-            console.warn("[ChatGPT] Evaluate fill failed: " + error.message);
 
-            try {
-                await input.fill(message);
+                lastError = new Error("ChatGPT input value is empty after insertion");
+            } catch (error) {
+                lastError = error;
+                console.warn(
+                    "[ChatGPT] Insert attempt " + (attempt + 1) + "/3 failed: " + error.message
+                );
+
+                // 清除缓存，下一轮必须重新解析当前 DOM。
+                this._cachedInput = null;
+
                 await this.sleep(300);
-            } catch (e) {
-                throw new Error("[ChatGPT] failed to insert message: " + error.message);
             }
         }
 
-        const finalValue = await this.getInputValue(input);
-        if (!finalValue || !finalValue.trim()) {
-            throw new Error("[ChatGPT] Input value is empty after fill");
-        }
-
-        console.log(
-            "[ChatGPT] Message inserted successfully, value length: " + (finalValue || "").length
+        throw new Error(
+            "[ChatGPT] failed to insert message: " +
+                (lastError ? lastError.message : "input not found")
         );
-
-        return true;
     }
 
     async send(message) {
@@ -236,7 +298,12 @@ https://chatgpt.com/c/6712abcd-...
         }
 
         if (!this.isPageAlive()) {
-            throw new Error("ChatGPT page is not available");
+            // 页面丢失时先尝试自动恢复，避免 agent 连续重试直接失败。
+            const recovered = await this.ensurePageAlive();
+
+            if (!recovered || !this.isPageAlive()) {
+                throw new Error("ChatGPT page is not available");
+            }
         }
 
         const oldAssistantCount = await this.getAssistantCount();
@@ -278,7 +345,7 @@ https://chatgpt.com/c/6712abcd-...
                             sent = true;
                             break;
                         }
-                    } catch (e) {
+                    } catch (error) {
                         continue;
                     }
                 }
@@ -293,11 +360,11 @@ https://chatgpt.com/c/6712abcd-...
 
         if (!sent) {
             try {
-                const input = await this.getInput();
+                const input = await this.getChatGPTInput();
 
                 if (input) {
                     await input.press("Enter");
-                    console.log("[ChatGPT] Pressed Enter on input element");
+                    console.log("[ChatGPT] Pressed Enter on current input element");
                     sent = true;
                 }
             } catch (error) {
@@ -316,8 +383,6 @@ https://chatgpt.com/c/6712abcd-...
             );
         }
 
-        // 输入框清空只是辅助状态，不再因为没有及时清空而重复发送 Enter。
-        // 重复发送是高风险操作：第一次发送可能已经成功，只是 UI 尚未完成更新。
         const inputCleared = await this.waitForInputClear(5000);
 
         if (inputCleared) {
@@ -328,8 +393,6 @@ https://chatgpt.com/c/6712abcd-...
             );
         }
 
-        // 发送后，页面 URL 通常会从 / 变为 /c/<id>，
-        // 这里主动刷新并同步 conversationId，让上层可感知会话 ID 变化。
         this.refreshConversationId();
 
         await this.waitForResponseStart(oldAssistantCount, oldResponse);
@@ -344,7 +407,6 @@ https://chatgpt.com/c/6712abcd-...
             throw new Error("ChatGPT returned an empty response");
         }
 
-        // 响应完成后再次同步会话 ID，防止 URL 在响应过程中才最终稳定
         this.refreshConversationId();
 
         console.log("[ChatGPT] Response received, length: " + response.length);
@@ -352,7 +414,6 @@ https://chatgpt.com/c/6712abcd-...
         return response;
     }
 }
-
 module.exports = {
     ChatGPTProvider,
 };

@@ -5,6 +5,18 @@ const { SessionManager } = require("./session/session-manager");
 const app = express();
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const sessionManager = new SessionManager();
+
+// 进程启动时，从用户主目录恢复上次的会话，避免重启后 WebUI 变成空会话。
+try {
+    const restoredCount = sessionManager.restore();
+
+    if (restoredCount > 0) {
+        console.log("[WebUI] Restored " + restoredCount + " session(s) from disk");
+    }
+} catch (error) {
+    console.error("[WebUI] Failed to restore sessions:", error.message);
+}
+
 const frontendDistPath = path.join(__dirname, "frontend", "dist");
 const BACKSLASH = String.fromCharCode(92);
 app.use(express.json());
@@ -51,6 +63,46 @@ function getDirectoryEntries(targetPath) {
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 }
+
+// 把用户传入的 conversationId 规范化。
+// 允许的输入：
+// 1. 纯 conversation id，例如 9efa4714-38db-4038-a971-226570f7155d
+// 2. 完整的会话 URL，例如 https://chat.deepseek.com/a/chat/s/<id>
+// 对以下情况返回 null（表示按新会话处理）：
+// - 空字符串
+// - 是一个 URL 但无法提取出会话 id（例如新会话入口 https://chat.deepseek.com）
+var DEEPSEEK_CID_PATTERN = new RegExp("/a/chat/s/([0-9a-fA-F-]+)");
+var DEFAULT_CID_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
+
+function normalizeConversationId(provider, raw) {
+    if (raw === undefined || raw === null) {
+        return null;
+    }
+
+    const trimmed = String(raw).trim();
+
+    if (!trimmed) {
+        return null;
+    }
+
+    const looksLikeUrl =
+        trimmed.indexOf("http://") === 0 ||
+        trimmed.indexOf("https://") === 0 ||
+        trimmed.indexOf("/") !== -1;
+
+    if (!looksLikeUrl) {
+        return trimmed;
+    }
+
+    if (provider === "deepseek") {
+        const deepseekMatch = trimmed.match(DEEPSEEK_CID_PATTERN);
+        return deepseekMatch ? deepseekMatch[1] : null;
+    }
+
+    const defaultMatch = trimmed.match(DEFAULT_CID_PATTERN);
+    return defaultMatch ? defaultMatch[1] : null;
+}
+
 app.get("/api/workspace/browse", (req, res) => {
     const requestedPath = typeof req.query.path === "string" ? req.query.path.trim() : "";
     if (!requestedPath && process.platform === "win32") {
@@ -102,21 +154,32 @@ app.post("/api/run", (req, res) => {
     }
 
     const providerName = provider || "chatgpt";
-    const cid =
-        typeof conversationId === "string" && conversationId.trim() ? conversationId.trim() : null;
+    const cid = normalizeConversationId(providerName, conversationId);
 
-    // 如果指定了 conversationId，优先复用同一 provider 下相同会话 id 的 session，
-    // 避免对同一 DS/ChatGPT/Qwen 会话反复创建新的 program session。
+    // 如果指定了 conversationId，优先复用同一 provider 下相同会话 id 且仍在运行的 session。
+    // 若已有 session 已结束，则删除它并创建新的 session 继续该会话，
+    // 否则用户无法在同一个 conversation 上继续执行新任务。
     if (cid) {
         const existing = sessionManager.findByConversation(providerName, cid);
 
-        if (existing) {
+        if (existing && existing.isRunning()) {
             return res.json({
-                message: "Session already exists for this conversation",
+                message: "Session already running for this conversation",
                 sessionId: existing.id,
                 conversationId: cid,
                 reused: true,
             });
+        }
+
+        if (existing) {
+            try {
+                sessionManager.remove(existing.id);
+            } catch (removeError) {
+                console.error(
+                    "[WebUI] Failed to remove finished session " + existing.id + ":",
+                    removeError.message
+                );
+            }
         }
     }
 
@@ -153,9 +216,7 @@ app.post("/api/run", (req, res) => {
 
         console.error("[WebUI] Failed to start session:", error);
 
-        return res.status(500).json({
-            error: error.message,
-        });
+        return res.status(500).json({ error: error.message });
     }
 });
 app.get("/api/sessions/:id", (req, res) => {
@@ -181,11 +242,13 @@ app.get("/api/sessions/:id/events", (req, res) => {
         "X-Accel-Buffering": "no",
     });
 
+    const NEWLINE = String.fromCharCode(10);
+
     const send = (eventName, data) => {
         if (res.writableEnded) return;
 
-        res.write("event: " + eventName + "\n");
-        res.write("data: " + JSON.stringify(data) + "\n\n");
+        res.write("event: " + eventName + NEWLINE);
+        res.write("data: " + JSON.stringify(data) + NEWLINE + NEWLINE);
     };
 
     const sendOutput = (output) => send("output", output);
@@ -236,7 +299,7 @@ app.get("/api/sessions/:id/events", (req, res) => {
 
     const heartbeat = setInterval(() => {
         if (res.writableEnded) return;
-        res.write(": heartbeat\n\n");
+        res.write(": heartbeat" + NEWLINE + NEWLINE);
     }, 15000);
 
     req.on("close", () => {
@@ -251,9 +314,7 @@ app.post("/api/sessions/:id/stop", async (req, res) => {
     const session = getSession(req, res);
     if (!session) return;
     if (!session.isRunning()) {
-        return res.status(400).json({
-            error: "Agent is not running",
-        });
+        return res.status(400).json({ error: "Agent is not running" });
     }
 
     try {
@@ -266,9 +327,7 @@ app.post("/api/sessions/:id/stop", async (req, res) => {
     } catch (error) {
         console.error("[WebUI] Failed to stop session " + session.id + ":", error.message);
 
-        return res.status(500).json({
-            error: error.message,
-        });
+        return res.status(500).json({ error: error.message });
     }
 });
 app.get("/api/sessions", (req, res) => {
@@ -287,9 +346,7 @@ app.delete("/api/sessions/:id", (req, res) => {
             sessionId: session.id,
         });
     } catch (error) {
-        return res.status(400).json({
-            error: error.message,
-        });
+        return res.status(400).json({ error: error.message });
     }
 });
 app.use("/api", (req, res) => {
@@ -343,4 +400,5 @@ module.exports = {
     startServer,
     shutdown,
     sessionManager,
+    normalizeConversationId,
 };

@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { getWorkspaceStoreDir } = require("./history");
 
 /**
 
@@ -32,55 +33,55 @@ function buildReport(task, workspace, records = []) {
     for (const item of records) {
         const result = item.result || {};
 
-        lines.push(`### Step ${item.step} - ${result.action || "unknown"}`);
+        lines.push("### Step " + item.step + " - " + (result.action || "unknown"));
         lines.push("");
-        lines.push(`时间：${item.timestamp}`);
+        lines.push("时间：" + item.timestamp);
         lines.push("");
         lines.push("Action：");
         lines.push("");
-        lines.push("```action");
+        lines.push("action");
         lines.push(JSON.stringify(item.action, null, 2));
-        lines.push("```");
+        lines.push("");
         lines.push("");
 
         if (result.action === "read") {
             if (result.ok) {
-                lines.push(`读取成功：\`${result.path}\``);
+                lines.push("读取成功：" + result.path);
 
                 if (result.type === "directory") {
                     lines.push("");
                     lines.push("目录内容：");
 
                     for (const entry of result.entries || []) {
-                        lines.push(`- ${entry}`);
+                        lines.push("- " + entry);
                     }
                 }
             } else {
-                lines.push(`读取失败：${result.error || "unknown error"}`);
+                lines.push("读取失败：" + (result.error || "unknown error"));
             }
         }
 
         if (result.action === "write") {
             if (result.ok) {
-                lines.push(`写入成功：\`${result.path}\``);
+                lines.push("写入成功：" + result.path);
             } else {
-                lines.push(`写入失败：${result.error || "unknown error"}`);
+                lines.push("写入失败：" + (result.error || "unknown error"));
             }
         }
 
         if (result.action === "exec") {
             if (result.ok) {
-                lines.push(`命令执行成功：\`${result.command}\``);
+                lines.push("命令执行成功：" + result.command);
             } else {
-                lines.push(`命令执行失败：\`${result.command}\``);
+                lines.push("命令执行失败：" + result.command);
 
                 if (result.error) {
                     lines.push("");
                     lines.push("错误：");
                     lines.push("");
-                    lines.push("```text");
+                    lines.push("text");
                     lines.push(result.error);
-                    lines.push("```");
+                    lines.push("");
                 }
             }
 
@@ -88,27 +89,27 @@ function buildReport(task, workspace, records = []) {
                 lines.push("");
                 lines.push("stdout：");
                 lines.push("");
-                lines.push("```text");
+                lines.push("text");
                 lines.push(result.stdout);
-                lines.push("```");
+                lines.push("");
             }
 
             if (result.stderr) {
                 lines.push("");
                 lines.push("stderr：");
                 lines.push("");
-                lines.push("```text");
+                lines.push("text");
                 lines.push(result.stderr);
-                lines.push("```");
+                lines.push("");
             }
 
             if (result.output) {
                 lines.push("");
                 lines.push("output：");
                 lines.push("");
-                lines.push("```text");
+                lines.push("text");
                 lines.push(result.output);
-                lines.push("```");
+                lines.push("");
             }
         }
 
@@ -134,13 +135,11 @@ function buildReport(task, workspace, records = []) {
 Save Report
 */
 function saveReport(task, workspace, records = []) {
-    const agentDir = path.join(workspace, ".agent");
+    const dir = getWorkspaceStoreDir(workspace);
 
-    fs.mkdirSync(agentDir, {
-        recursive: true,
-    });
+    fs.mkdirSync(dir, { recursive: true });
 
-    const reportPath = path.join(agentDir, "report.md");
+    const reportPath = path.join(dir, "report.md");
 
     const report = buildReport(task, workspace, records);
 

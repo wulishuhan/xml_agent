@@ -35,6 +35,65 @@ class AgentSession extends EventEmitter {
         this.finishedAt = null;
     }
 
+    /**
+
+从持久化数据恢复一个已经存在的会话实例。
+
+只恢复可在进程重启后还原的状态；运行时字段（agent 等）不恢复。
+
+恢复后的会话不会处于 running 状态（进程已重启，进程内的 Agent 已丢失）。
+*/
+    restore(data) {
+        if (!data) {
+            return this;
+        }
+
+        if (typeof data.id === "string" && data.id) {
+            this.id = data.id;
+        }
+
+        if (Array.isArray(data.output)) {
+            this.output = data.output;
+        }
+
+        if (typeof data.status === "string") {
+            this.status = data.status;
+        }
+
+        if (data.conversationId) {
+            this.conversationId = data.conversationId;
+        }
+
+        if (typeof data.exitCode !== "undefined") {
+            this.exitCode = data.exitCode;
+        }
+
+        if (typeof data.error !== "undefined") {
+            this.error = data.error;
+        }
+
+        if (typeof data.createdAt === "number") {
+            this.createdAt = data.createdAt;
+        }
+
+        if (typeof data.startedAt === "number") {
+            this.startedAt = data.startedAt;
+        }
+
+        if (typeof data.finishedAt === "number") {
+            this.finishedAt = data.finishedAt;
+        }
+
+        // 进程重启后，之前处于 running 的会话实际上已经中断
+        if (this.status === "running") {
+            this.status = "interrupted";
+            this.finishedAt = this.finishedAt || Date.now();
+            this.exitCode = this.exitCode === null ? 1 : this.exitCode;
+        }
+
+        return this;
+    }
+
     addOutput(type, content, event = null) {
         const record = {
             id: crypto.randomUUID(),
