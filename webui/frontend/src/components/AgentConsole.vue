@@ -3,44 +3,26 @@
         <div class="stream-header">
             <div>
                 <span class="stream-title">Agent Activity</span>
-                <span class="stream-count">{{ output.length }} events</span>
+                <span class="stream-count">{{ displayOutput.length }} events</span>
             </div>
             <div class="stream-actions">
-                <button
-                    v-if="collapsibleCount"
-                    class="stream-clear"
-                    type="button"
-                    @click="toggleAll"
-                >
+                <button v-if="collapsibleCount" class="stream-clear" @click="toggleAll">
                     {{ allExpanded ? "Collapse all" : "Expand all" }}
                 </button>
-                <button
-                    v-if="output.length"
-                    class="stream-clear"
-                    type="button"
-                    @click="$emit('clear')"
-                >
+                <button v-if="displayOutput.length" class="stream-clear" @click="emitClear">
                     Clear
                 </button>
             </div>
         </div>
         <div ref="consoleElement" class="stream-body">
-            <div v-if="!output.length" class="stream-empty">
-                <div class="empty-orb">✦</div>
-                <strong>{{
-                    session ? "Waiting for agent activity" : "Start a new session"
-                }}</strong>
-                <span>{{
-                    session
-                        ? "Agent events, runtime actions and results will appear here."
-                        : "Describe your task below and run the agent."
-                }}</span>
+            <div v-if="displayOutput.length === 0" class="stream-empty">
+                <div class="empty-orb">*</div>
+                <strong>{{ emptyTitle }}</strong> <span>{{ emptyHint }}</span>
             </div>
             <article
-                v-for="(item, index) in output"
-                :key="`${item.timestamp || 0}-${index}`"
+                v-for="(item, index) in displayOutput"
+                v-bind:key="item.timestamp + '-' + index"
                 class="event-card"
-                :class="[`event-${item.type}`, { 'event-answer': getActionTag(item) === 'answer' }]"
             >
                 <div class="event-marker">
                     <span>{{ getIcon(item) }}</span>
@@ -56,23 +38,50 @@
                         >
                         <time v-if="item.timestamp">{{ formatTime(item.timestamp) }}</time>
                     </div>
-                    <div
-                        v-if="isCollapsible(item) && !isExpanded(index)"
-                        class="event-preview-wrap"
-                    >
-                        <div class="event-preview">{{ getPreview(item) }}</div>
-                    </div>
-                    <pre v-else-if="isStructured(item)">{{ getBody(item) }}</pre>
-                    <div v-else class="event-text">{{ getBody(item) }}</div>
-                    <button
-                        v-if="isCollapsible(item)"
-                        class="event-toggle"
-                        type="button"
-                        @click="toggle(index)"
-                    >
-                        <span class="event-toggle-icon">{{ isExpanded(index) ? "▴" : "▾" }}</span>
-                        {{ isExpanded(index) ? "Show less" : "Show more" }}
+                    <template v-if="isAnswerItem(item)">
+                        <div
+                            v-if="isCollapsible(item) && !isExpanded(index)"
+                            class="event-preview-wrap"
+                        >
+                            <div class="event-preview">{{ getPreview(item) }}</div>
+                        </div>
+                        <div v-else class="event-answer-body">
+                            <div class="answer-row">
+                                <span class="answer-key">ok</span>
+                                <span class="answer-value">true</span>
+                            </div>
+                            <div class="answer-row">
+                                <span class="answer-key">action</span>
+                                <span class="answer-value">answer</span>
+                            </div>
+                            <div class="answer-row"><span class="answer-key">content</span></div>
+                            <pre class="answer-content">{{ getAnswerContent(item) }}</pre>
+                        </div> </template
+                    ><template v-else>
+                        <div
+                            v-if="isCollapsible(item) && !isExpanded(index)"
+                            class="event-preview-wrap"
+                        >
+                            <div class="event-preview">{{ getPreview(item) }}</div>
+                        </div>
+                        <pre v-else-if="isStructured(item)">{{ getBody(item) }}</pre>
+                        <div v-else class="event-text">{{ getBody(item) }}</div>
+                    </template>
+
+                    <button v-if="isCollapsible(item)" class="event-toggle" @click="toggle(index)">
+                        <span class="event-toggle-icon">{{ toggleIcon(index) }}</span>
+                        <span>{{ toggleText(index) }}</span>
                     </button>
+                </div>
+            </article>
+            <article v-if="finalAnswerContent" class="event-card event-final-answer">
+                <div class="event-marker"><span>+</span></div>
+                <div class="event-content">
+                    <div class="event-meta">
+                        <span class="event-type">Final Answer</span>
+                        <span class="event-tag">answer</span>
+                    </div>
+                    <pre class="final-answer-content">{{ finalAnswerContent }}</pre>
                 </div>
             </article>
         </div>
@@ -84,13 +93,67 @@ const props = defineProps({
     output: { type: Array, default: () => [] },
     session: { type: Object, default: null },
 });
-defineEmits(["clear"]);
+const emit = defineEmits(["clear"]);
+function emitClear() {
+    emit("clear");
+}
 const consoleElement = ref(null);
 const expanded = ref(new Set());
 const PREVIEW_MAX_CHARS = 220;
 const PREVIEW_MAX_LINES = 4;
+const emptyTitle = computed(() =>
+    props.session ? "Waiting for agent activity" : "Start a new session"
+);
+const emptyHint = computed(() =>
+    props.session
+        ? "Agent events, runtime actions and results will appear here."
+        : "Describe your task below and run the agent."
+);
+const displayOutput = computed(() => {
+    return props.output.filter((item) => {
+        const event = item.event;
+        if (!event) {
+            return true;
+        }
+        if (event.type === "answer") {
+            return false;
+        }
+        if (event.type === "action.parsed" && event.action === "answer") {
+            return false;
+        }
+        return true;
+    });
+});
+function hasDoneEvent(list) {
+    return list.some((item) => {
+        const event = item.event;
+        return event && event.type === "runtime.result" && event.action === "done";
+    });
+}
+function findAnswerContent(list) {
+    for (let i = list.length - 1; i >= 0; i--) {
+        const event = list[i].event;
+        if (
+            event &&
+            event.type === "runtime.result" &&
+            event.action === "answer" &&
+            event.result &&
+            typeof event.result.content === "string"
+        ) {
+            return event.result.content;
+        }
+    }
+    return "";
+}
+const finalAnswerContent = computed(() => {
+    const list = displayOutput.value;
+    if (!hasDoneEvent(list)) {
+        return "";
+    }
+    return findAnswerContent(list);
+});
 watch(
-    () => props.output.length,
+    () => displayOutput.value.length,
     async () => {
         await nextTick();
         if (!consoleElement.value) {
@@ -99,6 +162,13 @@ watch(
         consoleElement.value.scrollTop = consoleElement.value.scrollHeight;
     }
 );
+watch(finalAnswerContent, async () => {
+    await nextTick();
+    if (!consoleElement.value) {
+        return;
+    }
+    consoleElement.value.scrollTop = consoleElement.value.scrollHeight;
+});
 function getLabel(item) {
     const type = item.type;
     if (type === "system") return "System";
@@ -111,17 +181,16 @@ function getLabel(item) {
     return "Event";
 }
 function getIcon(item) {
-    if (item.type === "system") return "◆";
+    if (item.type === "system") return "#";
     if (item.type === "stderr" || item.type === "error") return "!";
     const tag = getActionTag(item);
-    if (tag === "answer") return "★";
+    if (tag === "answer") return "*";
     if (tag === "read") return "R";
     if (tag === "write") return "W";
     if (tag === "exec") return "$";
-    if (tag === "done") return "■";
-    return "›";
+    if (tag === "done") return "=";
+    return ">";
 }
-/*** * 从 agent 事件里取出 XML Action 名（read / write / exec / answer / done）。 * session 记录里 record.event 保存了原始 agent 事件。 */
 function getActionTag(item) {
     const event = item.event;
     if (!event) {
@@ -130,15 +199,26 @@ function getActionTag(item) {
     if (event.type === "runtime.result" && event.action) {
         return event.action;
     }
-    if (event.type === "answer") {
-        return "answer";
+    return "";
+}
+function isAnswerItem(item) {
+    return getActionTag(item) === "answer";
+}
+function getAnswerContent(item) {
+    const event = item.event;
+    if (
+        event &&
+        event.type === "runtime.result" &&
+        event.result &&
+        typeof event.result.content === "string"
+    ) {
+        return event.result.content;
     }
-    if (event.type === "action.parsed" && event.action) {
-        return event.action;
+    if (typeof item.content === "string") {
+        return item.content;
     }
     return "";
 }
-/*** * 实际展示用的正文。 * * answer 的 runtime.result 记录原始内容是 "Runtime action: answer\n{ ...json... }"， * 直接展示既冗长又看不到重点。这里把 result.content 抽出来单独展示， * 让用户在收缩状态下也能直接读到 Agent 的最终回答。 */
 function getBody(item) {
     const event = item.event;
     if (
@@ -147,10 +227,7 @@ function getBody(item) {
         event.result &&
         event.result.action === "answer"
     ) {
-        const text = event.result.content;
-        if (typeof text === "string" && text.trim()) {
-            return text;
-        }
+        return JSON.stringify(event.result, null, 2);
     }
     if (typeof item.content !== "string") {
         return "";
@@ -164,7 +241,6 @@ function getLineCount(item) {
     }
     return text.split("\n").length;
 }
-/*** * 是否可折叠：answer 始终可折叠；其它内容较长或行数较多时也可折叠。 */
 function isCollapsible(item) {
     const text = getBody(item);
     if (!text) {
@@ -181,8 +257,15 @@ function isCollapsible(item) {
     }
     return false;
 }
-/*** * 收缩时展示的摘要：取前几行 / 前若干字符。 */
 function getPreview(item) {
+    if (isAnswerItem(item)) {
+        const content = getAnswerContent(item) || "";
+        const oneLine = content.replace(/\s+/g, " ").trim();
+        if (oneLine.length > PREVIEW_MAX_CHARS) {
+            return "answer: " + oneLine.slice(0, PREVIEW_MAX_CHARS) + " ...";
+        }
+        return "answer: " + oneLine;
+    }
     const text = getBody(item);
     if (!text) {
         return "";
@@ -193,7 +276,7 @@ function getPreview(item) {
     const truncatedByChar = head.length > PREVIEW_MAX_CHARS;
     const shown = truncatedByChar ? head.slice(0, PREVIEW_MAX_CHARS) : head;
     if (truncatedByLine || truncatedByChar) {
-        return shown.replace(/\s+$/, "") + " …";
+        return shown.replace(/\s+$/, "") + " ...";
     }
     return shown;
 }
@@ -216,9 +299,15 @@ function toggle(index) {
     }
     expanded.value = next;
 }
+function toggleIcon(index) {
+    return isExpanded(index) ? "v" : ">";
+}
+function toggleText(index) {
+    return isExpanded(index) ? "Show less" : "Show more";
+}
 const collapsibleIndexes = computed(() => {
     const list = [];
-    props.output.forEach((item, index) => {
+    displayOutput.value.forEach((item, index) => {
         if (isCollapsible(item)) {
             list.push(index);
         }

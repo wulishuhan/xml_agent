@@ -125,6 +125,16 @@ class AgentSession extends EventEmitter {
             }
         }
 
+        // 重要：runtime.result 里已经携带了 answer 的完整内容
+        // （形如 { ok: true, action: "answer", content: "..." } 的 JSON），
+        // 如果再单独把 answer 事件也写入 output，就会在 WebUI 里出现两条
+        // "answer 只有内容" 的重复记录。
+        // 这里只广播事件，不再重复写入 output。
+        if (event.type === "answer") {
+            this.emit("agent.event", event);
+            return;
+        }
+
         const content = this.formatEvent(event);
 
         if (content !== null) {
@@ -157,6 +167,18 @@ class AgentSession extends EventEmitter {
             case "provider.response":
                 return "Provider response received (" + event.length + " chars)";
 
+            case "provider.retry":
+                return (
+                    "Provider retry (" +
+                    event.count +
+                    "/" +
+                    event.max +
+                    ") after " +
+                    event.delay +
+                    "ms: " +
+                    event.error
+                );
+
             case "provider.error":
                 return "Provider error (" + event.count + "/" + event.max + "): " + event.error;
 
@@ -176,9 +198,6 @@ class AgentSession extends EventEmitter {
                 return (
                     "Runtime action: " + event.action + "\n" + JSON.stringify(event.result, null, 2)
                 );
-
-            case "answer":
-                return event.content;
 
             case "agent.stopped":
                 return "⏹ Agent stopped by user";

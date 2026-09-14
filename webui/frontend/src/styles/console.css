@@ -216,9 +216,8 @@ color: #c0cbd8;
 
 组合在 Chromium 下会让预览块高度塌陷，导致内容完全不可见。
 
-这里只做 max-height 截断，省略号由 JS 在文案末尾补 “ … ”。
+这里只做 max-height 截断，省略号由 JS 在文案末尾补 “ ... ”。
 */
-
 .event-preview {
 max-height: 4.95em;
 overflow: hidden;
@@ -258,8 +257,83 @@ font-size: 9px;
 line-height: 1;
 }
 
-/* answer 是最终结果，给一点高亮，与普通日志区分开 */
+/*
 
+answer 展开后的结构化排版。
+
+上半部分是 JSON 元信息（ok / action），
+
+下半部分是 content 原文，两者视觉上分层，便于阅读。
+*/
+.event-answer-body {
+display: flex;
+flex-direction: column;
+gap: 4px;
+padding: 10px 12px;
+border: 1px solid #274434;
+border-radius: 6px;
+background: #0c1712;
+}
+
+.answer-row {
+display: flex;
+align-items: baseline;
+gap: 8px;
+font-family: "Cascadia Code", Consolas, monospace;
+font-size: 12.5px;
+line-height: 1.7;
+}
+
+.answer-key {
+color: #7ee2a0;
+font-weight: 650;
+min-width: 62px;
+}
+
+.answer-value {
+color: #cfe8d8;
+}
+
+.answer-content {
+margin: 6px 0 0;
+padding: 8px 0 0;
+border-top: 1px dashed #274434;
+color: #e3f2e7;
+font-family: "Cascadia Code", Consolas, monospace;
+font-size: 12.5px;
+line-height: 1.7;
+white-space: pre-wrap;
+word-break: break-word;
+max-height: none;
+overflow: visible;
+background: transparent;
+border-left: 0;
+border-right: 0;
+border-bottom: 0;
+}
+
+/*
+
+Final Answer 卡片：在 done 之后额外输出的完整 content。
+
+视觉上比 answer 卡片更突出，方便用户一眼看到 Agent 最终做了什么。
+*/
+.final-answer-content {
+margin: 0;
+padding: 14px 16px;
+border: 1px solid #3d6d4d;
+border-radius: 8px;
+background: #0e1c14;
+color: #eaf7ee;
+font-family: "Cascadia Code", Consolas, monospace;
+font-size: 13px;
+line-height: 1.75;
+white-space: pre-wrap;
+word-break: break-word;
+box-shadow: inset 0 0 0 1px rgb(126 226 160 / 8%);
+}
+
+/* answer 是最终结果，给一点高亮，与普通日志区分开 */
 .event-answer .event-marker span {
 border-color: #3c5a3f;
 background: #10231a;
