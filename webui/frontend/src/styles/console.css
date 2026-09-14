@@ -107,18 +107,6 @@ display: flex;
 max-width: 940px;
 gap: 12px;
 margin: 0 auto 13px;
-animation: event-in 0.18s ease;
-}
-
-@keyframes event-in {
-from {
-transform: translateY(-3px);
-opacity: 0;
-}
-to {
-transform: translateY(0);
-opacity: 1;
-}
 }
 
 .event-marker {
@@ -220,24 +208,26 @@ background: #0b1016;
 color: #c0cbd8;
 }
 
-/* 折叠预览：多行截断，尾部渐隐，暗示还有更多内容 */
+/*
+
+折叠预览
+
+不使用 -webkit-line-clamp / mask-image：这两者与 white-space: pre-wrap
+
+组合在 Chromium 下会让预览块高度塌陷，导致内容完全不可见。
+
+这里只做 max-height 截断，省略号由 JS 在文案末尾补 “ … ”。
+*/
 
 .event-preview {
-display: -webkit-box;
+max-height: 4.95em;
 overflow: hidden;
-color: #93a0b1;
+color: #a7b3c2;
 font-family: "Cascadia Code", Consolas, monospace;
 font-size: 12.5px;
 line-height: 1.65;
 white-space: pre-wrap;
 word-break: break-word;
--webkit-box-orient: vertical;
--webkit-line-clamp: 3;
-mask-image: linear-gradient(180deg, #000 55%, transparent 100%);
-}
-
-.event-full {
-animation: event-in 0.16s ease;
 }
 
 .event-toggle {
@@ -249,7 +239,7 @@ padding: 3px 9px;
 border: 1px solid #2a3644;
 border-radius: 6px;
 background: #121924;
-color: #7f8d9f;
+color: #8c9aac;
 font-size: 11px;
 transition:
 color 0.14s ease,
@@ -260,18 +250,12 @@ background 0.14s ease;
 .event-toggle:hover {
 border-color: #3d4d61;
 background: #16202c;
-color: #b6c2d1;
+color: #c3cedb;
 }
 
 .event-toggle-icon {
 font-size: 9px;
 line-height: 1;
-}
-
-/* 折叠态卡片更紧凑，降低视觉重量 */
-
-.event-condensed .event-content {
-padding-bottom: 0;
 }
 
 .event-stdout .event-marker span {
