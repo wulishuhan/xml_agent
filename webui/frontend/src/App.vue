@@ -1,155 +1,31 @@
 <template>
-    <div class="app-shell">
-        <SessionSidebar
-            :sessions="sessions"
-            :active-id="activeSessionId"
-            @select="selectSession"
-            @new-session="createNewSession"
-        />
-        <main class="workspace-view">
-            <header class="workspace-header">
-                <div class="workspace-heading">
-                    <div class="workspace-icon">⌘</div>
-                    <div>
-                        <div class="workspace-title">
-                            {{ activeSession ? sessionTitle(activeSession) : "New Agent Session" }}
-                        </div>
-                        <div class="workspace-path" :title="workspace">
-                            {{ workspace || "Please set a workspace to begin" }}
-                        </div>
-                    </div>
-                </div>
-                <div class="workspace-actions">
-                    <select v-model="provider" :disabled="running">
-                        <option value="chatgpt">ChatGPT</option>
-                        <option value="qwen">Qwen</option>
-                        <option value="deepseek">DeepSeek</option>
-                    </select>
-                    <span class="status-badge" :class="'status-' + sessionStatus">
-                        {{ statusText }}
-                    </span>
-                    <button
-                        v-if="isElectron"
-                        type="button"
-                        class="btn"
-                        title="Desktop settings"
-                        @click="showSettings = true"
-                    >
-                        Settings
-                    </button>
-                </div>
-            </header>
-            <section class="workspace-body">
-                <div v-if="activeSession" class="session-context">
-                    <div class="context-item">
-                        <span class="context-label">Workspace</span>
-                        <code>{{ activeSession.workspace }}</code>
-                    </div>
-                    <div class="context-item">
-                        <span class="context-label">Provider</span>
-                        <span>{{ activeSession.provider }}</span>
-                    </div>
-                    <div class="context-item">
-                        <span class="context-label">Session</span>
-                        <code>{{ shortId(activeSession.id) }}</code>
-                    </div>
-                    <div v-if="activeConversationId" class="context-item">
-                        <span class="context-label">Conversation</span>
-                        <code :title="activeConversationId">{{
-                            shortId(activeConversationId)
-                        }}</code>
-                    </div>
-                    <div v-if="isElectron" class="context-item">
-                        <span class="context-label">Port</span> <code>{{ electronPort }}</code>
-                    </div>
-                </div>
 
-                <AgentConsole :output="output" :session="activeSession" @clear="clearConsole" />
+<div class="app-shell"> <SessionSidebar :sessions="sessions" :active-id="activeSessionId" @select="selectSession" @new-session="createNewSession" @delete="deleteSessionById" /> <main class="workspace-view"> <header class="workspace-header"> <div class="workspace-heading"> <div class="workspace-icon">⌘</div> <div> <div class="workspace-title"> {{ activeSession ? sessionTitle(activeSession) : "New Agent Session" }} </div> <div class="workspace-path" :title="workspace"> {{ workspace || "Please set a workspace to begin" }} </div> </div> </div> <div class="workspace-actions"> <select v-model="provider" :disabled="running"> <option value="chatgpt">ChatGPT</option> <option value="qwen">Qwen</option> <option value="deepseek">DeepSeek</option> </select> <span class="status-badge" :class="'status-' + sessionStatus"> {{ statusText }} </span> <button v-if="isElectron" type="button" class="btn" title="Desktop settings" @click="showSettings = true" > Settings </button> </div> </header> <section class="workspace-body"> <div v-if="activeSession" class="session-context"> <div class="context-item"> <span class="context-label">Workspace</span> <code>{{ activeSession.workspace }}</code> </div> <div class="context-item"> <span class="context-label">Provider</span> <span>{{ activeSession.provider }}</span> </div> <div class="context-item"> <span class="context-label">Session</span> <code>{{ shortId(activeSession.id) }}</code> </div> <div v-if="activeConversationId" class="context-item"> <span class="context-label">Conversation</span> <code :title="activeConversationId">{{ shortId(activeConversationId) }}</code> </div> <div v-if="isElectron" class="context-item"> <span class="context-label">Port</span> <code>{{ electronPort }}</code> </div> </div>
 
-                <div v-if="errorMessage" class="error-banner">
-                    <strong>Agent error</strong> <span>{{ errorMessage }}</span>
-                </div>
-                <div v-if="!activeSession" class="welcome">
-                    <div class="welcome-mark">&lt;/&gt;</div>
-                    <h1>Build with your Agent</h1>
-                    <p>
-                        Create a session, choose a workspace, and let the Agent inspect, modify, and
-                        test your project.
-                    </p>
-                    <p v-if="isElectron" class="welcome-desktop-hint">
-                        Desktop mode - Chrome auto-detect enabled - click Settings to configure
-                    </p>
-                </div>
-                <div class="composer-shell">
-                    <div
-                        class="workspace-input-row"
-                        :class="{ 'workspace-input-row--required': !workspace.trim() }"
-                    >
-                        <div class="workspace-input">
-                            <span class="workspace-input-label">Workspace</span>
-                            <input
-                                ref="workspaceInput"
-                                v-model="workspace"
-                                :disabled="running"
-                                type="text"
-                                placeholder="Enter an absolute path, for example D:/projects/my-app"
-                                @keydown.enter="focusTask"
-                            />
-                            <button
-                                type="button"
-                                class="btn workspace-browse-button"
-                                :disabled="running"
-                                @click="openWorkspacePicker"
-                            >
-                                Browse
-                            </button>
-                        </div>
-                        <span v-if="!workspace.trim()" class="workspace-required-hint">
-                            Required - this path is different on each computer
-                        </span>
-                    </div>
+<AgentConsole :output="output" :session="activeSession" @clear="clearConsole" />
 
-                    <TaskComposer
-                        v-model:task="task"
-                        v-model:conversationId="conversationId"
-                        :provider="provider"
-                        :running="running"
-                        @run="runAgent"
-                        @stop="stopAgent"
-                    />
-                </div>
-            </section>
-        </main>
+<div v-if="errorMessage" class="error-banner"> <strong>Agent error</strong> <span>{{ errorMessage }}</span> </div> <div v-if="!activeSession" class="welcome"> <div class="welcome-mark">&lt;/&gt;</div> <h1>Build with your Agent</h1> <p> Create a session, choose a workspace, and let the Agent inspect, modify, and test your project. </p> <p v-if="isElectron" class="welcome-desktop-hint"> Desktop mode - Chrome auto-detect enabled - click Settings to configure </p> </div> <div class="composer-shell"> <div class="workspace-input-row" :class="{ 'workspace-input-row--required': !workspace.trim() }" > <div class="workspace-input"> <span class="workspace-input-label">Workspace</span> <input ref="workspaceInput" v-model="workspace" :disabled="running" type="text" placeholder="Enter an absolute path, for example D:/projects/my-app" @keydown.enter="focusTask" /> <button type="button" class="btn workspace-browse-button" :disabled="running" @click="openWorkspacePicker" > Browse </button> </div> <span v-if="!workspace.trim()" class="workspace-required-hint"> Required - this path is different on each computer </span> </div>
 
-        <WorkspacePicker
-            v-if="showWorkspacePicker"
-            @select="selectWorkspace"
-            @close="closeWorkspacePicker"
-        />
+<TaskComposer
+v-model:task="task"
+v-model:conversationId="conversationId"
+:provider="provider"
+:running="running"
+@run="runAgent"
+@stop="stopAgent"
+/>
 
-        <DesktopSettings
-            v-if="showSettings"
-            @close="showSettings = false"
-            @saved="onSettingsSaved"
-        />
-    </div>
-</template>
-<script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import AgentConsole from "./components/AgentConsole.vue";
-import SessionSidebar from "./components/SessionSidebar.vue";
-import TaskComposer from "./components/TaskComposer.vue";
-import WorkspacePicker from "./components/WorkspacePicker.vue";
-import DesktopSettings from "./components/DesktopSettings.vue";
-import {
-    extractConversationId,
-    getEventSourceUrl,
-    getSession,
-    getSessionOutput,
-    getSessions,
-    runAgent as apiRunAgent,
-    stopSession,
-} from "./services/agent-api.js";
+</div> </section> </main>
+
+<WorkspacePicker
+v-if="showWorkspacePicker"
+@select="selectWorkspace"
+@close="closeWorkspacePicker"
+/>
+
+<DesktopSettings v-if="showSettings" @close="showSettings = false" @saved="onSettingsSaved" />
+
+</div> </template> <script setup> import { computed, nextTick, onMounted, onUnmounted, ref } from "vue"; import AgentConsole from "./components/AgentConsole.vue"; import SessionSidebar from "./components/SessionSidebar.vue"; import TaskComposer from "./components/TaskComposer.vue"; import WorkspacePicker from "./components/WorkspacePicker.vue"; import DesktopSettings from "./components/DesktopSettings.vue"; import { deleteSession, extractConversationId, getEventSourceUrl, getSession, getSessionOutput, getSessions, runAgent as apiRunAgent, stopSession, } from "./services/agent-api.js";
 
 const sessions = ref([]);
 const activeSessionId = ref(null);
@@ -169,145 +45,146 @@ const showWorkspacePicker = ref(false);
 const showSettings = ref(false);
 
 const isElectron = computed(() => {
-    return (
-        typeof window !== "undefined" &&
-        window.xmlAgentDesktop &&
-        window.xmlAgentDesktop.isElectron === true
-    );
+return (
+typeof window !== "undefined" &&
+window.xmlAgentDesktop &&
+window.xmlAgentDesktop.isElectron === true
+);
 });
 
 const electronPort = computed(() => {
-    if (!isElectron.value) {
-        return "";
-    }
-    return String(window.xmlAgentDesktop.port || "");
+if (!isElectron.value) {
+return "";
+}
+return String(window.xmlAgentDesktop.port || "");
 });
 
 const activeConversationId = computed(() => {
-    return activeSession.value?.conversationId || "";
+return activeSession.value?.conversationId || "";
 });
 
 const sessionStatus = computed(() => {
-    return activeSession.value?.status || "created";
+return activeSession.value?.status || "created";
 });
 
 const running = computed(() => {
-    return activeSession.value?.running === true;
+return activeSession.value?.running === true;
 });
 
 const statusText = computed(() => {
-    const labels = {
-        created: "Ready",
-        running: "Running",
-        completed: "Completed",
-        stopped: "Stopped",
-        error: "Error",
-    };
-    return labels[sessionStatus.value] || sessionStatus.value;
+const labels = {
+created: "Ready",
+running: "Running",
+completed: "Completed",
+stopped: "Stopped",
+interrupted: "Interrupted",
+error: "Error",
+};
+return labels[sessionStatus.value] || sessionStatus.value;
 });
 
 async function loadSessions() {
-    try {
-        const result = await getSessions();
-        sessions.value = result.sessions || [];
-        if (activeSessionId.value) {
-            const existing = sessions.value.find((session) => session.id === activeSessionId.value);
-            if (existing) {
-                await selectSession(existing.id);
-                return;
-            }
-        }
-        if (sessions.value.length) {
-            await selectSession(sessions.value[0].id);
-        }
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
+try {
+const result = await getSessions();
+sessions.value = result.sessions || [];
+if (activeSessionId.value) {
+const existing = sessions.value.find((session) => session.id === activeSessionId.value);
+if (existing) {
+await selectSession(existing.id);
+return;
+}
+}
+if (sessions.value.length) {
+await selectSession(sessions.value[0].id);
+}
+} catch (error) {
+errorMessage.value = error.message;
+}
 }
 
 async function selectSession(sessionId) {
-    if (!sessionId) {
-        return;
-    }
-    activeSessionId.value = sessionId;
-    errorMessage.value = "";
-    closeEventSource();
-    try {
-        const [sessionResult, outputResult] = await Promise.all([
-            getSession(sessionId),
-            getSessionOutput(sessionId),
-        ]);
-        activeSession.value = sessionResult;
-        output.value = outputResult.output || [];
-        workspace.value = sessionResult.workspace || "";
-        provider.value = sessionResult.provider || provider.value;
-        task.value = sessionResult.task || "";
-        // 选中已有 session 时，把该 session 的 conversationId 回填到输入框，
-        // 便于用户查看或复用；用户也可以手动改掉它去开新的会话。
-        conversationId.value = sessionResult.conversationId || "";
-        subscribeToSession(sessionId);
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
+if (!sessionId) {
+return;
+}
+activeSessionId.value = sessionId;
+errorMessage.value = "";
+closeEventSource();
+try {
+const [sessionResult, outputResult] = await Promise.all([
+getSession(sessionId),
+getSessionOutput(sessionId),
+]);
+activeSession.value = sessionResult;
+output.value = outputResult.output || [];
+workspace.value = sessionResult.workspace || "";
+provider.value = sessionResult.provider || provider.value;
+task.value = sessionResult.task || "";
+// 选中已有 session 时，把该 session 的 conversationId 回填到输入框，
+// 便于用户查看或复用；用户也可以手动改掉它去开新的会话。
+conversationId.value = sessionResult.conversationId || "";
+subscribeToSession(sessionId);
+} catch (error) {
+errorMessage.value = error.message;
+}
 }
 
 function subscribeToSession(sessionId) {
-    closeEventSource();
-    const source = new EventSource(getEventSourceUrl(sessionId));
-    source.addEventListener("output", (event) => {
-        try {
-            const record = JSON.parse(event.data);
-            if (
-                !output.value.some((item) => {
-                    return (
-                        item.timestamp === record.timestamp &&
-                        item.type === record.type &&
-                        item.content === record.content
-                    );
-                })
-            ) {
-                output.value.push(record);
-            }
-        } catch (error) {
-            errorMessage.value = error.message;
-        }
-    });
-    source.addEventListener("conversation", (event) => {
-        try {
-            const info = JSON.parse(event.data);
-            if (info && info.conversationId) {
-                if (activeSession.value) {
-                    activeSession.value = Object.assign({}, activeSession.value, {
-                        conversationId: info.conversationId,
-                    });
-                    updateSessionList(activeSession.value);
-                }
-                // 同步到输入框，让用户看到当前会话 id
-                conversationId.value = info.conversationId;
-            }
-        } catch (error) {
-            errorMessage.value = error.message;
-        }
-    });
-    source.addEventListener("finished", (event) => {
-        try {
-            activeSession.value = JSON.parse(event.data);
-            updateSessionList(activeSession.value);
-        } catch (error) {
-            errorMessage.value = error.message;
-        }
-    });
-    source.addEventListener("error", (event) => {
-        if (event.data) {
-            try {
-                const result = JSON.parse(event.data);
-                errorMessage.value = result.message || "Agent error";
-            } catch {
-                errorMessage.value = "Agent event stream error";
-            }
-        }
-    });
-    eventSource.value = source;
+closeEventSource();
+const source = new EventSource(getEventSourceUrl(sessionId));
+source.addEventListener("output", (event) => {
+try {
+const record = JSON.parse(event.data);
+if (
+!output.value.some((item) => {
+return (
+item.timestamp === record.timestamp &&
+item.type === record.type &&
+item.content === record.content
+);
+})
+) {
+output.value.push(record);
+}
+} catch (error) {
+errorMessage.value = error.message;
+}
+});
+source.addEventListener("conversation", (event) => {
+try {
+const info = JSON.parse(event.data);
+if (info && info.conversationId) {
+if (activeSession.value) {
+activeSession.value = Object.assign({}, activeSession.value, {
+conversationId: info.conversationId,
+});
+updateSessionList(activeSession.value);
+}
+// 同步到输入框，让用户看到当前会话 id
+conversationId.value = info.conversationId;
+}
+} catch (error) {
+errorMessage.value = error.message;
+}
+});
+source.addEventListener("finished", (event) => {
+try {
+activeSession.value = JSON.parse(event.data);
+updateSessionList(activeSession.value);
+} catch (error) {
+errorMessage.value = error.message;
+}
+});
+source.addEventListener("error", (event) => {
+if (event.data) {
+try {
+const result = JSON.parse(event.data);
+errorMessage.value = result.message || "Agent error";
+} catch {
+errorMessage.value = "Agent event stream error";
+}
+}
+});
+eventSource.value = source;
 }
 
 /**
@@ -321,159 +198,185 @@ function subscribeToSession(sessionId) {
 或者直接一个 id
 */
 function normalizeConversationId() {
-    const raw = (conversationId.value || "").trim();
-    if (!raw) {
-        return "";
-    }
-    const parsed = extractConversationId(provider.value, raw);
-    if (parsed) {
-        return parsed;
-    }
-    return raw;
+const raw = (conversationId.value || "").trim();
+if (!raw) {
+return "";
+}
+const parsed = extractConversationId(provider.value, raw);
+if (parsed) {
+return parsed;
+}
+return raw;
 }
 
 async function runAgent() {
-    if (running.value) {
-        return;
-    }
-    if (!workspace.value.trim()) {
-        errorMessage.value = "Please enter a workspace path before running the agent.";
-        await nextTick();
-        workspaceInput.value?.focus();
-        return;
-    }
-    if (!task.value.trim()) {
-        errorMessage.value = "Please describe the task before running the agent.";
-        return;
-    }
-    errorMessage.value = "";
-    try {
-        const payload = {
-            workspace: workspace.value.trim(),
-            provider: provider.value,
-            task: task.value.trim(),
-        };
-        const cid = normalizeConversationId();
-        if (cid) {
-            payload.conversationId = cid;
-        }
-        const result = await apiRunAgent(payload);
-        activeSessionId.value = result.sessionId;
-        await loadSessions();
-        await selectSession(result.sessionId);
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
+if (running.value) {
+return;
+}
+if (!workspace.value.trim()) {
+errorMessage.value = "Please enter a workspace path before running the agent.";
+await nextTick();
+workspaceInput.value?.focus();
+return;
+}
+if (!task.value.trim()) {
+errorMessage.value = "Please describe the task before running the agent.";
+return;
+}
+errorMessage.value = "";
+try {
+const payload = {
+workspace: workspace.value.trim(),
+provider: provider.value,
+task: task.value.trim(),
+};
+const cid = normalizeConversationId();
+if (cid) {
+payload.conversationId = cid;
+}
+const result = await apiRunAgent(payload);
+activeSessionId.value = result.sessionId;
+await loadSessions();
+await selectSession(result.sessionId);
+} catch (error) {
+errorMessage.value = error.message;
+}
 }
 
 async function stopAgent() {
-    if (!activeSessionId.value || !running.value) {
-        return;
-    }
-    try {
-        await stopSession(activeSessionId.value);
-        await selectSession(activeSessionId.value);
-        await loadSessions();
-    } catch (error) {
-        errorMessage.value = error.message;
-    }
+if (!activeSessionId.value || !running.value) {
+return;
+}
+try {
+await stopSession(activeSessionId.value);
+await selectSession(activeSessionId.value);
+await loadSessions();
+} catch (error) {
+errorMessage.value = error.message;
+}
+}
+
+/**
+
+删除会话（由侧边栏确认后触发）。
+
+删除后：如果是当前激活会话，切到列表中的下一条或进入新会话界面。
+*/
+async function deleteSessionById(sessionId) {
+if (!sessionId) {
+return;
+}
+
+errorMessage.value = "";
+
+try {
+await deleteSession(sessionId);
+} catch (error) {
+errorMessage.value = error.message;
+return;
+}
+
+const wasActive = activeSessionId.value === sessionId;
+
+sessions.value = sessions.value.filter((session) => session.id !== sessionId);
+
+if (!wasActive) {
+return;
+}
+
+closeEventSource();
+activeSessionId.value = null;
+activeSession.value = null;
+output.value = [];
+
+if (sessions.value.length) {
+await selectSession(sessions.value[0].id);
+return;
+}
+
+createNewSession();
 }
 
 function createNewSession() {
-    closeEventSource();
-    activeSessionId.value = null;
-    activeSession.value = null;
-    output.value = [];
-    errorMessage.value = "";
-    task.value = "";
-    workspace.value = "";
-    conversationId.value = "";
+closeEventSource();
+activeSessionId.value = null;
+activeSession.value = null;
+output.value = [];
+errorMessage.value = "";
+task.value = "";
+workspace.value = "";
+conversationId.value = "";
 }
 
 function clearConsole() {
-    output.value = [];
+output.value = [];
 }
 
 function updateSessionList(session) {
-    const index = sessions.value.findIndex((item) => item.id === session.id);
-    if (index === -1) {
-        sessions.value.unshift(session);
-        return;
-    }
-    sessions.value[index] = session;
+const index = sessions.value.findIndex((item) => item.id === session.id);
+if (index === -1) {
+sessions.value.unshift(session);
+return;
+}
+sessions.value[index] = session;
 }
 
 function closeEventSource() {
-    if (!eventSource.value) {
-        return;
-    }
-    eventSource.value.close();
-    eventSource.value = null;
+if (!eventSource.value) {
+return;
+}
+eventSource.value.close();
+eventSource.value = null;
 }
 
 function sessionTitle(session) {
-    const value = (session.task || "").trim();
-    if (!value) {
-        return "Untitled session";
-    }
-    return value.length > 72 ? value.slice(0, 72) + "..." : value;
+const value = (session.task || "").trim();
+if (!value) {
+return "Untitled session";
+}
+return value.length > 72 ? value.slice(0, 72) + "..." : value;
 }
 
 function shortId(id) {
-    return id ? id.slice(0, 8) : "-";
+return id ? id.slice(0, 8) : "-";
 }
 
 function focusTask() {
-    if (running.value) {
-        return;
-    }
-    const textarea = document.querySelector(".composer textarea");
-    textarea?.focus();
+if (running.value) {
+return;
+}
+const textarea = document.querySelector(".composer textarea");
+textarea?.focus();
 }
 
 function openWorkspacePicker() {
-    if (running.value) {
-        return;
-    }
-    showWorkspacePicker.value = true;
+if (running.value) {
+return;
+}
+showWorkspacePicker.value = true;
 }
 
 function closeWorkspacePicker() {
-    showWorkspacePicker.value = false;
+showWorkspacePicker.value = false;
 }
 
 function selectWorkspace(selectedPath) {
-    if (!selectedPath) {
-        return;
-    }
-    workspace.value = selectedPath;
-    showWorkspacePicker.value = false;
-    errorMessage.value = "";
+if (!selectedPath) {
+return;
+}
+workspace.value = selectedPath;
+showWorkspacePicker.value = false;
+errorMessage.value = "";
 }
 
 function onSettingsSaved() {
-    // 提示用户新配置已生效。后续新启动的 Agent 会话会使用新的 Chrome 路径。
-    errorMessage.value = "";
+// 提示用户新配置已生效。后续新启动的 Agent 会话会使用新的 Chrome 路径。
+errorMessage.value = "";
 }
 
 onMounted(loadSessions);
 onUnmounted(closeEventSource);
 </script>
 
-<style scoped>
-.workspace-browse-button {
-    flex: 0 0 auto;
-    white-space: nowrap;
-}
-.workspace-input {
-    width: 100%;
-}
-.workspace-input input {
-    width: 100%;
-}
-.welcome-desktop-hint {
-    margin-top: 10px;
-    color: #566477;
-    font-size: 12px;
-}
-</style>
+<style scoped> .workspace-browse-button { flex: 0 0 auto; white-space: nowrap; } .workspace-input { width: 100%; } .workspace-input input { width: 100%; } .welcome-desktop-hint { margin-top: 10px; color: #566477; font-size: 12px; } </style>
+
