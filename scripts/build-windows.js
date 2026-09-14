@@ -1,32 +1,29 @@
 /**
-
-自定义 Windows 打包脚本，绕过 electron-builder 的两个环境问题：
+自定义 Windows 打包脚本，绕过 electron-builder 的环境问题：
 
 问题 1：electron-builder 解压缓存 electron zip 不完整，
-
 导致 win-unpacked 缺少 electron.exe，进而报：
-
 ENOENT: rename 'win-unpacked\electron.exe' -> 'win-unpacked\XMLAgent.exe'
-
 解决：使用 --config.electronDist=node_modules/electron/dist 让它直接拷贝目录。
 
-问题 2：electron-builder 下载 winCodeSign-2.6.0.7z 后，7za 在非管理员权限下
+问题 2：electron-builder 需要下载 winCodeSign-2.6.0.7z / nsis-3.0.4.1.7z /
+nsis-resources-3.4.1.7z，在部分网络环境（公司代理、自签 CA、无法访问 GitHub）
+下会失败。
+解决：先运行 scripts/prepare-offline-cache.js，把手动下载到 download/ 的 .7z
+解压到 electron-builder 默认缓存，electron-builder 会直接复用，不再联网。
 
-无法创建 darwin 符号链接（libcrypto.dylib / libssl.dylib），报 exit status 2。
-
-解决：
-
-预先准备一个只含 Windows 需要文件的 winCodeSign 目录
-
-通过环境变量 ELECTRON_BUILDER_CACHE 指向自定义缓存根
-
-该缓存下 winCodeSign/2.6.0 已存在且完整，electron-builder 就会直接复用
+问题 3：上一次运行 XMLAgent.exe 后进程没有退出，会锁住 release/win-unpacked
+下的文件，导致重新构建时报：
+EBUSY: resource busy or locked, unlink '...\win-unpacked\icudtl.dat'
+解决：构建前自动结束本产品的 XMLAgent.exe 进程（仅 Windows，且只结束
+名字为 XMLAgent.exe 的进程，不影响其它程序）。
 
 使用方式：node scripts/build-windows.js
 */
 
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const { spawnSync } = require("child_process");
 
 const projectRoot = path.join(__dirname, "..");
@@ -39,93 +36,68 @@ const electronBuilderBin = path.join(
 
 const ELECTRON_DIST_REL = path.join("node_modules", "electron", "dist");
 
-// 项目本地缓存，避免写入 %LOCALAPPDATA% 造成权限问题
-const LOCAL_CACHE_ROOT = path.join(projectRoot, ".electron-builder-cache");
-const LOCAL_WINCODESIGN_DIR = path.join(LOCAL_CACHE_ROOT, "winCodeSign", "2.6.0");
-
-const SRC_WINCODESIGN_ROOT = path.join(
-    process.env.LOCALAPPDATA || "",
+// 用户默认缓存（electron-builder 自动查找）
+const userCacheRoot = path.join(
+    process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"),
     "electron-builder",
-    "Cache",
-    "winCodeSign"
+    "Cache"
 );
+const userWinCodeSignDir = path.join(userCacheRoot, "winCodeSign", "winCodeSign-2.6.0");
+const userNsisDir = path.join(userCacheRoot, "nsis", "nsis-3.0.4.1");
 
-function copyRecursive(src, dst) {
-    const stat = fs.statSync(src);
+/**
 
-    if (stat.isDirectory()) {
-        fs.mkdirSync(dst, { recursive: true });
+结束残留的 XMLAgent.exe 进程，避免 release/win-unpacked 下的文件被占用
 
-        for (const name of fs.readdirSync(src)) {
-            copyRecursive(path.join(src, name), path.join(dst, name));
-        }
+导致 electron-builder 覆盖时 EBUSY。
 
+只结束名为 XMLAgent.exe 的进程，不影响其它程序。
+*/
+function killRunningAppProcesses() {
+    if (process.platform !== "win32") {
         return;
     }
 
-    // 跳过 macOS 符号链接文件；其余普通文件直接拷贝
-    const base = path.basename(src);
+    const listResult = spawnSync("tasklist", ["/FI", "IMAGENAME eq XMLAgent.exe", "/NH"], {
+        encoding: "utf8",
+        windowsHide: true,
+    });
 
-    if (base.endsWith(".dylib")) {
+    const listOutput = listResult.stdout || "";
+
+    if (listOutput.toLowerCase().indexOf("xmlagent.exe") === -1) {
         return;
     }
 
-    fs.copyFileSync(src, dst);
-}
+    console.log("[build-windows] detected running XMLAgent.exe, terminating...");
 
-function findSourceWinCodeSign() {
-    if (!fs.existsSync(SRC_WINCODESIGN_ROOT)) {
-        return null;
-    }
+    spawnSync("taskkill", ["/F", "/IM", "XMLAgent.exe"], {
+        encoding: "utf8",
+        windowsHide: true,
+    });
 
-    for (const name of fs.readdirSync(SRC_WINCODESIGN_ROOT)) {
-        const full = path.join(SRC_WINCODESIGN_ROOT, name);
+    // 等待文件句柄释放（最多 3 秒）
+    const deadline = Date.now() + 3000;
 
-        if (!fs.statSync(full).isDirectory()) {
-            continue;
+    while (Date.now() < deadline) {
+        const check = spawnSync("tasklist", ["/FI", "IMAGENAME eq XMLAgent.exe", "/NH"], {
+            encoding: "utf8",
+            windowsHide: true,
+        });
+
+        if ((check.stdout || "").toLowerCase().indexOf("xmlagent.exe") === -1) {
+            console.log("[build-windows] XMLAgent.exe terminated");
+            return;
         }
 
-        // 只选取包含 rcedit-x64.exe 的目录
-        if (fs.existsSync(path.join(full, "rcedit-x64.exe"))) {
-            return full;
-        }
+        const sleepResult = spawnSync("cmd", ["/c", "ping -n 1 -w 200 127.0.0.1 >nul"], {
+            windowsHide: true,
+        });
+
+        void sleepResult;
     }
 
-    return null;
-}
-
-function prepareLocalWinCodeSign() {
-    if (fs.existsSync(path.join(LOCAL_WINCODESIGN_DIR, "rcedit-x64.exe"))) {
-        console.log("[build-windows] local winCodeSign ready at " + LOCAL_WINCODESIGN_DIR);
-        return true;
-    }
-
-    const src = findSourceWinCodeSign();
-
-    if (!src) {
-        console.warn(
-            "[build-windows] no pre-extracted winCodeSign found; will rely on electron-builder default cache"
-        );
-        return false;
-    }
-
-    fs.mkdirSync(LOCAL_WINCODESIGN_DIR, { recursive: true });
-
-    for (const name of fs.readdirSync(src)) {
-        const from = path.join(src, name);
-        const to = path.join(LOCAL_WINCODESIGN_DIR, name);
-
-        // 跳过 darwin 等非 Windows 平台目录，避免符号链接问题
-        if (name === "darwin" || name === "linux") {
-            continue;
-        }
-
-        copyRecursive(from, to);
-    }
-
-    console.log("[build-windows] copied winCodeSign from " + src + " to " + LOCAL_WINCODESIGN_DIR);
-
-    return true;
+    console.warn("[build-windows] XMLAgent.exe still running after timeout");
 }
 
 function runElectronBuilder(args, env) {
@@ -148,6 +120,16 @@ function runElectronBuilder(args, env) {
         );
         error.exitCode = result.status;
         throw error;
+    }
+}
+
+function tryElectronBuilder(args, env) {
+    try {
+        runElectronBuilder(args, env);
+        return true;
+    } catch (error) {
+        console.warn("[build-windows] warning: " + error.message);
+        return false;
     }
 }
 
@@ -174,20 +156,64 @@ function runNodeScript(relativePath) {
 
 function main() {
     try {
-        prepareLocalWinCodeSign();
+        // 关键：先结束残留进程，避免 EBUSY
+        killRunningAppProcesses();
 
-        const env = Object.assign({}, process.env, {
-            ELECTRON_BUILDER_CACHE: LOCAL_CACHE_ROOT,
-        });
+        const hasWinCodeSign = fs.existsSync(path.join(userWinCodeSignDir, "rcedit-x64.exe"));
+        const hasNsis = fs.existsSync(path.join(userNsisDir, "makensis.exe"));
 
-        runElectronBuilder(["--win", "dir", "--config.electronDist=" + ELECTRON_DIST_REL], env);
+        if (hasWinCodeSign) {
+            console.log("[build-windows] local winCodeSign ready at " + userWinCodeSignDir);
+        } else {
+            console.warn(
+                "[build-windows] local winCodeSign missing; run npm run electron:offline-cache " +
+                    "after putting winCodeSign-2.6.0.7z in download/"
+            );
+        }
+
+        if (hasNsis) {
+            console.log("[build-windows] local nsis ready at " + userNsisDir);
+        } else {
+            console.warn(
+                "[build-windows] local nsis missing; installer targets will be skipped. " +
+                    "Put nsis-3.0.4.1.7z in download/ and run npm run electron:offline-cache."
+            );
+        }
+
+        // 使用 electron-builder 默认缓存，不覆盖 ELECTRON_BUILDER_CACHE。
+        const env = process.env;
+
+        const baseArgs = ["--config.electronDist=" + ELECTRON_DIST_REL];
+
+        // 没有本地 winCodeSign 时跳过 rcedit，避免联网下载
+        if (!hasWinCodeSign) {
+            baseArgs.push("--config.win.signAndEditExecutable=false");
+        }
+
+        // 第一步：dir 构建（win-unpacked 免安装目录）必须成功
+        runElectronBuilder(["--win", "dir"].concat(baseArgs), env);
 
         runNodeScript(path.join("scripts", "postbuild-fix-exe.js"));
 
-        runElectronBuilder(
-            ["--win", "nsis", "portable", "--config.electronDist=" + ELECTRON_DIST_REL],
-            env
-        );
+        // 第二步：NSIS / portable 安装包
+        if (!hasNsis) {
+            console.warn(
+                "[build-windows] installer targets skipped: no local nsis found. " +
+                    "Portable build is available at release/win-unpacked/XMLAgent.exe"
+            );
+        } else {
+            const installerOk = tryElectronBuilder(
+                ["--win", "nsis", "portable"].concat(baseArgs),
+                env
+            );
+
+            if (!installerOk) {
+                console.warn(
+                    "[build-windows] installer targets failed. " +
+                        "Portable build is available at release/win-unpacked/XMLAgent.exe"
+                );
+            }
+        }
     } catch (error) {
         console.error("[build-windows] failed:", error.message);
         process.exitCode = error.exitCode || 1;
