@@ -70,17 +70,6 @@
                 <div v-if="errorMessage" class="error-banner">
                     <strong>Agent error</strong> <span>{{ errorMessage }}</span>
                 </div>
-                <div v-if="!activeSession" class="welcome">
-                    <div class="welcome-mark">&lt;/&gt;</div>
-                    <h1>Build with your Agent</h1>
-                    <p>
-                        Create a session, choose a workspace, and let the Agent inspect, modify, and
-                        test your project.
-                    </p>
-                    <p v-if="isElectron" class="welcome-desktop-hint">
-                        Desktop mode - Chrome auto-detect enabled - click Settings to configure
-                    </p>
-                </div>
                 <div class="composer-shell">
                     <div
                         class="workspace-input-row"
@@ -317,11 +306,7 @@ function subscribeToSession(sessionId) {
 
 把用户在 conversationId 输入框中填写的内容转换为纯粹的 conversation id。
 
-允许用户粘贴：
-
-完整的会话 URL
-
-或者直接一个 id
+允许用户粘贴完整的会话 URL，或者直接一个 id。
 */
 function normalizeConversationId() {
     const raw = (conversationId.value || "").trim();
@@ -514,10 +499,5 @@ onUnmounted(closeEventSource);
 }
 .workspace-input input {
     width: 100%;
-}
-.welcome-desktop-hint {
-    margin-top: 10px;
-    color: #566477;
-    font-size: 12px;
 }
 </style>
