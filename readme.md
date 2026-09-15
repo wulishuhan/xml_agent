@@ -6,8 +6,6 @@
 
 > LLM 负责理解任务和规划，Runtime 负责安全执行，XML Action 作为 Agent 与 Workspace 之间的通信协议。
 
-项目目标是构建一个类似 Claude Code、OpenHands 的轻量级工程 Agent Harness。
-
 ---
 
 # 快速开始
@@ -17,7 +15,7 @@
 环境：
 
 ```
-Node.js >= 16
+Node.js >= 20.19
 ```
 
 ```bash
@@ -27,14 +25,6 @@ npm install
 ```
 
 ## 使用webUI
-
-安装依赖
-
-```
-cd xml_agent/webui
-npm install
-
-```
 
 配置chrome.exe路径
 配置文件xml_agent/config/agent-config.js
@@ -124,7 +114,7 @@ Agent 连接的是用户启动的 Chrome，因此不会主动关闭整个 Chrome
 ## 运行
 
 - **_参数解释_**
-    - **_--provider_** : 可选，默认是chatgpt，提供chatgpt/qwen。
+    - **_--provider_** : 可选，默认是chatgpt，提供chatgpt/qwen/deepseek。
     - **_--workspace_** : 必填，工作目录：注意目录必须存在
 
 默认gpt
@@ -508,43 +498,6 @@ workspace/
 
 ---
 
-# 安装
-
-环境：
-
-```
-Node.js >= 16
-```
-
-安装依赖：
-
-```bash
-npm install
-```
-
----
-
-# 使用
-
-## CLI
-
-示例：
-
-```bash
-node agent.js \
---workspace D:/project/demo \
---provider chatgpt \
-创建一个 hello.js 文件
-```
-
-Windows:
-
-```bash
-node agent.js --workspace D:/project/demo --provider qwen "分析当前项目"
-```
-
----
-
 # XML Action 协议
 
 Agent 与 Runtime 使用 XML 通信。
@@ -666,39 +619,6 @@ Runtime 控制：
 
 ---
 
-# 后续规划
-
-## Runtime 增强
-
-- exec 流式输出
-- 命令权限控制
-- Docker Sandbox
-- Git 操作
-
-## Agent 增强
-
-- 长期 Memory
-- Plan / Execute 模式
-- 多 Agent 协作
-- Tool Registry
-
-## 服务化
-
-增加：
-
-```
-server/
-```
-
-提供：
-
-```
-POST /agent/run
-```
-
-让 Agent 作为后台服务运行。
-
----
 
 # 总结
 
