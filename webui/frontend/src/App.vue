@@ -31,6 +31,20 @@
                         {{ statusText }}
                     </span>
                     <button
+                        type="button"
+                        class="btn theme-toggle"
+                        :title="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+                        :aria-label="
+                            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+                        "
+                        @click="toggleTheme"
+                    >
+                        <span class="theme-toggle-icon">{{ theme === "dark" ? "☾" : "☀" }}</span>
+                        <span class="theme-toggle-label">{{
+                            theme === "dark" ? "Dark" : "Light"
+                        }}</span>
+                    </button>
+                    <button
                         v-if="isElectron"
                         type="button"
                         class="btn"
@@ -65,49 +79,68 @@
                         <span class="context-label">Port</span> <code>{{ electronPort }}</code>
                     </div>
                 </div>
-
-                <AgentConsole :output="output" :session="activeSession" @clear="clearConsole" />
-
-                <div v-if="errorMessage" class="error-banner">
-                    <strong>Agent error</strong> <span>{{ errorMessage }}</span>
-                </div>
-                <div class="composer-shell">
-                    <div
-                        class="workspace-input-row"
-                        :class="{ 'workspace-input-row--required': !workspace.trim() }"
-                    >
-                        <div class="workspace-input">
-                            <span class="workspace-input-label">Workspace</span>
-                            <input
-                                ref="workspaceInput"
-                                v-model="workspace"
-                                :disabled="running"
-                                type="text"
-                                placeholder="Enter an absolute path, for example D:/projects/my-app"
-                                @keydown.enter="focusTask"
-                            />
-                            <button
-                                type="button"
-                                class="btn workspace-browse-button"
-                                :disabled="running"
-                                @click="openWorkspacePicker"
-                            >
-                                Browse
-                            </button>
+                <div ref="splitArea" class="split-area" :class="{ resizing }">
+                    <div class="console-region" :style="consoleStyle">
+                        <AgentConsole
+                            :output="output"
+                            :session="activeSession"
+                            @clear="clearConsole"
+                        />
+                        <div v-if="errorMessage" class="error-banner">
+                            <strong>Agent error</strong> <span>{{ errorMessage }}</span>
                         </div>
-                        <span v-if="!workspace.trim()" class="workspace-required-hint">
-                            Required - this path is different on each computer
-                        </span>
                     </div>
+                    <div
+                        class="split-handle"
+                        role="separator"
+                        aria-orientation="horizontal"
+                        title="Drag to resize output / input. Double-click to reset."
+                        @pointerdown="startResize"
+                        @dblclick="resetRatio"
+                    >
+                        <span class="split-handle-grip"></span>
+                        <span class="split-handle-pct"
+                            >{{ ratioPercent }}% / {{ 100 - ratioPercent }}%</span
+                        >
+                    </div>
+                    <div class="composer-shell" :style="composerStyle">
+                        <div
+                            class="workspace-input-row"
+                            :class="{ 'workspace-input-row--required': !workspace.trim() }"
+                        >
+                            <div class="workspace-input">
+                                <span class="workspace-input-label">Workspace</span>
+                                <input
+                                    ref="workspaceInput"
+                                    v-model="workspace"
+                                    :disabled="running"
+                                    type="text"
+                                    placeholder="Enter an absolute path, for example D:/projects/my-app"
+                                    @keydown.enter="focusTask"
+                                />
+                                <button
+                                    type="button"
+                                    class="btn workspace-browse-button"
+                                    :disabled="running"
+                                    @click="openWorkspacePicker"
+                                >
+                                    Browse
+                                </button>
+                            </div>
+                            <span v-if="!workspace.trim()" class="workspace-required-hint">
+                                Required - this path is different on each computer
+                            </span>
+                        </div>
 
-                    <TaskComposer
-                        v-model:task="task"
-                        v-model:conversationId="conversationId"
-                        :provider="provider"
-                        :running="running"
-                        @run="runAgent"
-                        @stop="stopAgent"
-                    />
+                        <TaskComposer
+                            v-model:task="task"
+                            v-model:conversationId="conversationId"
+                            :provider="provider"
+                            :running="running"
+                            @run="runAgent"
+                            @stop="stopAgent"
+                        />
+                    </div>
                 </div>
             </section>
         </main>
@@ -126,7 +159,7 @@
     </div>
 </template>
 <script setup>
-    import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
+    import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref } from "vue";
     import AgentConsole from "./components/AgentConsole.vue";
     import SessionSidebar from "./components/SessionSidebar.vue";
     import TaskComposer from "./components/TaskComposer.vue";
@@ -143,6 +176,7 @@
         runAgent as apiRunAgent,
         stopSession,
     } from "./services/agent-api.js";
+    import { applyTheme, persistTheme, resolveInitialTheme } from "./services/theme.js";
 
     const sessions = ref([]);
     const activeSessionId = ref(null);
@@ -155,12 +189,115 @@
     const task = ref("");
     const storage = ref(null);
 
+    // 主题：dark（默认） / light
+    const theme = ref(resolveInitialTheme());
+
+    function toggleTheme() {
+        theme.value = theme.value === "dark" ? "light" : "dark";
+        applyTheme(theme.value);
+        persistTheme(theme.value);
+    }
+
     // 用户在 TaskComposer 里输入的“继续已有会话”内容：
     // 既可以是完整的会话 URL，也可以直接是 conversation id。
     const conversationId = ref("");
     const workspaceInput = ref(null);
     const showWorkspacePicker = ref(false);
     const showSettings = ref(false);
+
+    // ------------------------------------------------------------------
+    // 输出区 / 输入区 可调节分割
+    // ratio 表示输出区（Agent Activity）占据的高度比例，范围 [MIN_RATIO, MAX_RATIO]。
+    // 拖动中间的分割条即可动态调节，双击恢复默认，比例会持久化到 localStorage。
+    // ------------------------------------------------------------------
+    const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
+    const MIN_RATIO = 0.2;
+    const MAX_RATIO = 0.85;
+    const DEFAULT_RATIO = 0.68;
+
+    const splitArea = ref(null);
+    const ratio = ref(DEFAULT_RATIO);
+    const resizing = ref(false);
+
+    const ratioPercent = computed(() => Math.round(ratio.value * 100));
+    const consoleStyle = computed(() => ({ flex: ratio.value + " 1 0" }));
+    const composerStyle = computed(() => ({ flex: 1 - ratio.value + " 1 0" }));
+
+    function clampRatio(value) {
+        if (value < MIN_RATIO) {
+            return MIN_RATIO;
+        }
+        if (value > MAX_RATIO) {
+            return MAX_RATIO;
+        }
+        return value;
+    }
+
+    function loadRatio() {
+        try {
+            const raw = window.localStorage.getItem(SPLIT_STORAGE_KEY);
+            if (raw) {
+                const parsed = parseFloat(raw);
+                if (!isNaN(parsed)) {
+                    ratio.value = clampRatio(parsed);
+                }
+            }
+        } catch (error) {
+            // localStorage 不可用时忽略，使用默认比例
+        }
+    }
+
+    function persistRatio() {
+        try {
+            window.localStorage.setItem(SPLIT_STORAGE_KEY, String(ratio.value));
+        } catch (error) {
+            // 忽略持久化失败
+        }
+    }
+
+    function applyPointerRatio(clientY) {
+        const el = splitArea.value;
+        if (!el) {
+            return;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.height <= 0) {
+            return;
+        }
+        const next = (clientY - rect.top) / rect.height;
+        ratio.value = clampRatio(next);
+    }
+
+    function onPointerMove(event) {
+        applyPointerRatio(event.clientY);
+    }
+
+    function stopResize() {
+        if (!resizing.value) {
+            return;
+        }
+        resizing.value = false;
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", stopResize);
+        window.removeEventListener("pointercancel", stopResize);
+        persistRatio();
+    }
+
+    function startResize(event) {
+        if (event.button !== undefined && event.button !== 0) {
+            return;
+        }
+        event.preventDefault();
+        resizing.value = true;
+        window.addEventListener("pointermove", onPointerMove);
+        window.addEventListener("pointerup", stopResize);
+        window.addEventListener("pointercancel", stopResize);
+    }
+
+    function resetRatio() {
+        ratio.value = DEFAULT_RATIO;
+        persistRatio();
+    }
 
     const isElectron = computed(() => {
         return (
@@ -507,10 +644,13 @@
     }
 
     onMounted(() => {
+        applyTheme(theme.value);
+        loadRatio();
         loadSessions();
         refreshStorage();
     });
     onUnmounted(closeEventSource);
+    onBeforeUnmount(stopResize);
 </script>
 
 <style scoped>
@@ -523,5 +663,72 @@
     }
     .workspace-input input {
         width: 100%;
+    }
+    .theme-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .theme-toggle-icon {
+        font-size: 13px;
+        line-height: 1;
+    } /* 输出区 / 输入区 可调节分割布局 */
+    .split-area {
+        display: flex;
+        min-height: 0;
+        flex: 1;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .console-region {
+        display: flex;
+        min-height: 120px;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .composer-shell {
+        min-height: 140px;
+        overflow-y: auto;
+    }
+    .split-handle {
+        position: relative;
+        display: flex;
+        height: 12px;
+        flex: 0 0 12px;
+        align-items: center;
+        justify-content: center;
+        border-top: 1px solid var(--c-border-soft);
+        border-bottom: 1px solid var(--c-border-soft);
+        background: var(--c-panel-bg);
+        cursor: row-resize;
+        touch-action: none;
+        transition: background 0.14s ease;
+    }
+    .split-handle:hover,
+    .split-area.resizing .split-handle {
+        background: var(--c-elevated-bg);
+    }
+    .split-handle-grip {
+        width: 46px;
+        height: 3px;
+        border-radius: 3px;
+        background: var(--c-border-strong);
+        transition: background 0.14s ease;
+    }
+    .split-handle:hover .split-handle-grip,
+    .split-area.resizing .split-handle-grip {
+        background: var(--c-accent-2);
+    }
+    .split-handle-pct {
+        position: absolute;
+        right: 14px;
+        color: var(--c-text-faint);
+        font-size: 10px;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+        user-select: none;
+    }
+    .split-area.resizing {
+        user-select: none;
     }
 </style>

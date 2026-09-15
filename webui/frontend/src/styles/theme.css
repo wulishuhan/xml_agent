@@ -1,0 +1,143 @@
+/*
+
+主题变量定义。
+
+默认（:root）为深色主题，通过 <html data-theme="light"> 切换到浅色主题。
+
+所有组件样式统一引用这里的 CSS 变量，
+
+以便在不改动组件结构的情况下整体换肤。
+*/
+
+:root,
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    /* 基础背景 */
+    --c-app-bg: #090c10;
+    --c-app-glow: #182231;
+    --c-sidebar-bg: #0d1117;
+    --c-header-bg: rgba(13, 17, 23, 0.88);
+    --c-panel-bg: #0b0f14;
+    --c-card-bg: #10161e;
+    --c-input-bg: #111720;
+    --c-elevated-bg: #151b24;
+    --c-raised-bg: #151c26;
+    --c-hover-bg: #141a22;
+    --c-active-bg: #17202b;
+    --c-active-border: #2b3c52;
+
+    /* 边框 */
+    --c-border: #222a34;
+    --c-border-soft: #1c242e;
+    --c-border-strong: #303b49;
+    --c-border-input: #2b3644;
+
+    /* 文本 */
+    --c-text: #d7dde5;
+    --c-text-strong: #eef2f6;
+    --c-text-title: #f0f4f8;
+    --c-text-body: #c7d0db;
+    --c-text-item: #dce3eb;
+    --c-text-muted: #788595;
+    --c-text-soft: #8492a3;
+    --c-text-dim: #5f6d7e;
+    --c-text-faint: #4d5a69;
+    --c-code: #a8bcd6;
+    --c-scrollbar: #28313d;
+
+    /* 强调色 */
+    --c-accent: #8ab4ff;
+    --c-accent-2: #7897bd;
+    --c-accent-blue: #58a6ff;
+
+    /* 按钮 */
+    --c-btn-bg: #171e27;
+    --c-btn-hover: #1d2631;
+    --c-icon-btn-bg: #151b24;
+    --c-icon-btn-hover: #1b2430;
+
+    /* 状态 */
+    --c-success: #3fb950;
+    --c-success-text: #68d17b;
+    --c-danger: #f85149;
+    --c-danger-text: #ff9b94;
+    --c-warning-text: #e0a66e;
+    --c-badge-text: #8e9aaa;
+
+    /* 输入区 */
+    --c-input-bg-soft: #0b0f14;
+    --c-required-border: #6a4930;
+    --c-required-bg: #18120d;
+
+    /* 阴影 */
+    --c-shadow: rgba(0, 0, 0, 0.18);
+    --c-shadow-strong: rgba(0, 0, 0, 0.48);
+    --c-backdrop: rgba(4, 7, 10, 0.62);
+}
+
+:root[data-theme="light"] {
+    color-scheme: light;
+
+    /* 基础背景 */
+    --c-app-bg: #f4f6f9;
+    --c-app-glow: #e2e9f2;
+    --c-sidebar-bg: #ffffff;
+    --c-header-bg: rgba(255, 255, 255, 0.9);
+    --c-panel-bg: #f7f9fc;
+    --c-card-bg: #ffffff;
+    --c-input-bg: #ffffff;
+    --c-elevated-bg: #eef2f7;
+    --c-raised-bg: #f1f4f9;
+    --c-hover-bg: #eef2f7;
+    --c-active-bg: #e6eefb;
+    --c-active-border: #b7cff0;
+
+    /* 边框 */
+    --c-border: #dce2ea;
+    --c-border-soft: #e6ebf1;
+    --c-border-strong: #c8d2de;
+    --c-border-input: #d2dae4;
+
+    /* 文本 */
+    --c-text: #2b3440;
+    --c-text-strong: #1f2731;
+    --c-text-title: #18202a;
+    --c-text-body: #3a4450;
+    --c-text-item: #2b3440;
+    --c-text-muted: #6b7686;
+    --c-text-soft: #78838f;
+    --c-text-dim: #8a95a3;
+    --c-text-faint: #9aa4b1;
+    --c-code: #2f5b8c;
+    --c-scrollbar: #c9d2dd;
+
+    /* 强调色 */
+    --c-accent: #2f6fd0;
+    --c-accent-2: #4b7fbf;
+    --c-accent-blue: #2f6fd0;
+
+    /* 按钮 */
+    --c-btn-bg: #eef2f7;
+    --c-btn-hover: #e2e8f1;
+    --c-icon-btn-bg: #eef2f7;
+    --c-icon-btn-hover: #e2e8f1;
+
+    /* 状态 */
+    --c-success: #2ea043;
+    --c-success-text: #1a7f37;
+    --c-danger: #d1242f;
+    --c-danger-text: #b3261e;
+    --c-warning-text: #9a6700;
+    --c-badge-text: #5b6675;
+
+    /* 输入区 */
+    --c-input-bg-soft: #f7f9fc;
+    --c-required-border: #d8b184;
+    --c-required-bg: #fdf6ec;
+
+    /* 阴影 */
+    --c-shadow: rgba(15, 23, 42, 0.08);
+    --c-shadow-strong: rgba(15, 23, 42, 0.18);
+    --c-backdrop: rgba(15, 23, 42, 0.28);
+}

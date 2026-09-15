@@ -1,3 +1,4 @@
+@import "./theme.css";
 @import "./console.css";
 
 * {
@@ -5,7 +6,6 @@
 }
 
 :root {
-    color-scheme: dark;
     font-family:
         Inter,
         ui-sans-serif,
@@ -13,8 +13,6 @@
         BlinkMacSystemFont,
         "Segoe UI",
         sans-serif;
-    background: #090c10;
-    color: #d7dde5;
 }
 
 html,
@@ -30,7 +28,8 @@ body,
 
 body {
     overflow: hidden;
-    background: radial-gradient(circle at 80% -10%, #182231 0, transparent 38%), #090c10;
+    background: radial-gradient(circle at 80% -10%, var(--c-app-glow) 0, transparent 38%), var(--c-app-bg);
+    color: var(--c-text);
 }
 
 button,
@@ -60,8 +59,8 @@ select {
     flex-direction: column;
     min-width: 0;
     height: 100%;
-    border-right: 1px solid #222a34;
-    background: #0d1117;
+    border-right: 1px solid var(--c-border);
+    background: var(--c-sidebar-bg);
 }
 
 .sidebar-header {
@@ -70,7 +69,7 @@ select {
     justify-content: space-between;
     height: 68px;
     padding: 0 16px;
-    border-bottom: 1px solid #222a34;
+    border-bottom: 1px solid var(--c-border);
 }
 
 .brand {
@@ -86,10 +85,10 @@ select {
     height: 34px;
     flex: 0 0 34px;
     place-items: center;
-    border: 1px solid #344153;
+    border: 1px solid var(--c-border-strong);
     border-radius: 9px;
-    background: #151c26;
-    color: #8ab4ff;
+    background: var(--c-raised-bg);
+    color: var(--c-accent);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 13px;
     font-weight: 700;
@@ -104,14 +103,14 @@ select {
 
 .brand-copy strong {
     overflow: hidden;
-    color: #f0f4f8;
+    color: var(--c-text-title);
     font-size: 14px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .brand-copy span {
-    color: #687484;
+    color: var(--c-text-muted);
     font-size: 12px;
 }
 
@@ -122,17 +121,17 @@ select {
     width: 32px;
     height: 32px;
     padding: 0;
-    border: 1px solid #303b49;
+    border: 1px solid var(--c-border-strong);
     border-radius: 7px;
-    background: #151b24;
-    color: #c9d4e2;
+    background: var(--c-icon-btn-bg);
+    color: var(--c-text-body);
     font-size: 16px;
     line-height: 1;
 }
 
 .icon-button:hover {
-    border-color: #52667f;
-    background: #1b2430;
+    border-color: var(--c-accent-2);
+    background: var(--c-icon-btn-hover);
 }
 
 .sidebar-toolbar {
@@ -143,7 +142,7 @@ select {
 }
 
 .sidebar-label {
-    color: #788595;
+    color: var(--c-text-muted);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.09em;
@@ -154,8 +153,8 @@ select {
     min-width: 22px;
     padding: 2px 7px;
     border-radius: 10px;
-    background: #19212c;
-    color: #8d9bad;
+    background: var(--c-elevated-bg);
+    color: var(--c-text-dim);
     font-size: 12px;
     text-align: center;
 }
@@ -165,26 +164,26 @@ select {
 .storage-warning {
     margin: 0 12px 8px;
     padding: 9px 11px;
-    border: 1px solid #6a4930;
+    border: 1px solid var(--c-required-border);
     border-radius: 8px;
-    background: #18120d;
+    background: var(--c-required-bg);
 }
 
 .storage-warning-title {
-    color: #e0a66e;
+    color: var(--c-warning-text);
     font-size: 12px;
     font-weight: 700;
 }
 
 .storage-warning-text {
     margin-top: 3px;
-    color: #cbb08d;
+    color: var(--c-warning-text);
     font-size: 11px;
 }
 
 .storage-warning-hint {
     margin-top: 4px;
-    color: #8a7a63;
+    color: var(--c-text-dim);
     font-size: 11px;
     line-height: 1.5;
 }
@@ -204,7 +203,7 @@ select {
 .session-list::-webkit-scrollbar-thumb,
 .stream-body::-webkit-scrollbar-thumb {
     border-radius: 8px;
-    background: #28313d;
+    background: var(--c-scrollbar);
 }
 
 .session-list-empty {
@@ -213,18 +212,18 @@ select {
     flex-direction: column;
     gap: 7px;
     margin: 36px 15px;
-    color: #667281;
+    color: var(--c-text-dim);
     font-size: 13px;
     text-align: center;
 }
 
 .session-list-empty strong {
-    color: #9aa6b5;
+    color: var(--c-text-soft);
 }
 
 .empty-icon {
     margin-bottom: 3px;
-    color: #4e6075;
+    color: var(--c-text-faint);
     font-size: 26px;
 }
 
@@ -240,7 +239,7 @@ select {
     border: 1px solid transparent;
     border-radius: 8px;
     background: transparent;
-    color: #c7d0db;
+    color: var(--c-text-body);
     text-align: left;
     cursor: pointer;
     transition:
@@ -249,17 +248,17 @@ select {
 }
 
 .session-item:hover {
-    background: #141a22;
+    background: var(--c-hover-bg);
 }
 
 .session-item:focus-visible {
     outline: none;
-    border-color: #3d5580;
+    border-color: var(--c-accent-2);
 }
 
 .session-item.active {
-    border-color: #2b3c52;
-    background: #17202b;
+    border-color: var(--c-active-border);
+    background: var(--c-active-bg);
 }
 
 .session-status-dot {
@@ -268,25 +267,25 @@ select {
     flex: 0 0 7px;
     margin-top: 6px;
     border-radius: 50%;
-    background: #667281;
+    background: var(--c-text-dim);
 }
 
 .dot-running {
     box-shadow: 0 0 0 3px rgb(65 139 255 / 12%);
-    background: #58a6ff;
+    background: var(--c-accent-blue);
 }
 
 .dot-completed {
-    background: #3fb950;
+    background: var(--c-success);
 }
 
 .dot-error {
-    background: #f85149;
+    background: var(--c-danger);
 }
 
 .dot-stopped,
 .dot-interrupted {
-    background: #768396;
+    background: var(--c-text-soft);
 }
 
 .session-item-content {
@@ -299,7 +298,7 @@ select {
 
 .session-item-content strong {
     overflow: hidden;
-    color: #dce3eb;
+    color: var(--c-text-item);
     font-size: 13px;
     font-weight: 600;
     line-height: 1.45;
@@ -309,7 +308,7 @@ select {
 
 .session-workspace {
     overflow: hidden;
-    color: #758294;
+    color: var(--c-text-muted);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 11px;
     text-overflow: ellipsis;
@@ -319,12 +318,12 @@ select {
 .session-meta {
     display: flex;
     gap: 5px;
-    color: #566273;
+    color: var(--c-text-dim);
     font-size: 11px;
 }
 
 .session-running {
-    color: #58a6ff;
+    color: var(--c-accent-blue);
     font-size: 9px;
 }
 
@@ -342,7 +341,7 @@ select {
     border: 1px solid transparent;
     border-radius: 5px;
     background: transparent;
-    color: #5c6a7c;
+    color: var(--c-text-dim);
     font-size: 15px;
     line-height: 1;
     opacity: 0;
@@ -360,9 +359,9 @@ select {
 }
 
 .session-delete:hover {
-    border-color: #693532;
-    background: #2a1615;
-    color: #ff9b94;
+    border-color: var(--c-required-border);
+    background: var(--c-required-bg);
+    color: var(--c-danger-text);
 }
 
 /* 删除确认弹层 */
@@ -374,21 +373,21 @@ select {
     align-items: center;
     justify-content: center;
     inset: 0;
-    background: rgb(4 7 10 / 62%);
+    background: var(--c-backdrop);
     backdrop-filter: blur(2px);
 }
 
 .session-confirm {
     width: min(380px, 88vw);
     padding: 18px 20px 16px;
-    border: 1px solid #303b49;
+    border: 1px solid var(--c-border-strong);
     border-radius: 11px;
-    background: #10161e;
-    box-shadow: 0 18px 50px rgb(0 0 0 / 48%);
+    background: var(--c-card-bg);
+    box-shadow: 0 18px 50px var(--c-shadow-strong);
 }
 
 .session-confirm-title {
-    color: #eef2f6;
+    color: var(--c-text-strong);
     font-size: 14px;
     font-weight: 650;
 }
@@ -396,7 +395,7 @@ select {
 .session-confirm-text {
     overflow: hidden;
     margin-top: 9px;
-    color: #c7d0db;
+    color: var(--c-text-body);
     font-size: 13px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -404,7 +403,7 @@ select {
 
 .session-confirm-hint {
     margin-top: 7px;
-    color: #6d7b8c;
+    color: var(--c-text-muted);
     font-size: 11.5px;
     line-height: 1.6;
 }
@@ -418,14 +417,14 @@ select {
 
 .sidebar-footer {
     padding: 13px 16px;
-    border-top: 1px solid #222a34;
+    border-top: 1px solid var(--c-border);
 }
 
 .connection-indicator {
     display: flex;
     align-items: center;
     gap: 7px;
-    color: #667383;
+    color: var(--c-text-muted);
     font-size: 12px;
 }
 
@@ -433,7 +432,7 @@ select {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #3fb950;
+    background: var(--c-success);
     box-shadow: 0 0 7px rgb(63 185 80 / 45%);
 }
 
@@ -447,7 +446,7 @@ select {
 }
 
 .storage-meter-text {
-    color: #5f6d7e;
+    color: var(--c-text-dim);
     font-size: 11px;
 }
 
@@ -457,14 +456,14 @@ select {
     height: 4px;
     overflow: hidden;
     border-radius: 3px;
-    background: #1a222c;
+    background: var(--c-elevated-bg);
 }
 
 .storage-meter-fill {
     display: block;
     height: 100%;
     border-radius: 3px;
-    background: #3f6ea5;
+    background: var(--c-accent-2);
     transition: width 0.3s ease;
 }
 
@@ -473,7 +472,7 @@ select {
 }
 
 .storage-meter-fill.full {
-    background: #d15049;
+    background: var(--c-danger);
 }
 
 /* Main workspace */
@@ -493,8 +492,8 @@ select {
     justify-content: space-between;
     gap: 20px;
     padding: 0 25px;
-    border-bottom: 1px solid #222a34;
-    background: rgb(13 17 23 / 88%);
+    border-bottom: 1px solid var(--c-border);
+    background: var(--c-header-bg);
 }
 
 .workspace-heading {
@@ -511,15 +510,15 @@ select {
     flex: 0 0 34px;
     place-items: center;
     border-radius: 8px;
-    background: #151d28;
-    color: #7897bd;
+    background: var(--c-raised-bg);
+    color: var(--c-accent-2);
     font-size: 17px;
 }
 
 .workspace-title {
     overflow: hidden;
     max-width: min(620px, 50vw);
-    color: #eef2f6;
+    color: var(--c-text-strong);
     font-size: 14px;
     font-weight: 650;
     text-overflow: ellipsis;
@@ -530,7 +529,7 @@ select {
     overflow: hidden;
     max-width: min(620px, 50vw);
     margin-top: 3px;
-    color: #97a4b5;
+    color: var(--c-text-soft);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 13px;
     text-overflow: ellipsis;
@@ -547,44 +546,44 @@ select {
     width: auto;
     min-width: 108px;
     padding: 7px 10px;
-    border-color: #2b3542;
+    border: 1px solid var(--c-border-input);
     border-radius: 7px;
-    background: #111720;
-    color: #aeb9c7;
+    background: var(--c-input-bg);
+    color: var(--c-text-body);
     font-size: 12px;
 }
 
 .status-badge {
     padding: 5px 9px;
-    border: 1px solid #303a47;
+    border: 1px solid var(--c-border-strong);
     border-radius: 12px;
-    background: #151b24;
-    color: #8e9aaa;
+    background: var(--c-elevated-bg);
+    color: var(--c-badge-text);
     font-size: 10px;
     font-weight: 600;
 }
 
 .status-running {
     border-color: #244a78;
-    background: #12243a;
-    color: #6eaeff;
+    background: rgb(88 166 255 / 12%);
+    color: var(--c-accent-blue);
 }
 
 .status-completed {
     border-color: #275335;
-    background: #102317;
-    color: #68d17b;
+    background: rgb(63 185 80 / 12%);
+    color: var(--c-success-text);
 }
 
 .status-error {
     border-color: #663331;
-    background: #281615;
-    color: #ff7b72;
+    background: rgb(248 81 73 / 12%);
+    color: var(--c-danger-text);
 }
 
 .status-stopped,
 .status-interrupted {
-    color: #9aa6b5;
+    color: var(--c-text-soft);
 }
 
 .workspace-body {
@@ -600,8 +599,8 @@ select {
     flex-wrap: wrap;
     gap: 20px;
     padding: 11px 25px;
-    border-bottom: 1px solid #1c242e;
-    background: #0b0f14;
+    border-bottom: 1px solid var(--c-border-soft);
+    background: var(--c-panel-bg);
 }
 
 .context-item {
@@ -609,12 +608,12 @@ select {
     align-items: center;
     gap: 7px;
     min-width: 0;
-    color: #c2ccd8;
+    color: var(--c-text-body);
     font-size: 14px;
 }
 
 .context-label {
-    color: #8492a3;
+    color: var(--c-text-soft);
     font-size: 12px;
     text-transform: uppercase;
 }
@@ -622,7 +621,7 @@ select {
 .context-item code {
     overflow: hidden;
     max-width: 380px;
-    color: #a8bcd6;
+    color: var(--c-code);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 14px;
     text-overflow: ellipsis;
@@ -634,35 +633,35 @@ select {
 .composer-shell {
     flex: 0 0 auto;
     padding: 10px 25px 20px;
-    border-top: 1px solid #222a34;
-    background: #0b0f14;
+    border-top: 1px solid var(--c-border);
+    background: var(--c-panel-bg);
 }
 
 .workspace-input-row {
     max-width: 940px;
     margin: 0 auto 8px;
     padding: 9px 11px;
-    border: 1px solid #2b3644;
+    border: 1px solid var(--c-border-input);
     border-radius: 8px;
-    background: #111720;
+    background: var(--c-input-bg);
 }
 
 .workspace-input-row--required {
-    border-color: #6a4930;
-    background: #18120d;
+    border-color: var(--c-required-border);
+    background: var(--c-required-bg);
 }
 
 .workspace-input {
     display: flex;
     align-items: center;
     gap: 10px;
-    color: #aeb9c7;
+    color: var(--c-text-body);
     font-size: 12px;
 }
 
 .workspace-input-label {
     flex: 0 0 auto;
-    color: #d7dee7;
+    color: var(--c-text);
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -674,13 +673,13 @@ select {
     padding: 5px 0;
     border: 0;
     background: transparent;
-    color: #d7dee7;
+    color: var(--c-text);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 13px;
 }
 
 .workspace-input input::placeholder {
-    color: #59697a;
+    color: var(--c-text-faint);
 }
 
 .workspace-input input:focus {
@@ -690,7 +689,7 @@ select {
 .workspace-required-hint {
     display: block;
     margin-top: 5px;
-    color: #e0a66e;
+    color: var(--c-warning-text);
     font-size: 11px;
 }
 
@@ -698,10 +697,10 @@ select {
     max-width: 964px;
     margin: 0 auto;
     overflow: hidden;
-    border: 1px solid #303b49;
+    border: 1px solid var(--c-border-strong);
     border-radius: 10px;
-    background: #10161e;
-    box-shadow: 0 10px 35px rgb(0 0 0 / 18%);
+    background: var(--c-card-bg);
+    box-shadow: 0 10px 35px var(--c-shadow);
 }
 
 .composer-header {
@@ -709,7 +708,7 @@ select {
     align-items: center;
     justify-content: space-between;
     padding: 9px 12px;
-    border-bottom: 1px solid #202a35;
+    border-bottom: 1px solid var(--c-border-soft);
 }
 
 .composer-header > div {
@@ -719,19 +718,19 @@ select {
 }
 
 .composer-label {
-    color: #aeb9c7;
+    color: var(--c-text-body);
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
 }
 
 .composer-hint {
-    color: #4f5d6d;
+    color: var(--c-text-faint);
     font-size: 12px;
 }
 
 .composer-provider {
-    color: #657386;
+    color: var(--c-text-muted);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 12px;
 }
@@ -746,13 +745,13 @@ select {
     border-radius: 0;
     outline: none;
     background: transparent;
-    color: #d5dce5;
+    color: var(--c-text);
     font-size: 14px;
     line-height: 1.65;
 }
 
 .composer textarea::placeholder {
-    color: #485565;
+    color: var(--c-text-faint);
 }
 
 .composer textarea:focus {
@@ -764,23 +763,23 @@ select {
     align-items: center;
     justify-content: space-between;
     padding: 8px 10px 9px;
-    border-top: 1px solid #1d2732;
+    border-top: 1px solid var(--c-border-soft);
 }
 
 .composer-shortcut {
     display: flex;
     align-items: center;
     gap: 4px;
-    color: #4d5a69;
+    color: var(--c-text-faint);
     font-size: 9px;
 }
 
 kbd {
     padding: 2px 5px;
-    border: 1px solid #2a3440;
+    border: 1px solid var(--c-border);
     border-radius: 4px;
-    background: #151c25;
-    color: #718093;
+    background: var(--c-elevated-bg);
+    color: var(--c-text-muted);
     font-family: inherit;
     font-size: 9px;
 }
@@ -792,16 +791,16 @@ kbd {
 
 .btn {
     padding: 7px 11px;
-    border: 1px solid #303b49;
+    border: 1px solid var(--c-border-strong);
     border-radius: 6px;
-    background: #171e27;
-    color: #aeb9c7;
+    background: var(--c-btn-bg);
+    color: var(--c-text-body);
     font-size: 11px;
 }
 
 .btn:hover:not(:disabled) {
-    border-color: #48586c;
-    background: #1d2631;
+    border-color: var(--c-accent-2);
+    background: var(--c-btn-hover);
 }
 
 .btn:disabled {
@@ -820,13 +819,13 @@ kbd {
 }
 
 .btn-danger {
-    border-color: #693532;
-    background: #321918;
-    color: #ff9b94;
+    border-color: var(--c-required-border);
+    background: var(--c-required-bg);
+    color: var(--c-danger-text);
 }
 
 .btn-danger:hover:not(:disabled) {
-    background: #3c1f1d;
+    background: var(--c-btn-hover);
 }
 
 .error-banner {
@@ -835,15 +834,15 @@ kbd {
     gap: 8px;
     margin: 0 auto 10px;
     padding: 9px 11px;
-    border: 1px solid #5b302e;
+    border: 1px solid var(--c-required-border);
     border-radius: 7px;
-    background: #211414;
-    color: #d77972;
+    background: var(--c-required-bg);
+    color: var(--c-danger-text);
     font-size: 11px;
 }
 
 .error-banner strong {
-    color: #f08078;
+    color: var(--c-danger);
 }
 
 /* New-session welcome */
@@ -867,17 +866,17 @@ kbd {
     height: 52px;
     margin-bottom: 15px;
     place-items: center;
-    border: 1px solid #2b3949;
+    border: 1px solid var(--c-border-strong);
     border-radius: 13px;
-    background: #111923;
-    color: #7899be;
+    background: var(--c-raised-bg);
+    color: var(--c-accent-2);
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 15px;
 }
 
 .welcome h1 {
     margin: 0;
-    color: #d9e0e8;
+    color: var(--c-text-strong);
     font-size: 20px;
     font-weight: 600;
 }
@@ -885,7 +884,7 @@ kbd {
 .welcome p {
     max-width: 470px;
     margin: 9px 0 0;
-    color: #657384;
+    color: var(--c-text-muted);
     font-size: 13px;
     line-height: 1.7;
 }

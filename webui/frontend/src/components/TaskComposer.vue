@@ -108,11 +108,11 @@
         align-items: center;
         gap: 8px;
         padding: 6px 12px 10px;
-        border-bottom: 1px solid #1d2732;
+        border-bottom: 1px solid var(--c-border-soft);
     }
     .composer-conversation-label {
         flex: 0 0 auto;
-        color: #67788a;
+        color: var(--c-text-muted);
         font-size: 11px;
         letter-spacing: 0.04em;
         text-transform: uppercase;
@@ -123,30 +123,30 @@
         padding: 5px 0;
         border: 0;
         background: transparent;
-        color: #d7dee7;
+        color: var(--c-text);
         font-family: "Cascadia Code", Consolas, monospace;
         font-size: 12px;
         outline: none;
     }
     .composer-conversation-input::placeholder {
-        color: #576678;
+        color: var(--c-text-faint);
     }
     .composer-conversation-clear {
         flex: 0 0 auto;
         padding: 4px 8px;
-        border: 1px solid #303b49;
+        border: 1px solid var(--c-border-strong);
         border-radius: 5px;
         background: transparent;
-        color: #8895a6;
+        color: var(--c-text-muted);
         font-size: 11px;
     }
     .composer-conversation-clear:hover:not(:disabled) {
-        border-color: #48586c;
-        color: #aeb9c7;
+        border-color: var(--c-accent-2);
+        color: var(--c-text-body);
     }
     .composer-conversation-hint {
         padding: 0 12px 8px;
-        color: #6f8095;
+        color: var(--c-text-soft);
         font-family: "Cascadia Code", Consolas, monospace;
         font-size: 11px;
         word-break: break-all;

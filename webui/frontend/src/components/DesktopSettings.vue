@@ -197,7 +197,7 @@
         align-items: center;
         justify-content: center;
         padding: 24px;
-        background: rgb(3 6 10 / 72%);
+        background: var(--c-backdrop);
         backdrop-filter: blur(5px);
     }
     .settings-panel {
@@ -206,11 +206,11 @@
         max-height: min(760px, calc(100vh - 48px));
         flex-direction: column;
         overflow: hidden;
-        border: 1px solid #303b49;
+        border: 1px solid var(--c-border-strong);
         border-radius: 14px;
-        background: #0f151d;
+        background: var(--c-card-bg);
         box-shadow:
-            0 24px 70px rgb(0 0 0 / 45%),
+            0 24px 70px var(--c-shadow-strong),
             0 0 0 1px rgb(255 255 255 / 2%);
     }
     .settings-header {
@@ -219,8 +219,8 @@
         justify-content: space-between;
         gap: 16px;
         padding: 16px 18px;
-        border-bottom: 1px solid #222c38;
-        background: #121923;
+        border-bottom: 1px solid var(--c-border);
+        background: var(--c-elevated-bg);
     }
     .settings-heading {
         display: flex;
@@ -234,21 +234,21 @@
         height: 38px;
         flex: 0 0 38px;
         place-items: center;
-        border: 1px solid #2d4158;
+        border: 1px solid var(--c-border-strong);
         border-radius: 9px;
-        background: #172333;
+        background: var(--c-raised-bg);
         font-size: 17px;
     }
     .settings-heading strong {
         display: block;
-        color: #edf2f7;
+        color: var(--c-text-strong);
         font-size: 14px;
         font-weight: 650;
     }
     .settings-heading span {
         display: block;
         margin-top: 3px;
-        color: #718093;
+        color: var(--c-text-muted);
         font-size: 11px;
     }
     .settings-body {
@@ -258,7 +258,7 @@
     }
     .settings-loading {
         padding: 24px;
-        color: #718093;
+        color: var(--c-text-muted);
         text-align: center;
     }
     .settings-field {
@@ -267,23 +267,23 @@
     .settings-field label {
         display: block;
         margin-bottom: 6px;
-        color: #b8c8dc;
+        color: var(--c-text-body);
         font-size: 12px;
         font-weight: 600;
     }
     .settings-field input[type="text"] {
         width: 100%;
         padding: 9px 11px;
-        border: 1px solid #2a3440;
+        border: 1px solid var(--c-border-input);
         border-radius: 8px;
-        background: #0b1016;
-        color: #d4dde8;
+        background: var(--c-input-bg);
+        color: var(--c-text);
         font-family: "Cascadia Code", Consolas, monospace;
         font-size: 12px;
         outline: none;
     }
     .settings-field input[type="text"]:focus {
-        border-color: #3b567a;
+        border-color: var(--c-accent-2);
     }
     .settings-row {
         display: flex;
@@ -294,41 +294,41 @@
     }
     .settings-hint {
         margin-top: 6px;
-        color: #65778c;
+        color: var(--c-text-muted);
         font-size: 11px;
     }
     .settings-hint code {
-        color: #8aa5c4;
+        color: var(--c-code);
         font-family: "Cascadia Code", Consolas, monospace;
     }
     .settings-field-inline label {
         display: flex;
         align-items: center;
         gap: 8px;
-        color: #b8c8dc;
+        color: var(--c-text-body);
         font-weight: 500;
     }
     .settings-status {
         margin-top: 6px;
         padding: 10px 12px;
-        border: 1px solid #1f2a36;
+        border: 1px solid var(--c-border-soft);
         border-radius: 8px;
-        background: #0b1016;
-        color: #8595a7;
+        background: var(--c-panel-bg);
+        color: var(--c-text-muted);
         font-size: 11px;
         line-height: 1.7;
     }
     .settings-status code {
-        color: #8aa5c4;
+        color: var(--c-code);
         font-family: "Cascadia Code", Consolas, monospace;
     }
     .settings-message {
         margin-top: 10px;
         padding: 8px 10px;
-        border: 1px solid #2a3f52;
+        border: 1px solid var(--c-border-strong);
         border-radius: 8px;
-        background: #131d29;
-        color: #9ab4cf;
+        background: var(--c-elevated-bg);
+        color: var(--c-text-body);
         font-size: 11px;
         white-space: pre-wrap;
     }
@@ -336,8 +336,8 @@
         display: flex;
         gap: 8px;
         padding: 12px 18px;
-        border-top: 1px solid #1d2732;
-        background: #0b1016;
+        border-top: 1px solid var(--c-border-soft);
+        background: var(--c-panel-bg);
     }
     .settings-footer .btn-primary {
         margin-left: auto;
@@ -345,15 +345,15 @@
     .icon-button {
         width: 32px;
         height: 32px;
-        border: 1px solid #2a3440;
+        border: 1px solid var(--c-border-strong);
         border-radius: 8px;
         background: transparent;
-        color: #9aa7b7;
+        color: var(--c-text-muted);
         font-size: 18px;
         line-height: 1;
         cursor: pointer;
     }
     .icon-button:hover {
-        background: #1a232e;
+        background: var(--c-hover-bg);
     }
 </style>
