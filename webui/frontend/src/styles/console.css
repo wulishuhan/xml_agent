@@ -1,3 +1,4 @@
+
 .agent-stream {
 display: flex;
 min-height: 0;
@@ -208,16 +209,6 @@ background: #0b1016;
 color: #c0cbd8;
 }
 
-/*
-
-折叠预览
-
-不使用 -webkit-line-clamp / mask-image：这两者与 white-space: pre-wrap
-
-组合在 Chromium 下会让预览块高度塌陷，导致内容完全不可见。
-
-这里只做 max-height 截断，省略号由 JS 在文案末尾补 “ ... ”。
-*/
 .event-preview {
 max-height: 4.95em;
 overflow: hidden;
@@ -257,14 +248,6 @@ font-size: 9px;
 line-height: 1;
 }
 
-/*
-
-answer 展开后的结构化排版。
-
-上半部分是 JSON 元信息（ok / action），
-
-下半部分是 content 原文，两者视觉上分层，便于阅读。
-*/
 .event-answer-body {
 display: flex;
 flex-direction: column;
@@ -312,12 +295,6 @@ border-right: 0;
 border-bottom: 0;
 }
 
-/*
-
-Final Answer 卡片：在 done 之后额外输出的完整 content。
-
-视觉上比 answer 卡片更突出，方便用户一眼看到 Agent 最终做了什么。
-*/
 .final-answer-content {
 margin: 0;
 padding: 14px 16px;
@@ -326,14 +303,15 @@ border-radius: 8px;
 background: #0e1c14;
 color: #eaf7ee;
 font-family: "Cascadia Code", Consolas, monospace;
-font-size: 13px;
-line-height: 1.75;
+font-size: 15px;
+line-height: 1.85;
 white-space: pre-wrap;
 word-break: break-word;
+max-height: none;
+overflow: visible;
 box-shadow: inset 0 0 0 1px rgb(126 226 160 / 8%);
 }
 
-/* answer 是最终结果，给一点高亮，与普通日志区分开 */
 .event-answer .event-marker span {
 border-color: #3c5a3f;
 background: #10231a;

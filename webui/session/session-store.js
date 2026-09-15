@@ -107,10 +107,106 @@ function loadSession(id) {
     }
 }
 
+/**
+
+统计会话存储目录的磁盘占用情况。
+
+返回：
+
+count：会话文件（.json）数量
+
+bytes：所有会话文件的总体积（bytes）
+
+largest：单个最大会话文件的大小与 id
+
+orphanTmpBytes：遗留的 .tmp 临时文件占用（异常中断可能残留）
+*/
+function getStoreStats() {
+    ensureStoreRoot();
+
+    const names = fs.readdirSync(STORE_ROOT);
+
+    let count = 0;
+    let bytes = 0;
+    let orphanTmpBytes = 0;
+    let largest = null;
+
+    for (const name of names) {
+        const filePath = path.join(STORE_ROOT, name);
+
+        let stat;
+        try {
+            stat = fs.statSync(filePath);
+        } catch (error) {
+            continue;
+        }
+
+        if (!stat.isFile()) {
+            continue;
+        }
+
+        if (name.endsWith(".json")) {
+            count += 1;
+            bytes += stat.size;
+
+            if (!largest || stat.size > largest.bytes) {
+                largest = {
+                    id: name.replace(/.json$/, ""),
+                    bytes: stat.size,
+                };
+            }
+        } else if (name.endsWith(".tmp")) {
+            // 遗留的临时文件：写盘中途崩溃才会出现
+            orphanTmpBytes += stat.size;
+        }
+    }
+
+    return {
+        root: STORE_ROOT,
+        count,
+        bytes,
+        largest,
+        orphanTmpBytes,
+    };
+}
+
+/**
+
+清理遗留的 .tmp 临时文件（正常写入流程会 rename 掉，不会残留）。
+
+返回清理掉的字节数。
+*/
+function cleanOrphanTmpFiles() {
+    ensureStoreRoot();
+
+    const names = fs.readdirSync(STORE_ROOT);
+    let cleaned = 0;
+
+    for (const name of names) {
+        if (!name.endsWith(".tmp")) {
+            continue;
+        }
+
+        const filePath = path.join(STORE_ROOT, name);
+
+        try {
+            const stat = fs.statSync(filePath);
+            fs.unlinkSync(filePath);
+            cleaned += stat.size;
+        } catch (error) {
+            // 忽略：文件可能已被其它进程删除
+        }
+    }
+
+    return cleaned;
+}
+
 module.exports = {
     STORE_ROOT,
     saveSession,
     deleteSession,
     listSavedSessions,
     loadSession,
+    getStoreStats,
+    cleanOrphanTmpFiles,
 };

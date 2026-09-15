@@ -26,6 +26,12 @@ BROWSER_CDP_URL
 BROWSER_CHROME_PATH
 
 BROWSER_REUSE_PAGE (true/false)
+
+WEBUI_MAX_SESSIONS
+
+WEBUI_MAX_DISK_BYTES (bytes)
+
+WEBUI_WARN_THRESHOLD (0-1)
 */
 
 const agentConfig = {
@@ -39,6 +45,18 @@ const agentConfig = {
         maxReadSize: 2 * 1024 * 1024,
         maxExecTimeout: 300000,
         maxExecOutputSize: 1024 * 1024,
+    },
+
+    // WebUI 会话存储限制。
+    // 会话记录保存在 ~/.xml-agent/webui-sessions 下的 JSON 文件里，
+    // 数量或体积过大会占用磁盘，这里提供上限与告警阈值。
+    session: {
+        // 允许保存的最大会话数量。达到后需先删除旧会话才能创建新会话。
+        maxSessions: 100,
+        // 会话存储目录允许占用的最大磁盘体积（bytes）。默认 200MB。
+        maxDiskBytes: 200 * 1024 * 1024,
+        // 告警阈值（0-1）：当数量或磁盘占用达到该比例时提示用户清理。
+        warnThreshold: 0.8,
     },
 
     browser: {
@@ -98,6 +116,18 @@ function applyEnvOverrides(config) {
         const val = parseInt(env.RUNTIME_MAX_EXEC_OUTPUT_SIZE, 10);
         if (!isNaN(val) && val > 0) config.runtime.maxExecOutputSize = val;
     }
+    if (env.WEBUI_MAX_SESSIONS) {
+        const val = parseInt(env.WEBUI_MAX_SESSIONS, 10);
+        if (!isNaN(val) && val > 0) config.session.maxSessions = val;
+    }
+    if (env.WEBUI_MAX_DISK_BYTES) {
+        const val = parseInt(env.WEBUI_MAX_DISK_BYTES, 10);
+        if (!isNaN(val) && val > 0) config.session.maxDiskBytes = val;
+    }
+    if (env.WEBUI_WARN_THRESHOLD) {
+        const val = parseFloat(env.WEBUI_WARN_THRESHOLD);
+        if (!isNaN(val) && val > 0 && val <= 1) config.session.warnThreshold = val;
+    }
     if (env.BROWSER_AUTO_START) {
         const val = env.BROWSER_AUTO_START.toLowerCase();
         if (val === "true" || val === "1") config.browser.autoStart = true;
@@ -152,6 +182,24 @@ function validateConfig(config) {
         config.runtime.maxExecOutputSize <= 0
     ) {
         throw new Error("runtime.maxExecOutputSize must be a positive integer");
+    }
+
+    if (config.session) {
+        if (!Number.isInteger(config.session.maxSessions) || config.session.maxSessions <= 0) {
+            throw new Error("session.maxSessions must be a positive integer");
+        }
+
+        if (!Number.isInteger(config.session.maxDiskBytes) || config.session.maxDiskBytes <= 0) {
+            throw new Error("session.maxDiskBytes must be a positive integer");
+        }
+
+        if (
+            typeof config.session.warnThreshold !== "number" ||
+            config.session.warnThreshold <= 0 ||
+            config.session.warnThreshold > 1
+        ) {
+            throw new Error("session.warnThreshold must be a number in (0, 1]");
+        }
     }
 
     if (config.browser) {

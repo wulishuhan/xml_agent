@@ -1,6 +1,7 @@
 const { EventEmitter } = require("events");
 const { AgentSession } = require("./agent-session");
 const sessionStore = require("./session-store");
+const agentConfig = require("../../config/agent-config");
 
 /**
 
@@ -17,6 +18,9 @@ class SessionManager extends EventEmitter {
         super();
         this.sessions = new Map();
         this.saveTimers = new Map();
+        this.maxSessions = agentConfig.session.maxSessions;
+        this.maxDiskBytes = agentConfig.session.maxDiskBytes;
+        this.warnThreshold = agentConfig.session.warnThreshold;
     }
 
     /**
@@ -126,7 +130,104 @@ class SessionManager extends EventEmitter {
         });
     }
 
+    /**
+
+检查是否还能创建新会话。
+
+规则：
+
+会话数量达到 maxSessions 时拒绝创建（需先删除旧会话）。
+
+磁盘占用达到 maxDiskBytes 时拒绝创建（需先清理历史）。
+
+返回 { ok, code, message, stats }。
+*/
+    checkCapacity() {
+        const stats = this.getStorageStats();
+
+        if (this.sessions.size >= this.maxSessions) {
+            return {
+                ok: false,
+                code: "MAX_SESSIONS",
+                message:
+                    "会话数量已达上限（" +
+                    this.sessions.size +
+                    "/" +
+                    this.maxSessions +
+                    "）。请删除部分旧会话后再创建新会话。",
+                stats,
+            };
+        }
+
+        if (stats.bytes >= this.maxDiskBytes) {
+            return {
+                ok: false,
+                code: "MAX_DISK",
+                message:
+                    "会话存储磁盘占用已达上限（" +
+                    formatBytes(stats.bytes) +
+                    " / " +
+                    formatBytes(this.maxDiskBytes) +
+                    "）。请删除部分旧会话后再创建新会话。",
+                stats,
+            };
+        }
+
+        return { ok: true, stats };
+    }
+
+    /**
+
+获取会话存储的统计信息，包含上限与告警状态，供前端展示。
+*/
+    getStorageStats() {
+        let stats;
+
+        try {
+            stats = sessionStore.getStoreStats();
+        } catch (error) {
+            stats = { root: sessionStore.STORE_ROOT, count: 0, bytes: 0, largest: null };
+        }
+
+        const sessionRatio = this.maxSessions > 0 ? this.sessions.size / this.maxSessions : 0;
+        const diskRatio = this.maxDiskBytes > 0 ? stats.bytes / this.maxDiskBytes : 0;
+        const ratio = Math.max(sessionRatio, diskRatio);
+
+        return {
+            root: stats.root,
+            sessions: this.sessions.size,
+            maxSessions: this.maxSessions,
+            bytes: stats.bytes,
+            maxDiskBytes: this.maxDiskBytes,
+            ratio,
+            warn: ratio >= this.warnThreshold,
+            overLimit: ratio >= 1,
+        };
+    }
+
+    /**
+
+清理遗留的 .tmp 临时文件，返回清理的字节数。
+*/
+    cleanOrphanTmpFiles() {
+        try {
+            return sessionStore.cleanOrphanTmpFiles();
+        } catch (error) {
+            console.error("[WebUI] Failed to clean orphan tmp files:", error.message);
+            return 0;
+        }
+    }
+
     create({ workspace, provider = "chatgpt", task, conversationId = null }) {
+        const capacity = this.checkCapacity();
+
+        if (!capacity.ok) {
+            const error = new Error(capacity.message);
+            error.code = capacity.code;
+            error.stats = capacity.stats;
+            throw error;
+        }
+
         const session = new AgentSession({
             workspace,
             provider,
@@ -239,6 +340,24 @@ class SessionManager extends EventEmitter {
     }
 }
 
+function formatBytes(bytes) {
+    if (!bytes || bytes < 0) {
+        return "0 B";
+    }
+
+    const units = ["B", "KB", "MB", "GB"];
+    let value = bytes;
+    let index = 0;
+
+    while (value >= 1024 && index < units.length - 1) {
+        value /= 1024;
+        index += 1;
+    }
+
+    return (index === 0 ? value : value.toFixed(1)) + " " + units[index];
+}
+
 module.exports = {
     SessionManager,
+    formatBytes,
 };

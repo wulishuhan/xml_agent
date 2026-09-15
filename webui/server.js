@@ -13,6 +13,13 @@ try {
     if (restoredCount > 0) {
         console.log("[WebUI] Restored " + restoredCount + " session(s) from disk");
     }
+
+    // 顺带清理上次异常退出遗留的 .tmp 临时文件，避免占用磁盘。
+    const cleanedBytes = sessionManager.cleanOrphanTmpFiles();
+
+    if (cleanedBytes > 0) {
+        console.log("[WebUI] Cleaned " + cleanedBytes + " bytes of orphan temp files");
+    }
 } catch (error) {
     console.error("[WebUI] Failed to restore sessions:", error.message);
 }
@@ -139,6 +146,23 @@ app.get("/api/workspace/browse", (req, res) => {
         });
     }
 });
+
+// 会话存储占用统计：供前端显示数量/磁盘占用并提示用户清理。
+app.get("/api/storage", (req, res) => {
+    res.json(sessionManager.getStorageStats());
+});
+
+// 手动清理遗留的 .tmp 临时文件。
+app.post("/api/storage/clean", (req, res) => {
+    const cleanedBytes = sessionManager.cleanOrphanTmpFiles();
+
+    return res.json({
+        message: "Cleaned orphan temp files",
+        cleanedBytes,
+        stats: sessionManager.getStorageStats(),
+    });
+});
+
 app.post("/api/run", (req, res) => {
     const { workspace, provider, task, conversationId } = req.body;
     if (!workspace || !task) {
@@ -183,6 +207,19 @@ app.post("/api/run", (req, res) => {
         }
     }
 
+    // 复用已结束会话时上面的 remove 会释放名额，因此这里再检查一次容量。
+    const capacity = sessionManager.checkCapacity();
+
+    if (!capacity.ok) {
+        console.warn("[WebUI] Session capacity exceeded:", capacity.code);
+
+        return res.status(429).json({
+            error: capacity.message,
+            code: capacity.code,
+            stats: capacity.stats,
+        });
+    }
+
     let session;
 
     try {
@@ -216,7 +253,13 @@ app.post("/api/run", (req, res) => {
 
         console.error("[WebUI] Failed to start session:", error);
 
-        return res.status(500).json({ error: error.message });
+        // 容量类错误用 429，其余用 500
+        const status = error.code === "MAX_SESSIONS" || error.code === "MAX_DISK" ? 429 : 500;
+
+        return res.status(status).json({
+            error: error.message,
+            code: error.code || null,
+        });
     }
 });
 app.get("/api/sessions/:id", (req, res) => {
@@ -333,6 +376,7 @@ app.post("/api/sessions/:id/stop", async (req, res) => {
 app.get("/api/sessions", (req, res) => {
     res.json({
         sessions: sessionManager.list().map((session) => session.getInfo()),
+        storage: sessionManager.getStorageStats(),
     });
 });
 app.delete("/api/sessions/:id", (req, res) => {
@@ -344,6 +388,7 @@ app.delete("/api/sessions/:id", (req, res) => {
         return res.json({
             message: "Session deleted",
             sessionId: session.id,
+            storage: sessionManager.getStorageStats(),
         });
     } catch (error) {
         return res.status(400).json({ error: error.message });

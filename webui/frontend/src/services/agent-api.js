@@ -26,7 +26,10 @@ export async function runAgent(data) {
     const result = await response.json();
 
     if (!response.ok) {
-        throw new Error(result.error || "Failed to start agent");
+        const error = new Error(result.error || "Failed to start agent");
+        error.code = result.code || null;
+        error.stats = result.stats || null;
+        throw error;
     }
 
     return result;
@@ -112,6 +115,34 @@ export async function deleteSession(sessionId) {
 
     if (!response.ok) {
         throw new Error(result.error || "Failed to delete session");
+    }
+
+    return result;
+}
+
+// 获取会话存储占用统计（数量、磁盘体积、上限、告警状态）。
+export async function getStorage() {
+    const response = await fetch(api("/api/storage"));
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to get storage stats");
+    }
+
+    return result;
+}
+
+// 清理遗留的 .tmp 临时文件。
+export async function cleanStorage() {
+    const response = await fetch(api("/api/storage/clean"), {
+        method: "POST",
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to clean storage");
     }
 
     return result;

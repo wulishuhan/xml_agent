@@ -6,5 +6,9 @@
     "singleQuote": false,
     "trailingComma": "es5",
     "bracketSpacing": true,
-    "endOfLine": "lf"
+    "endOfLine": "lf",
+    "arrowParens": "always",
+    "proseWrap": "preserve",
+    "vueIndentScriptAndStyle": true,
+    "overrides": [{ "files": "*.css", "options": { "parser": "css" } }]
 }
