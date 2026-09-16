@@ -26,6 +26,7 @@
                         <option value="chatgpt">ChatGPT</option>
                         <option value="qwen">Qwen</option>
                         <option value="deepseek">DeepSeek</option>
+                        <option value="glm">GLM</option>
                     </select>
                     <span class="status-badge" :class="'status-' + sessionStatus">
                         {{ statusText }}
@@ -131,7 +132,6 @@
                                 Required - this path is different on each computer
                             </span>
                         </div>
-
                         <TaskComposer
                             v-model:task="task"
                             v-model:conversationId="conversationId"
@@ -177,7 +177,6 @@
         stopSession,
     } from "./services/agent-api.js";
     import { applyTheme, persistTheme, resolveInitialTheme } from "./services/theme.js";
-
     const sessions = ref([]);
     const activeSessionId = ref(null);
     const activeSession = ref(null);
@@ -189,7 +188,6 @@
     const task = ref("");
     const storage = ref(null);
 
-    // 主题：dark（默认） / light
     const theme = ref(resolveInitialTheme());
 
     function toggleTheme() {
@@ -198,18 +196,11 @@
         persistTheme(theme.value);
     }
 
-    // 用户在 TaskComposer 里输入的“继续已有会话”内容：
-    // 既可以是完整的会话 URL，也可以直接是 conversation id。
     const conversationId = ref("");
     const workspaceInput = ref(null);
     const showWorkspacePicker = ref(false);
     const showSettings = ref(false);
 
-    // ------------------------------------------------------------------
-    // 输出区 / 输入区 可调节分割
-    // ratio 表示输出区（Agent Activity）占据的高度比例，范围 [MIN_RATIO, MAX_RATIO]。
-    // 拖动中间的分割条即可动态调节，双击恢复默认，比例会持久化到 localStorage。
-    // ------------------------------------------------------------------
     const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
     const MIN_RATIO = 0.2;
     const MAX_RATIO = 0.85;
@@ -242,17 +233,13 @@
                     ratio.value = clampRatio(parsed);
                 }
             }
-        } catch (error) {
-            // localStorage 不可用时忽略，使用默认比例
-        }
+        } catch (error) {}
     }
 
     function persistRatio() {
         try {
             window.localStorage.setItem(SPLIT_STORAGE_KEY, String(ratio.value));
-        } catch (error) {
-            // 忽略持久化失败
-        }
+        } catch (error) {}
     }
 
     function applyPointerRatio(clientY) {
@@ -341,9 +328,7 @@
     async function refreshStorage() {
         try {
             storage.value = await getStorage();
-        } catch (error) {
-            // 存储统计失败不影响主流程，保持上一次的值即可
-        }
+        } catch (error) {}
     }
 
     async function loadSessions() {
@@ -387,8 +372,6 @@
             workspace.value = sessionResult.workspace || "";
             provider.value = sessionResult.provider || provider.value;
             task.value = sessionResult.task || "";
-            // 选中已有 session 时，把该 session 的 conversationId 回填到输入框，
-            // 便于用户查看或复用；用户也可以手动改掉它去开新的会话。
             conversationId.value = sessionResult.conversationId || "";
             subscribeToSession(sessionId);
         } catch (error) {
@@ -427,7 +410,6 @@
                         });
                         updateSessionList(activeSession.value);
                     }
-                    // 同步到输入框，让用户看到当前会话 id
                     conversationId.value = info.conversationId;
                 }
             } catch (error) {
@@ -441,7 +423,6 @@
             } catch (error) {
                 errorMessage.value = error.message;
             }
-            // 会话结束后其输出体积可能变化，刷新一次存储占用
             refreshStorage();
         });
         source.addEventListener("error", (event) => {
@@ -457,10 +438,6 @@
         eventSource.value = source;
     }
 
-    /**
-把用户在 conversationId 输入框中填写的内容转换为纯粹的 conversation id。
-允许用户粘贴完整的会话 URL，或者直接一个 id。
-*/
     function normalizeConversationId() {
         const raw = (conversationId.value || "").trim();
         if (!raw) {
@@ -504,7 +481,6 @@
             await selectSession(result.sessionId);
         } catch (error) {
             errorMessage.value = error.message;
-            // 容量超限时立即刷新存储统计，让侧边栏的告警保持最新
             if (error.code === "MAX_SESSIONS" || error.code === "MAX_DISK") {
                 refreshStorage();
             }
@@ -524,10 +500,6 @@
         }
     }
 
-    /**
-删除会话（由侧边栏确认后触发）。
-删除后：如果是当前激活会话，切到列表中的下一条或进入新会话界面。
-*/
     async function deleteSessionById(sessionId) {
         if (!sessionId) {
             return;
@@ -639,7 +611,6 @@
     }
 
     function onSettingsSaved() {
-        // 提示用户新配置已生效。后续新启动的 Agent 会话会使用新的 Chrome 路径。
         errorMessage.value = "";
     }
 
@@ -652,7 +623,6 @@
     onUnmounted(closeEventSource);
     onBeforeUnmount(stopResize);
 </script>
-
 <style scoped>
     .workspace-browse-button {
         flex: 0 0 auto;
@@ -672,7 +642,7 @@
     .theme-toggle-icon {
         font-size: 13px;
         line-height: 1;
-    } /* 输出区 / 输入区 可调节分割布局 */
+    }
     .split-area {
         display: flex;
         min-height: 0;

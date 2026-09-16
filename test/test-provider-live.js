@@ -1,60 +1,35 @@
 /**
-
 Provider 真机测试脚本（会真实连接 CDP 浏览器并发送消息）。
-
 用法：
-
 node test/test-provider-live.js deepseek
-
 node test/test-provider-live.js chatgpt
-
 node test/test-provider-live.js qwen
-
+node test/test-provider-live.js glm
 node test/test-provider-live.js all
-
 可选参数：
-
 --cid=<conversationId> 使用指定会话（例如已有会话 URL 中的 id）
-
 --reuse 复用已有 Provider 页面（默认 false，会新建独立页面）
-
+--new-page 强制新建独立页面
 --prompt="..." 自定义发送内容
-
 --timeout-ms=<number> 自定义 waitForInput / response 等待时间（毫秒）
-
 约束：
-
 需要在 127.0.0.1:9222 已启动带 CDP 的 Chrome
-
 该 Chrome 中对应的 provider 页面已登录
-
 该脚本不会修改项目文件，只做验证。
-
 说明：
-
 为了让真机测试更贴近现有 Chrome 里已登录的页面，默认行为是：
-
 若未指定 --cid 且未指定 --new-page：优先复用已有页面
-
 若指定 --cid：强制打开该会话 URL（不复用其它页面）
-
 若指定 --new-page：强制新建独立页面
-
 这样，普通使用者只想快速验证是否可发送/接收时，直接跑：
-
-node test/test-provider-live.js deepseek
-
-就能在已登录的 DS 页面上执行。
+node test/test-provider-live.js glm
+就能在已登录的 GLM 页面上执行。
 */
-
 const path = require("path");
-
 const projectRoot = path.join(__dirname, "..");
-
 const DEFAULT_PROMPT = "请只回复两个字：收到";
 const DEFAULT_INPUT_WAIT_MS = 120000;
 const DEFAULT_RESPONSE_WAIT_MS = 5 * 60 * 1000;
-
 function parseArgs(argv) {
     const args = {
         provider: "all",
@@ -65,7 +40,6 @@ function parseArgs(argv) {
         inputWaitMs: DEFAULT_INPUT_WAIT_MS,
         responseWaitMs: DEFAULT_RESPONSE_WAIT_MS,
     };
-
     for (const raw of argv) {
         if (!raw.startsWith("--")) {
             if (args.provider === "all" && raw) {
@@ -106,40 +80,30 @@ function parseArgs(argv) {
         }
     }
 
-    // 默认行为修正：
-    // - 若用户没有明确指定 --reuse 且没有明确指定 --new-page：
-    // - 未指定 cid：默认复用已有页面（更容易成功）
-    // - 指定 cid：强制打开该会话 URL（reuseExistingPage 内部也会被 conversationId 强制为 false）
     if (args.reuse === null) {
         args.reuse = !args.newPage && !args.conversationId;
     }
 
     return args;
 }
-
 async function testProvider(name, options) {
     const { createProvider } = require(path.join(projectRoot, "providers", "index.js"));
     const agentConfig = require(path.join(projectRoot, "config", "agent-config.js"));
-
     const provider = createProvider(name, {
         autoStart: false,
         cdpUrl: agentConfig.browser.cdpUrl,
         chromePath: agentConfig.browser.chromePath,
         targetUrl: agentConfig.browser.targetUrls[name],
-        // 根据上面修正后的 reuse 决定是否复用已有页面
         reuseExistingPage: options.reuse === true,
         conversationId: options.conversationId || null,
-        // 延长等待时间，适配慢网络或页面需要较久渲染的情况
         responseTimeout: options.responseWaitMs,
         responseInitialTimeout: options.responseWaitMs,
     });
 
-    // 覆写 waitForInput 默认超时，让它等待更久
     const originalWaitForInput = provider.waitForInput.bind(provider);
 
     provider.waitForInput = function (timeout) {
         const effective = timeout || options.inputWaitMs;
-
         return originalWaitForInput(effective);
     };
 
@@ -163,7 +127,6 @@ async function testProvider(name, options) {
     console.log("[live] Response head:");
     console.log(response.length > 200 ? response.substring(0, 200) + "..." : response);
 
-    // 输出 conversation id，便于人工核对与 URL 一致性
     console.log("[live] conversationId: " + (provider.currentConversationId || "(none)"));
 
     await provider.close();
@@ -176,22 +139,21 @@ async function testProvider(name, options) {
         responseHead: response.substring(0, 100),
     };
 }
-
 async function main() {
     const args = parseArgs(process.argv.slice(2));
-
     const targets = [];
 
     if (!args.provider || args.provider === "all") {
-        targets.push("deepseek", "chatgpt", "qwen");
+        targets.push("deepseek", "chatgpt", "qwen", "glm");
     } else if (
         args.provider === "deepseek" ||
         args.provider === "chatgpt" ||
-        args.provider === "qwen"
+        args.provider === "qwen" ||
+        args.provider === "glm"
     ) {
         targets.push(args.provider);
     } else {
-        console.error("Usage: node test/test-provider-live.js [deepseek|chatgpt|qwen|all]");
+        console.error("Usage: node test/test-provider-live.js [deepseek|chatgpt|qwen|glm|all]");
         process.exitCode = 2;
         return;
     }
@@ -200,7 +162,6 @@ async function main() {
 
     for (const name of targets) {
         try {
-            // eslint-disable-next-line no-await-in-loop
             const result = await testProvider(name, args);
             results.push(result);
         } catch (error) {
@@ -240,7 +201,6 @@ async function main() {
         process.exitCode = 1;
     }
 }
-
 main().catch((error) => {
     console.error("[live] Fatal error:", error.message);
     process.exitCode = 1;

@@ -1,45 +1,27 @@
 /**
 Agent Configuration
-
 支持环境变量覆盖：
-
 AGENT_MAX_STEPS
-
 AGENT_MAX_PROVIDER_ERRORS
-
 RUNTIME_MAX_FILE_SIZE (bytes)
-
 RUNTIME_MAX_READ_SIZE (bytes)
-
 RUNTIME_MAX_EXEC_TIMEOUT (ms)
-
 RUNTIME_MAX_EXEC_OUTPUT_SIZE (bytes)
-
 BROWSER_AUTO_START (true/false)
-
 BROWSER_START_TIMEOUT (ms)
-
 BROWSER_RETRY_INTERVAL (ms)
-
 BROWSER_CDP_URL
-
 BROWSER_CHROME_PATH
-
 BROWSER_REUSE_PAGE (true/false)
-
 WEBUI_MAX_SESSIONS
-
 WEBUI_MAX_DISK_BYTES (bytes)
-
 WEBUI_WARN_THRESHOLD (0-1)
 */
-
 const agentConfig = {
     agent: {
         maxSteps: 100,
         maxProviderErrors: 3,
     },
-
     runtime: {
         maxFileSize: 5 * 1024 * 1024,
         maxReadSize: 2 * 1024 * 1024,
@@ -84,14 +66,13 @@ const agentConfig = {
             deepseek: "https://chat.deepseek.com",
             qwen: "https://chat.qwen.ai",
             chatgpt: "https://chatgpt.com",
+            glm: "https://chat.z.ai",
         },
     },
 };
-
 // 环境变量覆盖
 function applyEnvOverrides(config) {
     const env = process.env;
-
     if (env.AGENT_MAX_STEPS) {
         const val = parseInt(env.AGENT_MAX_STEPS, 10);
         if (!isNaN(val) && val > 0) config.agent.maxSteps = val;
@@ -153,14 +134,11 @@ function applyEnvOverrides(config) {
         else if (val === "false" || val === "0") config.browser.reuseExistingPage = false;
     }
 }
-
 applyEnvOverrides(agentConfig);
-
 function validateConfig(config) {
     if (!Number.isInteger(config.agent.maxSteps) || config.agent.maxSteps <= 0) {
         throw new Error("agent.maxSteps must be a positive integer");
     }
-
     if (!Number.isInteger(config.agent.maxProviderErrors) || config.agent.maxProviderErrors <= 0) {
         throw new Error("agent.maxProviderErrors must be a positive integer");
     }
@@ -212,7 +190,5 @@ function validateConfig(config) {
         }
     }
 }
-
 validateConfig(agentConfig);
-
 module.exports = agentConfig;

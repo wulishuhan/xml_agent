@@ -4,11 +4,9 @@ const { promises: fs } = require("fs");
 const path = require("path");
 const os = require("os");
 const http = require("http");
-
 class BrowserAgent {
     constructor(options = {}) {
         this.cdpUrl = options.cdpUrl || process.env.XML_AGENT_CDP_URL || "http://127.0.0.1:9222";
-
         this.context = null;
         this.page = null;
         this.browser = null;
@@ -47,16 +45,9 @@ class BrowserAgent {
         this.targetUrl =
             options.targetUrl !== undefined ? options.targetUrl : "https://chatgpt.com";
 
-        // 会话 ID（provider 页面 URL 中的 conversation id）。
-        // 为空表示"新会话"，非空表示"继续已有会话"。
         this.conversationId = options.conversationId || null;
-
-        // 运行时从页面 URL 提取到的会话 ID。发送第一条消息后回填。
         this.currentConversationId = this.conversationId;
 
-        // 默认保持兼容行为：复用已有 Provider 页面。
-        // Session 场景可以设置为 false，让每个 Session 创建独立页面。
-        // 当指定了 conversationId 时，必须新建页面，避免抢占其他会话。
         this.reuseExistingPage =
             options.reuseExistingPage !== undefined ? options.reuseExistingPage : true;
 
@@ -64,21 +55,18 @@ class BrowserAgent {
             this.reuseExistingPage = false;
         }
 
-        // 页面导航超时（毫秒）。慢网络或首次进入时可通过参数或环境变量放大。
         this.navigationTimeout = this.getNumberOption(
             options.navigationTimeout,
             process.env.XML_AGENT_NAVIGATION_TIMEOUT_MS,
             45000
         );
 
-        // 输入框等待超时（毫秒）。避免慢页面下 60s 不够。
         this.inputTimeout = this.getNumberOption(
             options.inputTimeout,
             process.env.XML_AGENT_INPUT_TIMEOUT_MS,
             120000
         );
 
-        // 是否在 waitForInput 过程中打印诊断日志（每若干次轮询一次）
         this.diagnosticsEnabled =
             options.diagnosticsEnabled !== undefined ? options.diagnosticsEnabled : true;
         this.diagnosticsIntervalMs = this.getNumberOption(
@@ -87,7 +75,6 @@ class BrowserAgent {
             10000
         );
 
-        // 是否在导航超时后继续尝试（保持原行为：true）
         this.continueOnNavigationTimeout =
             options.continueOnNavigationTimeout !== undefined
                 ? options.continueOnNavigationTimeout
@@ -96,9 +83,6 @@ class BrowserAgent {
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
         this._inputCacheTTL = 5000;
-
-        // 防止并发恢复：如果同时有多个 send 请求尝试恢复页面，
-        // 只保留第一个恢复流程，其它等它完成。
         this._recoveringPromise = null;
     }
 
@@ -124,28 +108,10 @@ class BrowserAgent {
         throw new Error("matchPage() must be implemented");
     }
 
-    /**
-
-从页面 URL 中提取 provider 的会话 ID。
-
-子类必须实现；默认返回 null，表示不支持从 URL 提取。
-
-@param {string} url
-
-@returns {string|null}
-*/
     getConversationIdFromUrl(url) {
         return null;
     }
 
-    /**
-
-根据 conversationId 生成具体的目标 URL。
-
-默认实现：直接返回 targetUrl，具体拼接方式由子类覆写。
-
-@returns {string}
-*/
     buildTargetUrl() {
         return this.targetUrl;
     }
@@ -277,10 +243,6 @@ class BrowserAgent {
         return this.page;
     }
 
-    /**
-
-返回当前页面对应的会话 ID（如果有）。
-*/
     getPageConversationId(page) {
         if (!page) {
             return null;
@@ -309,7 +271,6 @@ class BrowserAgent {
 
         const pages = this.context.pages();
 
-        // 如果指定了 conversationId，优先查找已经打开对应 URL 的页面
         if (this.conversationId) {
             for (const page of pages) {
                 const pageCid = this.getPageConversationId(page);
@@ -339,8 +300,6 @@ class BrowserAgent {
                 await this.openNewPageForTarget();
             }
         } else if (!this.reuseExistingPage) {
-            // Session 隔离模式：不要抢占其他 Session 已经使用的页面。
-            // 在同一个 BrowserContext 中创建新页面，可以继续复用已有登录状态。
             console.log("[" + this.name + "] Creating an isolated page for this session...");
             await this.openNewPageForTarget();
         } else if (!pages || pages.length === 0) {
@@ -396,12 +355,6 @@ class BrowserAgent {
         return this.page;
     }
 
-    /**
-
-刷新 currentConversationId。在消息发送后调用。
-
-@returns {string|null}
-*/
     refreshConversationId() {
         if (!this.isPageAlive()) {
             return this.currentConversationId;
@@ -421,22 +374,11 @@ class BrowserAgent {
         }
     }
 
-    /**
-
-当页面丢失（用户关闭、崩溃、被替换、CDP 连接断开）时，尝试恢复：
-重新连接 CDP，并打开目标页面。
-
-必须在 provider 的 send() 之前调用，这样 send() 检测到页面不可用
-时可以先尝试自动恢复，避免 agent 因为暂时页面丢失就连续重试失败。
-
-@returns {Promise<boolean>} 是否恢复成功
-*/
     async ensurePageAlive() {
         if (this.isPageAlive()) {
             return true;
         }
 
-        // 避免并发恢复：如果已有恢复流程在跑，复用它。
         if (this._recoveringPromise) {
             return this._recoveringPromise;
         }
@@ -446,13 +388,11 @@ class BrowserAgent {
         this._recoveringPromise = (async function () {
             console.log("[" + self.name + "] Page is not alive, attempting to recover...");
 
-            // 清理可能已失效的引用
             self.page = null;
             self.context = null;
             self._cachedInput = null;
 
             try {
-                // 如果之前已经同步过 conversationId，优先恢复该会话页面
                 if (self.currentConversationId) {
                     self.conversationId = self.currentConversationId;
                     self.reuseExistingPage = false;
@@ -471,7 +411,6 @@ class BrowserAgent {
                     }
                 }
 
-                // 重新建立 CDP 连接；旧连接已经失效，直接覆盖
                 self.browser = await chromium.connectOverCDP(self.cdpUrl);
 
                 await self.ensurePage();
@@ -530,7 +469,6 @@ class BrowserAgent {
 
             await this.waitForInput();
 
-            // 首次进入时，尝试从当前 URL 中同步一次 conversationId
             const cid = this.refreshConversationId();
 
             if (cid && !this.conversationId) {
@@ -593,10 +531,6 @@ class BrowserAgent {
         return null;
     }
 
-    /**
-
-收集一次诊断信息，用于在输入框长时间未出现时排查问题。
-*/
     async collectDiagnostics() {
         const info = {
             url: "(unknown)",
@@ -613,39 +547,27 @@ class BrowserAgent {
 
         try {
             info.url = this.page.url();
-        } catch (error) {
-            // ignore
-        }
+        } catch (error) {}
 
         try {
             info.title = await this.page.title();
-        } catch (error) {
-            // ignore
-        }
+        } catch (error) {}
 
         try {
             info.contentEditables = await this.page.locator('[contenteditable="true"]').count();
-        } catch (error) {
-            // ignore
-        }
+        } catch (error) {}
 
         try {
             info.textareas = await this.page.locator("textarea").count();
-        } catch (error) {
-            // ignore
-        }
+        } catch (error) {}
 
         try {
             info.roleTextboxes = await this.page.locator("[role='textbox']").count();
-        } catch (error) {
-            // ignore
-        }
+        } catch (error) {}
 
         try {
             info.buttons = await this.page.locator("button").count();
-        } catch (error) {
-            // ignore
-        }
+        } catch (error) {}
 
         return info;
     }
@@ -666,9 +588,7 @@ class BrowserAgent {
                 if (input) {
                     return input;
                 }
-            } catch (error) {
-                // continue
-            }
+            } catch (error) {}
 
             const now = Date.now();
 
@@ -676,7 +596,6 @@ class BrowserAgent {
                 lastDiagnosticsAt = now;
 
                 try {
-                    // eslint-disable-next-line no-await-in-loop
                     const diag = await this.collectDiagnostics();
 
                     console.log(
@@ -698,9 +617,7 @@ class BrowserAgent {
                             " | buttons=" +
                             diag.buttons
                     );
-                } catch (error) {
-                    // ignore
-                }
+                } catch (error) {}
             }
 
             await this.sleep(500);
@@ -857,9 +774,7 @@ class BrowserAgent {
                     this._cachedInput = null;
                     return true;
                 }
-            } catch (error) {
-                // continue
-            }
+            } catch (error) {}
 
             await this.sleep(300);
         }
@@ -951,7 +866,9 @@ class BrowserAgent {
     async close() {
         if (this.browser) {
             try {
-                // await this.browser.close();
+                // 这里连接的是外部 CDP Chrome。close() 会清理 Playwright 创建的上下文并断开连接，
+                // 但不会把通过 CDP 连接的外部 Chrome 进程作为本地 Playwright browser 关闭。
+                await this.browser.close();
             } catch (error) {
                 console.warn(
                     "[" + this.name + "] Error closing browser connection: " + error.message
@@ -961,11 +878,11 @@ class BrowserAgent {
 
         if (this.chromeProcess && !this.chromeProcess.killed) {
             try {
-                // this.chromeProcess.kill();
-
-                console.log("[" + this.name + "] Chrome process killed: " + this.chromeProcess.pid);
+                console.log(
+                    "[" + this.name + "] Chrome process remains running: " + this.chromeProcess.pid
+                );
             } catch (error) {
-                console.warn("[" + this.name + "] Error killing Chrome process: " + error.message);
+                console.warn("[" + this.name + "] Error handling Chrome process: " + error.message);
             }
         }
 
@@ -976,7 +893,6 @@ class BrowserAgent {
         this.chromeProcess = null;
     }
 }
-
 module.exports = {
     BrowserAgent,
 };
