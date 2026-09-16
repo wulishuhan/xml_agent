@@ -1,6 +1,9 @@
+
 # XML Agent
 
 一个基于 Node.js 实现的工程型 AI Agent Framework。
+
+当前版本：**1.0.2**
 
 核心设计理念：
 
@@ -10,13 +13,13 @@
 
 # 快速开始
 
-## git仓库代码并安装依赖
+## 环境要求
 
-环境：
+- Node.js >= 20.19
+- Windows 10 / 11 (x64) - 桌面版/打包版
+- Google Chrome (Agent 通过 CDP 复用浏览器，不自带内核)
 
-```
-Node.js >= 20.19
-```
+## 安装
 
 ```bash
 git clone https://github.com/wulishuhan/xml_agent.git
@@ -24,56 +27,57 @@ cd xml_agent
 npm install
 ```
 
-## 使用webUI
+## 使用 WebUI
 
-配置chrome.exe路径
-配置文件xml_agent/config/agent-config.js
+### 配置 Chrome 路径
 
-```
-  browser: {
-    ...
-    // Chrome.exe Path
-    chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe
-    ...
-  },
+编辑 `config/agent-config.js`：
 
+```javascript
+browser: {
+  // Chrome.exe Path
+  chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
+}
 ```
 
-启动服务器agent服务器
+### 启动服务
 
-```
-cd xml_agent
+生产模式：
+
+```bash
 npm run webui
 ```
 
-访问页面
+访问：http://localhost:3000/xml_agent_web/
 
-```
-http://localhost:3000/xml_agent_web/
-```
+开发模式：
 
-或启动开发版页面,另外一个终端启动dev页面
-
-```
-cd xml_agent
+```bash
 npm run webui:dev
 ```
 
-访问页面
+访问：http://localhost:5173
 
+## 命令行调用
+
+参数说明：
+
+- `--provider`: 可选，默认 chatgpt，支持 chatgpt / qwen / deepseek
+- `--workspace`: 必填，工作目录（必须存在）
+
+示例：
+
+```bash
+node agent.js --workspace "D:\code\vue\ppl" "创建一个vue项目，是关于泡泡龙的游戏"
+
+node agent.js --provider qwen --workspace "D:\code\vue\ppl" "创建一个vue项目，是关于泡泡龙的游戏"
 ```
-http://localhost:5173
-```
 
----
+## 手动启动 Chrome CDP
 
-## 手动调用
+XML Agent 通过 Chrome DevTools Protocol 连接已运行的 Chrome。
 
-## 启动 Chrome CDP 提供网页版使用
-
-XML Agent 通过 Chrome DevTools Protocol 连接已经运行的 Chrome。
-
-Windows 示例：
+Windows PowerShell 示例：
 
 ```powershell
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" `
@@ -81,55 +85,43 @@ Windows 示例：
   --user-data-dir="$PWD\chrome-agent-profile"
 ```
 
-如果你的chrome.exe不是上述目录，请找到chrome浏览器图标，点击右键选择属性，点击打开文件所在目录既可找到
+如果路径不同，请右键 Chrome 快捷方式 → 属性 → 打开文件所在位置获取真实路径。
 
-```
-& "your_path\chrome.exe" `
-  --remote-debugging-port=9222 `
-  --user-data-dir="$PWD\chrome-agent-profile"
-```
+启动后在该 Chrome 中登录以下任一平台：
 
-启动后，在这个 Chrome 中打开，下列网页版进行登录操作：
+- https://chatgpt.com
+- https://chat.qwen.ai
 
-```text
-https://chatgpt.com
-```
+**注意：** 登录后不要关闭该浏览器窗口，Agent 默认连接 http://127.0.0.1:9222
 
-或者：
+## 桌面应用（Electron）
 
-```text
-https://chat.qwen.ai
+开发调试：
+
+```bash
+npm run electron:dev
 ```
 
-**_注意：_** 完成登录后不要关闭这个浏览器，等待使用，该浏览器在9222端口运行
+直接启动：
 
-Agent 默认连接：
-
-```text
-http://127.0.0.1:9222
+```bash
+npm run electron:start
 ```
 
-Agent 连接的是用户启动的 Chrome，因此不会主动关闭整个 Chrome 浏览器。
+构建 Windows 安装包（安装版 + 便携版 + zip）：
 
-## 运行
-
-- **_参数解释_**
-    - **_--provider_** : 可选，默认是chatgpt，提供chatgpt/qwen/deepseek。
-    - **_--workspace_** : 必填，工作目录：注意目录必须存在
-
-默认gpt
-
-```
-cd xml_agent
-node agent.js --workspace "D:\code\vue\ppl" "创建一个vue项目，是关于泡泡龙的游戏"
+```bash
+npm run electron:build
 ```
 
-手动选择provider
+离线打包：将 `winCodeSign` / `nsis` / `nsis-resources` 的 `.7z` 放入 `download/` 后执行：
 
+```bash
+npm run electron:offline-cache
+npm run electron:build
 ```
-cd xml_agent
-node agent.js --provider qwen --workspace "D:\code\vue\ppl" "创建一个vue项目，是关于泡泡龙的游戏"
-```
+
+产物位于 `release/` 目录。
 
 ---
 
@@ -137,7 +129,6 @@ node agent.js --provider qwen --workspace "D:\code\vue\ppl" "创建一个vue项�
 
 整体流程：
 
-```
 User Task
     |
     v
@@ -169,7 +160,6 @@ Agent Continue
     +---- answer
     |
     +---- done
-```
 
 ---
 
@@ -177,13 +167,9 @@ Agent Continue
 
 ## Agent
 
-入口：
+入口：`agent.js`
 
-```
-agent.js
-```
-
-负责：
+职责：
 
 - 接收用户任务
 - 初始化 Workspace
@@ -193,82 +179,26 @@ agent.js
 - 调用 Runtime
 - 管理 Agent 生命周期
 
-执行流程：
+## Runtime
 
-```
-用户任务
-    |
-    v
-生成 First Prompt
-    |
-    v
-调用 Provider
-    |
-    v
-解析 XML
-    |
-    v
-执行 Runtime
-    |
-    v
-根据结果继续推理
-    |
-    v
-answer / done
-```
+文件：`runtime.js`
 
----
+Runtime 是系统的执行核心，LLM 不直接操作电脑，所有操作必须通过 XML Action。
 
-# Runtime
+支持的 Action：
 
-文件：
+### read
 
-```
-runtime.js
-```
-
-Runtime 是整个系统的执行核心。
-
-LLM 不直接操作电脑。
-
-所有操作必须通过 XML Action。
-
-支持：
-
-## read
-
-读取 Workspace 文件或者目录。
-
-示例：
+读取文件或目录：
 
 ```xml
 <read path="package.json"/>
-```
-
-目录：
-
-```xml
 <read path="src"/>
 ```
 
-返回：
+### write
 
-```json
-{
-    "ok": true,
-    "action": "read",
-    "type": "file",
-    "content": "..."
-}
-```
-
----
-
-## write
-
-写入文件。
-
-示例：
+写入文件（自动创建父目录，仅限 Workspace 内）：
 
 ```xml
 <write path="src/test.js"><![CDATA[
@@ -276,37 +206,17 @@ console.log("hello");
 ]]></write>
 ```
 
-特点：
+### exec
 
-- 自动创建目录
-- 限制文件大小
-- 只能写入 Workspace 内
-
----
-
-## exec
-
-执行命令。
-
-示例：
+执行命令（工作目录固定为 Workspace，有超时限制）：
 
 ```xml
 <exec command="npm test"/>
 ```
 
-特点：
+### answer
 
-- 工作目录固定为 Workspace
-- 支持 node/npm/shell 命令
-- 有执行超时限制
-
----
-
-## answer
-
-返回用户最终答案。
-
-示例：
+返回最终答案：
 
 ```xml
 <answer><![CDATA[
@@ -314,308 +224,131 @@ console.log("hello");
 ]]></answer>
 ```
 
----
+### done
 
-## done
-
-结束 Agent 生命周期。
-
-示例：
+结束 Agent 生命周期：
 
 ```xml
 <done/>
 ```
 
----
+## Provider
 
-# Provider
-
-目录：
-
-```
-providers/
-```
-
-负责接入不同大模型。
-
-当前支持：
-
-```
-ChatGPT
-DeepSeek
-Qwen
-```
+目录：`providers/`
 
 统一接口：
-
-```javascript
-createProvider(name);
-```
-
-例如：
 
 ```javascript
 const provider = createProvider("chatgpt");
 ```
 
-Agent 不关心具体模型实现。
+当前支持：ChatGPT、DeepSeek、Qwen、GLM。
 
----
+BrowserAgent 内置页面自愈机制（ensurePageAlive），Chrome 崩溃或标签页关闭时会自动重连恢复会话。
 
-# Prompt 系统
+## Prompt 系统
 
-目录：
-
-```
-prompts/
-```
-
-负责控制 Agent 行为。
+目录：`prompts/`
 
 包含：
 
-```
-system-prompt.js
-first-prompt.js
-runtime-prompt.js
-xml-error-prompt.js
-send-error-prompt.js
-done-prompt.js
-```
+- `system-prompt.js`：定义 Agent 基础能力与规则
+- `first-prompt.js`：首次调用时注入 Workspace、Manifest、用户任务
+- `runtime-prompt.js`：根据 Runtime 返回生成下一轮 Prompt
+- `xml-error-prompt.js` / `send-error-prompt.js` / `done-prompt.js`：异常与终止处理
 
-作用：
+## Workspace
 
-## system-prompt
+Agent 操作的目标目录，所有路径必须是相对路径，禁止绝对路径或 `../` 越权访问。
 
-定义 Agent 基础能力和规则。
+## History & Report
 
-例如：
-
-- 必须使用 XML Action
-- 不允许直接修改系统
-- 必须根据 Runtime 返回继续工作
+- 会话数据保存在 `~/.xml-agent/webui-sessions/`
+- 工作区产物迁移至 `~/.xml-agent/workspaces/<hash>/`，不再污染代码仓库
+- 任务完成后自动生成执行报告
 
 ---
 
-## first-prompt
+# 会话与存储管理（v1.0.2）
 
-第一次调用模型时生成任务上下文。
+配置项位于 `config/agent-config.js` 的 `session` 块：
 
-包含：
+| 字段            | 默认值   | 说明                       |
+| --------------- | -------- | -------------------------- |
+| maxSessions     | 100      | 最多保存的会话数量         |
+| maxDiskBytes    | 200MB    | 会话存储目录最大占用       |
+| warnThreshold   | 0.8      | 达到上限 80% 时触发告警    |
 
-- Workspace
-- Manifest
-- 用户任务
+达到上限后创建新会话会返回明确提示（错误码 MAX_SESSIONS / MAX_DISK），需先删除旧会话。
 
----
+WebUI 侧边栏提供存储占用指示条与告警提示，悬停可查看详细信息。
 
-## runtime-prompt
+支持环境变量覆盖：
 
-根据 Runtime 返回结果生成下一轮 Prompt。
+- WEBUI_MAX_SESSIONS
+- WEBUI_MAX_DISK_BYTES
+- WEBUI_WARN_THRESHOLD
 
-例如：
+API：
 
-Runtime:
+- GET `/api/storage`：查询存储状态
+- POST `/api/storage/clean`：清理临时文件与释放空间
 
-```json
-{
-    "action": "read",
-    "content": "..."
-}
-```
-
-Agent:
-
-继续分析文件。
+启动时自动清理上次异常退出遗留的 `.tmp` 文件。
 
 ---
 
-# Workspace
+# 代码质量
 
-Agent 操作目标目录。
+格式化：
 
-例如：
-
-```
-D:/project/demo
-```
-
-Runtime 所有路径：
-
-必须是 Workspace 相对路径。
-
-允许：
-
-```
-package.json
-src/index.js
+```bash
+npm run format        # 格式化代码
+npm run format:check  # 检查格式
 ```
 
-禁止：
+测试：
 
-```
-C:/xxx
-../../xxx
-```
-
-避免 Agent 越权访问。
-
----
-
-# History
-
-目录：
-
-```
-workspace/
-```
-
-保存 Agent 执行记录。
-
-包括：
-
-- step
-- action
-- runtime result
-
-方便：
-
-- 调试
-- 回放
-- 分析 Agent 行为
-
----
-
-# Report
-
-任务完成后生成执行报告。
-
-包含：
-
-- 用户任务
-- Workspace
-- Agent 执行信息
-
----
-
-# XML Action 协议
-
-Agent 与 Runtime 使用 XML 通信。
-
-例如：
-
-模型输出：
-
-```xml
-<read path="src"/>
-```
-
-Runtime 执行：
-
-```
-读取目录
-```
-
-返回：
-
-```json
-{
-    "ok": true,
-    "entries": ["index.js"]
-}
-```
-
-模型继续：
-
-```xml
-<read path="src/index.js"/>
-```
-
-直到：
-
-```xml
-<answer>
-任务完成
-</answer>
-```
-
-然后：
-
-```xml
-<done/>
+```bash
+npm run test:electron           # Electron 相关测试
+npm run test:conversation       # 会话测试
+npm run test:conversation:all   # 全量会话测试
 ```
 
 ---
 
 # 设计原则
 
-## 1. LLM 不直接执行
-
-错误方式：
-
-```
-LLM
- |
-直接运行shell
-```
-
-风险：
-
-- 权限过大
-- 不可控
-
-当前方式：
-
-```
-LLM
- |
-XML Action
- |
-Runtime
- |
-执行
-```
-
----
-
-## 2. Runtime 是安全边界
-
-Runtime 控制：
-
-- 文件访问
-- 命令执行
-- 路径权限
-- 超时
-
----
-
-## 3. Provider 与 Agent 解耦
-
-未来可以增加：
-
-- Claude
-- Gemini
-- 本地模型
-- Ollama
-
-无需修改 Agent。
+1. **LLM 不直接执行**：所有操作通过 XML Action 交由 Runtime 执行，避免权限失控。
+2. **Runtime 是安全边界**：控制文件访问、命令执行、路径权限与超时。
+3. **Provider 与 Agent 解耦**：新增模型无需修改 Agent 核心逻辑。
+4. **可审计**：History 与 Report 完整记录 Agent 行为，便于调试与回放。
 
 ---
 
 # 当前能力
 
-目前已经具备：
-
 - ✅ XML Agent 协议
-- ✅ Workspace 管理
-- ✅ 文件读取
-- ✅ 文件写入
-- ✅ 命令执行
-- ✅ 多模型 Provider
-- ✅ Runtime 错误恢复
-- ✅ XML 错误恢复
-- ✅ History 记录
-- ✅ Report 生成
+- ✅ Workspace 安全管理
+- ✅ 文件读写与命令执行
+- ✅ 多模型 Provider（ChatGPT / DeepSeek / Qwen / GLM）
+- ✅ Runtime 与 XML 错误恢复
+- ✅ BrowserAgent 页面自愈
+- ✅ 会话持久化与存储上限管理
+- ✅ History 记录与 Report 生成
+- ✅ WebUI 视觉优化与 Final Answer 显示改进
+- ✅ Electron 桌面端（安装版 / 便携版 / zip）
+- ✅ 离线打包支持
+- ✅ Prettier 代码风格统一
+
+---
+
+# 更新日志
+
+详见：
+
+- [RELEASE_NOTES_1.0.1.md](./RELEASE_NOTES_1.0.1.md)
+- [RELEASE_NOTES_1.0.2.md](./RELEASE_NOTES_1.0.2.md)
 
 ---
 
@@ -625,14 +358,9 @@ XML Agent 是一个轻量级工程 AI Agent Harness。
 
 核心思想：
 
-```
 模型负责思考
-
-Runtime负责执行
-
-XML负责通信
-
-Workspace负责目标环境
-```
+Runtime 负责执行
+XML 负责通信
+Workspace 负责目标环境
 
 通过这种架构，可以构建安全、可扩展、可审计的工程型 AI Agent。
