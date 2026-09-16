@@ -1,4 +1,3 @@
-
 # XML Agent
 
 一个基于 Node.js 实现的工程型 AI Agent Framework。
@@ -130,36 +129,36 @@ npm run electron:build
 整体流程：
 
 User Task
-    |
-    v
+|
+v
 Agent
-    |
-    | Prompt
-    v
+|
+| Prompt
+v
 LLM Provider
-    |
-    | XML Action
-    v
+|
+| XML Action
+v
 XML Parser
-    |
-    v
+|
+v
 Runtime
-    |
-    +----------------+
-    |                |
-    v                v
-Workspace        Command
-(read/write)      (exec)
-    |
-    v
+|
++----------------+
+| |
+v v
+Workspace Command
+(read/write) (exec)
+|
+v
 Runtime Result
-    |
-    v
+|
+v
 Agent Continue
-    |
-    +---- answer
-    |
-    +---- done
+|
++---- answer
+|
++---- done
 
 ---
 
@@ -273,11 +272,11 @@ Agent 操作的目标目录，所有路径必须是相对路径，禁止绝对�
 
 配置项位于 `config/agent-config.js` 的 `session` 块：
 
-| 字段            | 默认值   | 说明                       |
-| --------------- | -------- | -------------------------- |
-| maxSessions     | 100      | 最多保存的会话数量         |
-| maxDiskBytes    | 200MB    | 会话存储目录最大占用       |
-| warnThreshold   | 0.8      | 达到上限 80% 时触发告警    |
+| 字段          | 默认值 | 说明                    |
+| ------------- | ------ | ----------------------- |
+| maxSessions   | 100    | 最多保存的会话数量      |
+| maxDiskBytes  | 200MB  | 会话存储目录最大占用    |
+| warnThreshold | 0.8    | 达到上限 80% 时触发告警 |
 
 达到上限后创建新会话会返回明确提示（错误码 MAX_SESSIONS / MAX_DISK），需先删除旧会话。
 
