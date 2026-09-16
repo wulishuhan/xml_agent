@@ -13,69 +13,78 @@ console.log("");
 console.log("Workspace:", getWorkspace());
 console.log("");
 
-// 测试1: 读取文件
-console.log("--- Test 1: read file ---");
-const readResult = run({
-    action: "read",
-    node: { "@_path": "package.json" },
-});
-console.log("Read result:", readResult.ok ? "SUCCESS" : "FAILED");
-if (readResult.ok) {
-    console.log(" File size:", readResult.size, "bytes");
-    console.log(" Content preview:", readResult.content.substring(0, 100) + "...");
+// 注意：runtime.run 现在是异步的（exec 改为异步 child_process），
+// 因此所有调用都需要 await。
+async function main() {
+    // 测试1: 读取文件
+    console.log("--- Test 1: read file ---");
+    const readResult = await run({
+        action: "read",
+        node: { "@_path": "package.json" },
+    });
+    console.log("Read result:", readResult.ok ? "SUCCESS" : "FAILED");
+    if (readResult.ok) {
+        console.log(" File size:", readResult.size, "bytes");
+        console.log(" Content preview:", readResult.content.substring(0, 100) + "...");
+    }
+    console.log("");
+
+    // 测试2: 读取目录
+    console.log("--- Test 2: read directory ---");
+    const readDirResult = await run({
+        action: "read",
+        node: { "@_path": "config" },
+    });
+    console.log("Read directory result:", readDirResult.ok ? "SUCCESS" : "FAILED");
+    if (readDirResult.ok) {
+        console.log(" Entries:", readDirResult.entries.join(", "));
+    }
+    console.log("");
+
+    // 测试3: 写入文件
+    console.log("--- Test 3: write file ---");
+    const testFilePath = "workspace/test-runtime-output.txt";
+    const testContent = "Runtime test content written at " + new Date().toISOString();
+    const writeResult = await run({
+        action: "write",
+        node: { "@_path": testFilePath, "#text": testContent },
+    });
+
+    console.log("Write result:", writeResult.ok ? "SUCCESS" : "FAILED");
+    if (writeResult.ok) {
+        console.log(" Written to:", testFilePath);
+        console.log(" Size:", writeResult.size, "bytes");
+    }
+    console.log("");
+
+    // 测试4: 验证写入的文件
+    console.log("--- Test 4: verify written file ---");
+    const verifyResult = await run({
+        action: "read",
+        node: { "@_path": testFilePath },
+    });
+    console.log("Verify result:", verifyResult.ok ? "SUCCESS" : "FAILED");
+    if (verifyResult.ok) {
+        console.log(" Content:", verifyResult.content);
+    }
+    console.log("");
+
+    // 测试5: 执行简单命令
+    console.log("--- Test 5: exec command ---");
+    const execResult = await run({
+        action: "exec",
+        node: { "@_command": "node --version" },
+    });
+    console.log("Exec result:", execResult.ok ? "SUCCESS" : "FAILED");
+    if (execResult.ok) {
+        console.log(" Output:", execResult.output.trim());
+    }
+    console.log("");
+
+    console.log("All tests completed.");
 }
-console.log("");
 
-// 测试2: 读取目录
-console.log("--- Test 2: read directory ---");
-const readDirResult = run({
-    action: "read",
-    node: { "@_path": "config" },
+main().catch((error) => {
+    console.error("Test run failed:", error.message);
+    process.exit(1);
 });
-console.log("Read directory result:", readDirResult.ok ? "SUCCESS" : "FAILED");
-if (readDirResult.ok) {
-    console.log(" Entries:", readDirResult.entries.join(", "));
-}
-console.log("");
-
-// 测试3: 写入文件 - 修正调用方式，content 作为第二个参数
-console.log("--- Test 3: write file ---");
-const testFilePath = "workspace/test-runtime-output.txt";
-const testContent = "Runtime test content written at " + new Date().toISOString();
-const writeResult = run({
-    action: "write",
-    node: { "@_path": testFilePath, "#text": testContent },
-});
-
-console.log("Write result:", writeResult.ok ? "SUCCESS" : "FAILED");
-if (writeResult.ok) {
-    console.log(" Written to:", testFilePath);
-    console.log(" Size:", writeResult.size, "bytes");
-}
-console.log("");
-
-// 测试4: 验证写入的文件
-console.log("--- Test 4: verify written file ---");
-const verifyResult = run({
-    action: "read",
-    node: { "@_path": testFilePath },
-});
-console.log("Verify result:", verifyResult.ok ? "SUCCESS" : "FAILED");
-if (verifyResult.ok) {
-    console.log(" Content:", verifyResult.content);
-}
-console.log("");
-
-// 测试5: 执行简单命令
-console.log("--- Test 5: exec command ---");
-const execResult = run({
-    action: "exec",
-    node: { "@_command": "node --version" },
-});
-console.log("Exec result:", execResult.ok ? "SUCCESS" : "FAILED");
-if (execResult.ok) {
-    console.log(" Output:", execResult.output.trim());
-}
-console.log("");
-
-console.log("All tests completed.");

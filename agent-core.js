@@ -298,7 +298,9 @@ class Agent extends EventEmitter {
         let result;
 
         try {
-            result = this.runtime.run(action);
+            // runtime.run 现在可能是异步的（exec 已改为异步 child_process），
+            // 必须 await，否则会拿到 Promise 而不是执行结果。
+            result = await this.runtime.run(action);
         } catch (error) {
             result = {
                 ok: false,

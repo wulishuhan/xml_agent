@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { execSync, spawn } = require("child_process");
+const { spawn, exec } = require("child_process");
 const { getText } = require("./parse/xml-parse");
 const agentConfig = require("./config/agent-config");
 const logger = require("./logger");
@@ -38,6 +38,50 @@ function validateContent(filePath, content) {
         }
     }
     // 可扩展其他验证
+}
+
+/**
+
+异步执行前台命令。
+
+重要：这里刻意使用 child_process.exec（异步）而不是 execSync。
+
+因为 Agent / WebUI 后端运行在 Electron 主进程的事件循环中，
+
+execSync 会阻塞整个事件循环，导致：
+
+Express 无法响应 HTTP 请求（输出轮询/SSE 心跳卡死）
+
+Electron 主进程无法处理渲染进程消息与窗口事件
+
+→ 窗口被操作系统标记为"未响应"
+
+用户的"停止会话"请求无法被调度，只能强杀进程
+
+使用异步 API 后，命令执行期间事件循环仍然可用，
+
+界面不会卡死，用户也可以随时停止。
+*/
+function execCommand(command, options) {
+    return new Promise((resolve) => {
+        exec(command, options, (error, stdout, stderr) => {
+            if (error) {
+                resolve({
+                    ok: false,
+                    error,
+                    stdout,
+                    stderr,
+                });
+                return;
+            }
+
+            resolve({
+                ok: true,
+                stdout,
+                stderr,
+            });
+        });
+    });
 }
 
 class Runtime {
@@ -214,7 +258,7 @@ class Runtime {
         };
     }
 
-    execute(node) {
+    async execute(node) {
         const workspace = this.getWorkspace();
         const command = node?.["@_command"];
 
@@ -264,17 +308,17 @@ class Runtime {
             }
         }
 
-        try {
-            const output = execSync(command, {
-                cwd: workspace,
-                encoding: "utf8",
-                timeout: MAX_EXEC_TIMEOUT,
-                maxBuffer: MAX_EXEC_OUTPUT_SIZE,
-                stdio: ["pipe", "pipe", "pipe"],
-                windowsHide: false,
-            });
+        // 异步执行：不阻塞事件循环，避免 Electron 主进程卡死
+        const result = await execCommand(command, {
+            cwd: workspace,
+            encoding: "utf8",
+            timeout: MAX_EXEC_TIMEOUT,
+            maxBuffer: MAX_EXEC_OUTPUT_SIZE,
+            windowsHide: true,
+        });
 
-            const limitedOutput = limitExecOutput(output);
+        if (result.ok) {
+            const limitedOutput = limitExecOutput(result.stdout);
 
             return {
                 ok: true,
@@ -283,25 +327,25 @@ class Runtime {
                 output: limitedOutput.value,
                 outputTruncated: limitedOutput.truncated,
             };
-        } catch (error) {
-            // 分开截断 stdout 和 stderr
-            const stdout = limitExecOutput(error.stdout);
-            const stderr = limitExecOutput(error.stderr);
-
-            logger.error("Command failed:", command, "exitCode:", error.status);
-
-            return {
-                ok: false,
-                action: "exec",
-                command,
-                exitCode: error.status ?? null,
-                stdout: stdout.value,
-                stderr: stderr.value,
-                stdoutTruncated: stdout.truncated,
-                stderrTruncated: stderr.truncated,
-                error: error.message,
-            };
         }
+
+        const error = result.error || {};
+        const stdout = limitExecOutput(result.stdout);
+        const stderr = limitExecOutput(result.stderr);
+
+        logger.error("Command failed:", command, "exitCode:", error.code);
+
+        return {
+            ok: false,
+            action: "exec",
+            command,
+            exitCode: typeof error.code === "number" ? error.code : null,
+            stdout: stdout.value,
+            stderr: stderr.value,
+            stdoutTruncated: stdout.truncated,
+            stderrTruncated: stderr.truncated,
+            error: error.message,
+        };
     }
 
     answer(node) {
@@ -325,7 +369,7 @@ class Runtime {
         };
     }
 
-    run(action) {
+    async run(action) {
         if (!action || typeof action !== "object") {
             throw new Error("Action is required");
         }
@@ -347,7 +391,9 @@ class Runtime {
             throw new Error("Unknown action: " + actionName);
         }
 
-        return handler(node);
+        // 兼容同步/异步 handler：read/write/answer/done 仍是同步的，
+        // 只有 exec 是异步的。await 一个非 Promise 值不会有任何副作用。
+        return await handler(node);
     }
 
     get actionHandlers() {

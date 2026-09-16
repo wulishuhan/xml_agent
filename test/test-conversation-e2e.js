@@ -62,13 +62,37 @@ function installMockAgentSession() {
             this.output = [];
         }
 
+        // 真实 AgentSession 具备 restore 方法，server 启动时会调用它来恢复磁盘上的会话。
+        // mock 需要实现同名方法，否则会输出 "session.restore is not a function"。
+        restore(data) {
+            if (!data) {
+                return this;
+            }
+
+            if (typeof data.id === "string" && data.id) {
+                this.id = data.id;
+            }
+
+            if (Array.isArray(data.output)) {
+                this.output = data.output;
+            }
+
+            if (typeof data.status === "string") {
+                this.status = data.status;
+            }
+
+            if (data.conversationId) {
+                this.conversationId = data.conversationId;
+            }
+
+            return this;
+        }
+
+        // 保持为 running 状态：真实场景下 Agent 会长时间运行（浏览器交互），
+        // 只有仍在运行的 session 才会被 /api/run 复用。
+        // 如果这里立刻置为 completed，就无法覆盖"复用运行中 session"这条链路。
         start() {
             this.status = "running";
-
-            setImmediate(() => {
-                this.status = "completed";
-                this.emit("finished", this.getInfo());
-            });
 
             return this;
         }
@@ -346,6 +370,8 @@ async function main() {
     await new Promise((resolve) => {
         server.close(() => resolve());
     });
+
+    await sessionManager.stopAll();
 }
 
 main().catch(async (error) => {
