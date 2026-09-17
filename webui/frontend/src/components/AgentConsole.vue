@@ -55,7 +55,12 @@
                                 <span class="answer-value">answer</span>
                             </div>
                             <div class="answer-row"><span class="answer-key">content</span></div>
-                            <pre class="answer-content">{{ getAnswerContent(item) }}</pre>
+                            <div
+                                v-if="renderMarkdown(getAnswerContent(item))"
+                                class="answer-content markdown-body"
+                                v-html="renderMarkdown(getAnswerContent(item))"
+                            ></div>
+                            <pre v-else class="answer-content">{{ getAnswerContent(item) }}</pre>
                         </div> </template
                     ><template v-else>
                         <div
@@ -74,14 +79,19 @@
                     </button>
                 </div>
             </article>
-            <article v-if="finalAnswerContent" class="event-card event-final-answer">
+            <article v-if="finalAnswer.content" class="event-card event-final-answer">
                 <div class="event-marker"><span>+</span></div>
                 <div class="event-content">
                     <div class="event-meta">
                         <span class="event-type">Final Answer</span>
                         <span class="event-tag">answer</span>
                     </div>
-                    <div class="final-answer-content">{{ finalAnswerContent }}</div>
+                    <div
+                        v-if="finalAnswer.html"
+                        class="final-answer-content markdown-body"
+                        v-html="finalAnswer.html"
+                    ></div>
+                    <div v-else class="final-answer-content">{{ finalAnswer.content }}</div>
                 </div>
             </article>
         </div>
@@ -89,6 +99,8 @@
 </template>
 <script setup>
     import { computed, nextTick, ref, watch } from "vue";
+    import { marked } from "marked";
+
     const props = defineProps({
         output: { type: Array, default: () => [] },
         session: { type: Object, default: null },
@@ -101,6 +113,78 @@
     const expanded = ref(new Set());
     const PREVIEW_MAX_CHARS = 220;
     const PREVIEW_MAX_LINES = 4;
+
+    marked.setOptions({ gfm: true, breaks: false });
+
+    function lineLooksLikeMarkdown(line) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            return false;
+        }
+        if (trimmed.indexOf("# ") === 0 || trimmed.indexOf("## ") === 0) {
+            return true;
+        }
+        if (trimmed.indexOf("### ") === 0 || trimmed.indexOf("#### ") === 0) {
+            return true;
+        }
+        if (trimmed.indexOf("- ") === 0 || trimmed.indexOf("* ") === 0) {
+            return true;
+        }
+        if (trimmed.indexOf("+ ") === 0) {
+            return true;
+        }
+        if (trimmed.indexOf("> ") === 0) {
+            return true;
+        }
+        if (/^\d+.\s/.test(trimmed)) {
+            return true;
+        }
+        if (trimmed.indexOf("|") === 0 && trimmed.lastIndexOf("|") > 0) {
+            return true;
+        }
+        return false;
+    }
+
+    function looksLikeMarkdown(text) {
+        if (typeof text !== "string" || !text.trim()) {
+            return false;
+        }
+        if (text.indexOf("```") !== -1) {
+            return true;
+        }
+        if (text.indexOf("**") !== -1) {
+            return true;
+        }
+        if (text.indexOf("](") !== -1) {
+            return true;
+        }
+        if (text.indexOf("---") !== -1) {
+            return true;
+        }
+        const lines = text.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            if (lineLooksLikeMarkdown(lines[i])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function renderMarkdown(text) {
+        if (typeof text !== "string" || !text.trim()) {
+            return "";
+        }
+        if (!looksLikeMarkdown(text)) {
+            return "";
+        }
+        try {
+            const html = marked.parse(text);
+            return typeof html === "string" ? html : "";
+        } catch (error) {
+            return "";
+        }
+    }
+
     const emptyTitle = computed(() =>
         props.session ? "Waiting for agent activity" : "Start a new session"
     );
@@ -152,6 +236,13 @@
         }
         return findAnswerContent(list);
     });
+    const finalAnswer = computed(() => {
+        const content = finalAnswerContent.value;
+        if (!content) {
+            return { content: "", html: "" };
+        }
+        return { content, html: renderMarkdown(content) };
+    });
     watch(
         () => displayOutput.value.length,
         async () => {
@@ -162,7 +253,7 @@
             consoleElement.value.scrollTop = consoleElement.value.scrollHeight;
         }
     );
-    watch(finalAnswerContent, async () => {
+    watch(finalAnswer, async () => {
         await nextTick();
         if (!consoleElement.value) {
             return;
@@ -187,7 +278,7 @@
         if (tag === "answer") return "*";
         if (tag === "read") return "R";
         if (tag === "write") return "W";
-        if (tag === "exec") return "$";
+        if (tag === "exec") return "";
         if (tag === "done") return "=";
         return ">";
     }
@@ -260,7 +351,7 @@
     function getPreview(item) {
         if (isAnswerItem(item)) {
             const content = getAnswerContent(item) || "";
-            const oneLine = content.replace(/\s+/g, " ").trim();
+            const oneLine = content.split("\n").join(" ").replace(/\s+/g, " ").trim();
             if (oneLine.length > PREVIEW_MAX_CHARS) {
                 return "answer: " + oneLine.slice(0, PREVIEW_MAX_CHARS) + " ...";
             }
@@ -276,7 +367,7 @@
         const truncatedByChar = head.length > PREVIEW_MAX_CHARS;
         const shown = truncatedByChar ? head.slice(0, PREVIEW_MAX_CHARS) : head;
         if (truncatedByLine || truncatedByChar) {
-            return shown.replace(/\s+$/, "") + " ...";
+            return shown.replace(/\s+/, "") + " ...";
         }
         return shown;
     }
