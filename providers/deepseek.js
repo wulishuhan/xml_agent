@@ -451,6 +451,23 @@ class DeepSeekProvider extends BrowserAgent {
                 return "";
             }
 
+            // 优先使用 DOM 提取，因为 DOM 文本直接来自页面渲染结果，
+            // 是准确的当前消息内容。React Fiber 可能包含缓存的旧数据
+            // （如父组件传递的 system prompt），导致返回错误的响应。
+            const domText = await this.buildFromDom(index);
+
+            if (domText && domText.trim()) {
+                const xmlFromDom = extractXmlFromCandidate(domText);
+
+                if (xmlFromDom) {
+                    return balanceMarkdownFences(xmlFromDom);
+                }
+
+                // 如果 DOM 文本不包含 XML action，但仍然有内容，直接返回
+                return balanceMarkdownFences(domText);
+            }
+
+            // DOM 提取失败或为空时，回退到 React Fiber 提取
             const message = messages.nth(index);
             const fiberCandidates = await this.extractFromReactFiber(message);
 
@@ -468,9 +485,7 @@ class DeepSeekProvider extends BrowserAgent {
                 }
             }
 
-            const domText = await this.buildFromDom(index);
-
-            return extractXmlFromCandidate(domText) || domText;
+            return "";
         } catch (error) {
             return "";
         }

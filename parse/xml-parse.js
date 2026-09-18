@@ -182,7 +182,19 @@ function extractXML(response) {
     }
 
     const action = actionNames[0];
-    const node = parsed[action];
+    let node = parsed[action];
+
+    // 处理多个同名 action 的情况（如 <read/><read/><read/>）
+    // fast-xml-parser 会将多个同名标签解析为数组
+    if (Array.isArray(node)) {
+        throw new Error(
+            "Multiple " +
+                action +
+                " actions found (" +
+                node.length +
+                "), only one XML Action is allowed per response"
+        );
+    }
 
     validateAction(action, node);
 
