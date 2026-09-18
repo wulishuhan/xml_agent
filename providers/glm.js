@@ -1,5 +1,3 @@
-
-
 const { BrowserAgent } = require("./browser-agent");
 
 const GLM_CONVERSATION_PATTERN = new RegExp("/(?:c|s)/([0-9a-zA-Z-]+)");
@@ -414,7 +412,9 @@ class GlmProvider extends BrowserAgent {
                     const children = Array.from(node.childNodes).map(render).join("");
 
                     if (tag === "h1" || tag === "h2" || tag === "h3") {
-                        return "\n" + "#".repeat(Number(tag.slice(1))) + " " + children.trim() + "\n";
+                        return (
+                            "\n" + "#".repeat(Number(tag.slice(1))) + " " + children.trim() + "\n"
+                        );
                     }
 
                     if (tag === "strong" || tag === "b") {
@@ -620,9 +620,7 @@ class GlmProvider extends BrowserAgent {
             await this.sleep(this.responsePollInterval);
         }
 
-        throw new Error(
-            "GLM did not create a new assistant response within " + timeout + "ms"
-        );
+        throw new Error("GLM did not create a new assistant response within " + timeout + "ms");
     }
 
     async waitForResponseStart(oldCount, oldResponse) {

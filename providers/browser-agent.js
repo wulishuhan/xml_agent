@@ -19,7 +19,10 @@ class BrowserAgent {
             process.env.CHROME_PATH ||
             process.env.XML_AGENT_CHROME_PATH ||
             "";
-
+        this.focusCdpPage =
+            options.focusCdpPage !== undefined
+                ? options.focusCdpPage
+                : process.env.BROWSER_FOCUS_CDP_PAGE !== "false";
         this.responseTimeout = this.getNumberOption(
             options.responseTimeout,
             process.env.XML_AGENT_RESPONSE_TIMEOUT_MS,
@@ -40,33 +43,26 @@ class BrowserAgent {
             process.env.XML_AGENT_RESPONSE_INITIAL_TIMEOUT_MS,
             60 * 1000
         );
-
         this.inputSelectors = options.inputSelectors || [];
         this.targetUrl =
             options.targetUrl !== undefined ? options.targetUrl : "https://chatgpt.com";
-
         this.conversationId = options.conversationId || null;
         this.currentConversationId = this.conversationId;
-
         this.reuseExistingPage =
             options.reuseExistingPage !== undefined ? options.reuseExistingPage : true;
-
         if (this.conversationId) {
             this.reuseExistingPage = false;
         }
-
         this.navigationTimeout = this.getNumberOption(
             options.navigationTimeout,
             process.env.XML_AGENT_NAVIGATION_TIMEOUT_MS,
             45000
         );
-
         this.inputTimeout = this.getNumberOption(
             options.inputTimeout,
             process.env.XML_AGENT_INPUT_TIMEOUT_MS,
             120000
         );
-
         this.diagnosticsEnabled =
             options.diagnosticsEnabled !== undefined ? options.diagnosticsEnabled : true;
         this.diagnosticsIntervalMs = this.getNumberOption(
@@ -74,66 +70,53 @@ class BrowserAgent {
             process.env.XML_AGENT_DIAGNOSTICS_INTERVAL_MS,
             10000
         );
-
         this.continueOnNavigationTimeout =
             options.continueOnNavigationTimeout !== undefined
                 ? options.continueOnNavigationTimeout
                 : true;
-
         this._cachedInput = null;
         this._cachedInputTimestamp = 0;
         this._inputCacheTTL = 5000;
         this._recoveringPromise = null;
     }
-
     getNumberOption(optionValue, envValue, defaultValue) {
         const value = optionValue ?? envValue;
         if (value === undefined || value === null || value === "") {
             return defaultValue;
         }
-
         const number = Number(value);
         if (!Number.isFinite(number) || number <= 0) {
             return defaultValue;
         }
-
         return number;
     }
-
     get name() {
         return "BrowserAgent";
     }
-
     matchPage(page) {
         throw new Error("matchPage() must be implemented");
     }
-
     getConversationIdFromUrl(url) {
         return null;
     }
-
     buildTargetUrl() {
         return this.targetUrl;
     }
-
     async checkCdpServer(cdpUrl) {
         try {
             const url = new URL(cdpUrl);
             const host = url.hostname || "127.0.0.1";
             const port = parseInt(url.port) || 9222;
             const healthUrl = "http://" + host + ":" + port + "/json/version";
-
             return new Promise((resolve) => {
                 const request = http.get(healthUrl, { timeout: 3000 }, (response) => {
                     response.resume();
                     resolve(response.statusCode === 200);
                 });
-
                 request.on("timeout", () => {
                     request.destroy();
                     resolve(false);
                 });
-
                 request.on("error", () => {
                     resolve(false);
                 });
@@ -142,25 +125,20 @@ class BrowserAgent {
             return false;
         }
     }
-
     async startChromeCdpServer() {
         const chromePath = this.chromePath;
-
         if (!chromePath) {
             throw new Error(
                 "Could not find Chrome executable. Please install Chrome or set CHROME_PATH environment variable or chromePath in config."
             );
         }
-
         const url = new URL(this.cdpUrl);
         const port = parseInt(url.port) || 9222;
         const userDataDir = path.join(os.tmpdir(), "chrome-agent-profile-" + port);
-
         console.log(
             "[" + this.name + "] Starting Chrome with remote debugging on port " + port + "..."
         );
         console.log("[" + this.name + "] Chrome path: " + chromePath);
-
         const args = [
             "--remote-debugging-port=" + port,
             "--user-data-dir=" + userDataDir,
@@ -176,46 +154,33 @@ class BrowserAgent {
             "--disable-breakpad",
             "--no-startup-window",
         ];
-
         this.chromeProcess = spawn(chromePath, args, {
             stdio: ["ignore", "ignore", "ignore"],
             detached: true,
             windowsHide: true,
         });
-
         if (!this.chromeProcess) {
             throw new Error("Failed to spawn Chrome process");
         }
-
         this.chromeProcess.unref();
-
         console.log(
             "[" + this.name + "] Chrome process started with PID: " + this.chromeProcess.pid
         );
-
         const startTime = Date.now();
-
         while (Date.now() - startTime < this.startTimeout) {
             const isReady = await this.checkCdpServer(this.cdpUrl);
-
             if (isReady) {
                 console.log("[" + this.name + "] CDP server is ready at " + this.cdpUrl);
                 return true;
             }
-
             await this.sleep(this.retryInterval);
         }
-
         throw new Error("Chrome CDP server did not start within " + this.startTimeout + "ms");
     }
-
     async openNewPageForTarget() {
         const url = this.buildTargetUrl();
-
         console.log("[" + this.name + "] Creating new page for target: " + url);
-
         this.page = await this.context.newPage();
-
         if (url) {
             try {
                 await this.page.goto(url, {
@@ -231,7 +196,6 @@ class BrowserAgent {
                     " timed out after " +
                     this.navigationTimeout +
                     "ms, continuing...";
-
                 if (this.continueOnNavigationTimeout) {
                     console.warn(msg);
                 } else {
@@ -239,42 +203,33 @@ class BrowserAgent {
                 }
             }
         }
-
         return this.page;
     }
-
     getPageConversationId(page) {
         if (!page) {
             return null;
         }
-
         try {
             return this.getConversationIdFromUrl(page.url());
         } catch (error) {
             return null;
         }
     }
-
     async ensurePage() {
         if (!this.browser) {
             throw new Error("Browser not connected");
         }
-
         const contexts = this.browser.contexts();
-
         if (!contexts || contexts.length === 0) {
             console.log("[" + this.name + "] No context found, creating new context...");
             this.context = await this.browser.newContext();
         } else {
             this.context = contexts[0];
         }
-
         const pages = this.context.pages();
-
         if (this.conversationId) {
             for (const page of pages) {
                 const pageCid = this.getPageConversationId(page);
-
                 if (pageCid && pageCid === this.conversationId) {
                     console.log(
                         "[" +
@@ -282,12 +237,10 @@ class BrowserAgent {
                             "] Found existing page for conversation " +
                             this.conversationId
                     );
-
                     this.page = page;
                     break;
                 }
             }
-
             if (!this.page) {
                 console.log(
                     "[" +
@@ -296,7 +249,6 @@ class BrowserAgent {
                         this.conversationId +
                         ", creating new one"
                 );
-
                 await this.openNewPageForTarget();
             }
         } else if (!this.reuseExistingPage) {
@@ -307,7 +259,6 @@ class BrowserAgent {
             await this.openNewPageForTarget();
         } else {
             this.page = null;
-
             for (const page of pages) {
                 try {
                     if (await this.matchPage(page)) {
@@ -318,7 +269,6 @@ class BrowserAgent {
                     console.warn("[" + this.name + "] Failed to inspect page: " + error.message);
                 }
             }
-
             if (!this.page) {
                 const availableUrls = pages.map((page) => {
                     try {
@@ -327,7 +277,6 @@ class BrowserAgent {
                         return "unknown";
                     }
                 });
-
                 console.log(
                     "[" +
                         this.name +
@@ -336,70 +285,58 @@ class BrowserAgent {
                         ", creating a new page. Available pages: " +
                         availableUrls.join(", ")
                 );
-
                 await this.openNewPageForTarget();
             }
         }
-
         if (!this.page) {
             throw new Error("Failed to get or create a page");
         }
-
-        try {
-            await this.page.bringToFront();
-        } catch (error) {
-            console.warn("[" + this.name + "] Could not bring page to front: " + error.message);
+        if (this.focusCdpPage) {
+            try {
+                await this.page.bringToFront();
+            } catch (error) {
+                console.warn("[" + this.name + "] Could not bring page to front: " + error.message);
+            }
+        } else {
+            console.log("[" + this.name + "] focusCdpPage disabled, skipping bringToFront");
         }
-
         this._cachedInput = null;
         return this.page;
     }
-
     refreshConversationId() {
         if (!this.isPageAlive()) {
             return this.currentConversationId;
         }
-
         try {
             const url = this.page.url();
             const cid = this.getConversationIdFromUrl(url);
-
             if (cid) {
                 this.currentConversationId = cid;
             }
-
             return this.currentConversationId;
         } catch (error) {
             return this.currentConversationId;
         }
     }
-
     async ensurePageAlive() {
         if (this.isPageAlive()) {
             return true;
         }
-
         if (this._recoveringPromise) {
             return this._recoveringPromise;
         }
-
         const self = this;
-
         this._recoveringPromise = (async function () {
             console.log("[" + self.name + "] Page is not alive, attempting to recover...");
-
             self.page = null;
             self.context = null;
             self._cachedInput = null;
-
             try {
                 if (self.currentConversationId) {
                     self.conversationId = self.currentConversationId;
                     self.reuseExistingPage = false;
                 }
-
                 const isRunning = await self.checkCdpServer(self.cdpUrl);
-
                 if (!isRunning) {
                     if (self.autoStart) {
                         await self.startChromeCdpServer();
@@ -410,44 +347,33 @@ class BrowserAgent {
                         return false;
                     }
                 }
-
                 self.browser = await chromium.connectOverCDP(self.cdpUrl);
-
                 await self.ensurePage();
                 await self.waitForInput();
-
                 const cid = self.refreshConversationId();
-
                 if (cid && !self.conversationId) {
                     self.conversationId = cid;
                 }
-
                 const url = self.page ? self.page.url() : "(none)";
                 console.log("[" + self.name + "] Page recovered: " + url);
-
                 return self.isPageAlive();
             } catch (error) {
                 console.error("[" + self.name + "] Failed to recover page: " + error.message);
-
                 self.page = null;
                 self.context = null;
                 self.browser = null;
-
                 return false;
             }
         })();
-
         try {
             return await this._recoveringPromise;
         } finally {
             this._recoveringPromise = null;
         }
     }
-
     async start() {
         try {
             const isRunning = await this.checkCdpServer(this.cdpUrl);
-
             if (isRunning) {
                 console.log("[" + this.name + "] CDP server already running at " + this.cdpUrl);
             } else if (this.autoStart) {
@@ -458,79 +384,59 @@ class BrowserAgent {
                     "CDP server not running at " + this.cdpUrl + " and autoStart is disabled"
                 );
             }
-
             this.browser = await chromium.connectOverCDP(this.cdpUrl);
             console.log("[" + this.name + "] Connected to CDP server");
-
             await this.ensurePage();
-
             const pageUrl = this.isPageAlive() ? this.page.url() : "(none)";
             console.log("[" + this.name + "] Page URL: " + pageUrl);
-
             await this.waitForInput();
-
             const cid = this.refreshConversationId();
-
             if (cid && !this.conversationId) {
                 this.conversationId = cid;
             }
-
             console.log("[" + this.name + "] Connected successfully");
         } catch (error) {
             this.page = null;
             this.context = null;
             this.browser = null;
-
             throw new Error("[" + this.name + "] Failed to start browser agent: " + error.message);
         }
     }
-
     isPageAlive() {
         return !!this.page && !this.page.isClosed();
     }
-
     async getInput(useCache = true) {
         if (!this.isPageAlive()) {
             throw new Error("[" + this.name + "] page is not available");
         }
-
         if (useCache && this._cachedInput) {
             try {
                 const isVisible = await this._cachedInput.isVisible().catch(() => false);
                 const isEnabled = !(await this._cachedInput.isDisabled().catch(() => false));
-
                 if (isVisible && isEnabled) {
                     return this._cachedInput;
                 }
             } catch (error) {
                 // 缓存失效，继续查找
             }
-
             this._cachedInput = null;
         }
-
         for (const selector of this.inputSelectors) {
             try {
                 const locator = this.page.locator(selector).first();
-
                 if (!(await locator.count())) continue;
                 if (!(await locator.isVisible())) continue;
                 if (await locator.isDisabled()) continue;
-
                 console.log("[" + this.name + "] Found input using selector: " + selector);
-
                 this._cachedInput = locator;
                 this._cachedInputTimestamp = Date.now();
-
                 return locator;
             } catch (error) {
                 continue;
             }
         }
-
         return null;
     }
-
     async collectDiagnostics() {
         const info = {
             url: "(unknown)",
@@ -540,64 +446,48 @@ class BrowserAgent {
             roleTextboxes: 0,
             buttons: 0,
         };
-
         if (!this.isPageAlive()) {
             return info;
         }
-
         try {
             info.url = this.page.url();
         } catch (error) {}
-
         try {
             info.title = await this.page.title();
         } catch (error) {}
-
         try {
             info.contentEditables = await this.page.locator('[contenteditable="true"]').count();
         } catch (error) {}
-
         try {
             info.textareas = await this.page.locator("textarea").count();
         } catch (error) {}
-
         try {
             info.roleTextboxes = await this.page.locator("[role='textbox']").count();
         } catch (error) {}
-
         try {
             info.buttons = await this.page.locator("button").count();
         } catch (error) {}
-
         return info;
     }
-
     async waitForInput(timeout) {
         const effectiveTimeout = timeout || this.inputTimeout;
         const start = Date.now();
         let lastDiagnosticsAt = 0;
-
         while (Date.now() - start < effectiveTimeout) {
             if (!this.isPageAlive()) {
                 throw new Error("[" + this.name + "] page was closed while waiting for input");
             }
-
             try {
                 const input = await this.getInput();
-
                 if (input) {
                     return input;
                 }
             } catch (error) {}
-
             const now = Date.now();
-
             if (this.diagnosticsEnabled && now - lastDiagnosticsAt >= this.diagnosticsIntervalMs) {
                 lastDiagnosticsAt = now;
-
                 try {
                     const diag = await this.collectDiagnostics();
-
                     console.log(
                         "[" +
                             this.name +
@@ -619,25 +509,19 @@ class BrowserAgent {
                     );
                 } catch (error) {}
             }
-
             await this.sleep(500);
         }
-
         throw new Error("[" + this.name + "] input not found within " + effectiveTimeout + "ms");
     }
-
     async getInputValue(input) {
         if (!input) return "";
-
         try {
             const tagName = await input.evaluate(function (element) {
                 return element.tagName.toLowerCase();
             });
-
             if (tagName === "input" || tagName === "textarea") {
                 return await input.inputValue();
             }
-
             return await input.innerText();
         } catch (error) {
             try {
@@ -647,20 +531,15 @@ class BrowserAgent {
             }
         }
     }
-
     async insertMessage(message) {
         console.log("[" + this.name + "] Inserting message: " + JSON.stringify(message));
-
         if (!this.isPageAlive()) {
             throw new Error("[" + this.name + "] page is not available");
         }
-
         const input = await this.getInput(true);
-
         if (!input) {
             throw new Error("[" + this.name + "] input not found");
         }
-
         try {
             await input.focus({ timeout: 5000 });
             await this.sleep(200);
@@ -671,36 +550,29 @@ class BrowserAgent {
             } catch (clickError) {
                 await input.evaluate((el) => {
                     el.focus();
-
                     if (el.isContentEditable) {
                         const range = document.createRange();
                         const sel = window.getSelection();
-
                         if (el.childNodes.length > 0) {
                             range.setStartAfter(el.childNodes[el.childNodes.length - 1]);
                         } else {
                             range.setStart(el, 0);
                         }
-
                         range.collapse(false);
                         sel.removeAllRanges();
                         sel.addRange(range);
                     }
                 });
-
                 await this.sleep(200);
             }
         }
-
         let fillSuccess = false;
-
         try {
             await input.fill(message);
             await this.sleep(300);
             fillSuccess = true;
         } catch (fillError) {
             console.warn("[" + this.name + "] Fill failed: " + fillError.message);
-
             try {
                 await input.evaluate((el, msg) => {
                     if (el.isContentEditable) {
@@ -709,114 +581,88 @@ class BrowserAgent {
                     } else {
                         el.value = msg;
                     }
-
                     const event = new Event("input", { bubbles: true });
                     el.dispatchEvent(event);
                 }, message);
-
                 await this.sleep(300);
                 fillSuccess = true;
             } catch (evaluateError) {
                 console.warn("[" + this.name + "] Evaluate fill failed: " + evaluateError.message);
             }
         }
-
         const actualValue = await this.getInputValue(input);
-
         if (!actualValue || !actualValue.trim()) {
             try {
                 await input.click({ timeout: 3000 });
                 await this.sleep(200);
                 await this.page.keyboard.type(message);
                 await this.sleep(300);
-
                 const finalValue = await this.getInputValue(input);
-
                 if (finalValue && finalValue.trim()) {
                     fillSuccess = true;
                 }
             } catch (e) {
                 throw new Error("[" + this.name + "] failed to insert message: all methods failed");
             }
-
             if (!fillSuccess) {
                 throw new Error(
                     "[" + this.name + "] failed to insert message: input value is empty after fill"
                 );
             }
         }
-
         return true;
     }
-
     async waitForInputClear(timeout) {
         timeout = timeout || 10 * 1000;
         const start = Date.now();
-
         while (Date.now() - start < timeout) {
             if (!this.isPageAlive()) {
                 throw new Error(
                     "[" + this.name + "] page was closed while waiting for input clear"
                 );
             }
-
             try {
                 const input = await this.getInput(true);
-
                 if (!input) {
                     await this.sleep(300);
                     continue;
                 }
-
                 const value = await this.getInputValue(input);
-
                 if (!value || !value.trim()) {
                     this._cachedInput = null;
                     return true;
                 }
             } catch (error) {}
-
             await this.sleep(300);
         }
-
         return false;
     }
-
     async waitForStableResponse(getResponse, options) {
         options = options || {};
-
         const timeout = options.timeout || this.responseTimeout;
         const stableTime = options.stableTime || this.responseStableTime;
         const pollInterval = options.pollInterval || this.responsePollInterval;
         const initialTimeout = options.initialTimeout || this.responseInitialTimeout;
-
         const startTime = Date.now();
         let firstResponseTime = null;
         let lastResponse = "";
         let lastChangeTime = null;
-
         while (true) {
             if (!this.isPageAlive()) {
                 throw new Error("[" + this.name + "] page was closed while waiting for response");
             }
-
             const now = Date.now();
-
             if (now - startTime >= timeout) {
                 throw new Error("[" + this.name + "] response timeout after " + timeout + "ms");
             }
-
             let response = "";
-
             try {
                 response = await getResponse();
             } catch (error) {
                 await this.sleep(pollInterval);
                 continue;
             }
-
             response = typeof response === "string" ? response.trim() : "";
-
             if (!response) {
                 if (now - startTime >= initialTimeout) {
                     throw new Error(
@@ -827,11 +673,9 @@ class BrowserAgent {
                             "ms"
                     );
                 }
-
                 await this.sleep(pollInterval);
                 continue;
             }
-
             if (firstResponseTime === null) {
                 firstResponseTime = now;
                 lastResponse = response;
@@ -839,30 +683,24 @@ class BrowserAgent {
                 await this.sleep(pollInterval);
                 continue;
             }
-
             if (response !== lastResponse) {
                 lastResponse = response;
                 lastChangeTime = now;
                 await this.sleep(pollInterval);
                 continue;
             }
-
             const stableDuration = now - lastChangeTime;
-
             if (stableDuration >= stableTime) {
                 return response;
             }
-
             await this.sleep(pollInterval);
         }
     }
-
     async sleep(ms) {
         return new Promise(function (resolve) {
             setTimeout(resolve, ms);
         });
     }
-
     async close() {
         if (this.browser) {
             try {
@@ -875,7 +713,6 @@ class BrowserAgent {
                 );
             }
         }
-
         if (this.chromeProcess && !this.chromeProcess.killed) {
             try {
                 console.log(
@@ -885,7 +722,6 @@ class BrowserAgent {
                 console.warn("[" + this.name + "] Error handling Chrome process: " + error.message);
             }
         }
-
         this.page = null;
         this.context = null;
         this.browser = null;

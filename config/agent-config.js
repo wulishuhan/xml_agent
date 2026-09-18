@@ -13,6 +13,7 @@ BROWSER_RETRY_INTERVAL (ms)
 BROWSER_CDP_URL
 BROWSER_CHROME_PATH
 BROWSER_REUSE_PAGE (true/false)
+BROWSER_FOCUS_CDP_PAGE (true/false)
 WEBUI_MAX_SESSIONS
 WEBUI_MAX_DISK_BYTES (bytes)
 WEBUI_WARN_THRESHOLD (0-1)
@@ -28,7 +29,6 @@ const agentConfig = {
         maxExecTimeout: 300000,
         maxExecOutputSize: 1024 * 1024,
     },
-
     // WebUI 会话存储限制。
     // 会话记录保存在 ~/.xml-agent/webui-sessions 下的 JSON 文件里，
     // 数量或体积过大会占用磁盘，这里提供上限与告警阈值。
@@ -40,7 +40,6 @@ const agentConfig = {
         // 告警阈值（0-1）：当数量或磁盘占用达到该比例时提示用户清理。
         warnThreshold: 0.8,
     },
-
     browser: {
         // 是否自动启动 CDP 服务器
         autoStart: true,
@@ -53,14 +52,16 @@ const agentConfig = {
         // Chrome.exe Path
         // chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
         chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
-
         // 默认值为 false：每个 Agent Session 都会创建独立 Page，
         // 避免新会话复用已有对话的标签页（导致多个 Session 串到同一个 Conversation）。
         // 如需在同一个 Provider 标签页中继续对话，可手动改为 true，
         // 或设置环境变量 BROWSER_REUSE_PAGE=true。
         // Page 仍然共享同一个 CDP BrowserContext，因此登录状态可以复用。
         reuseExistingPage: false,
-
+        // 是否在激活 CDP 页面时把窗口焦点切到该页面标签。
+        // true（默认）：调用 page.bringToFront()，让启动的 CDP 标签获得焦点。
+        // false：不主动抢焦点，窗口焦点保持在用户当前所在窗口。
+        focusCdpPage: true,
         // web ai url
         targetUrls: {
             deepseek: "https://chat.deepseek.com",
@@ -133,6 +134,11 @@ function applyEnvOverrides(config) {
         if (val === "true" || val === "1") config.browser.reuseExistingPage = true;
         else if (val === "false" || val === "0") config.browser.reuseExistingPage = false;
     }
+    if (env.BROWSER_FOCUS_CDP_PAGE) {
+        const val = env.BROWSER_FOCUS_CDP_PAGE.toLowerCase();
+        if (val === "true" || val === "1") config.browser.focusCdpPage = true;
+        else if (val === "false" || val === "0") config.browser.focusCdpPage = false;
+    }
 }
 applyEnvOverrides(agentConfig);
 function validateConfig(config) {
@@ -142,35 +148,28 @@ function validateConfig(config) {
     if (!Number.isInteger(config.agent.maxProviderErrors) || config.agent.maxProviderErrors <= 0) {
         throw new Error("agent.maxProviderErrors must be a positive integer");
     }
-
     if (!Number.isInteger(config.runtime.maxFileSize) || config.runtime.maxFileSize <= 0) {
         throw new Error("runtime.maxFileSize must be a positive integer");
     }
-
     if (!Number.isInteger(config.runtime.maxReadSize) || config.runtime.maxReadSize <= 0) {
         throw new Error("runtime.maxReadSize must be a positive integer");
     }
-
     if (!Number.isInteger(config.runtime.maxExecTimeout) || config.runtime.maxExecTimeout <= 0) {
         throw new Error("runtime.maxExecTimeout must be a positive integer");
     }
-
     if (
         !Number.isInteger(config.runtime.maxExecOutputSize) ||
         config.runtime.maxExecOutputSize <= 0
     ) {
         throw new Error("runtime.maxExecOutputSize must be a positive integer");
     }
-
     if (config.session) {
         if (!Number.isInteger(config.session.maxSessions) || config.session.maxSessions <= 0) {
             throw new Error("session.maxSessions must be a positive integer");
         }
-
         if (!Number.isInteger(config.session.maxDiskBytes) || config.session.maxDiskBytes <= 0) {
             throw new Error("session.maxDiskBytes must be a positive integer");
         }
-
         if (
             typeof config.session.warnThreshold !== "number" ||
             config.session.warnThreshold <= 0 ||
@@ -179,12 +178,10 @@ function validateConfig(config) {
             throw new Error("session.warnThreshold must be a number in (0, 1]");
         }
     }
-
     if (config.browser) {
         if (config.browser.startTimeout && config.browser.startTimeout <= 0) {
             throw new Error("browser.startTimeout must be a positive number");
         }
-
         if (config.browser.retryInterval && config.browser.retryInterval <= 0) {
             throw new Error("browser.retryInterval must be a positive number");
         }

@@ -55,6 +55,16 @@
                         remote debugging on launch
                     </label>
                 </div>
+                <div class="settings-field settings-field-inline">
+                    <label>
+                        <input v-model="focusCdpPage" type="checkbox" /> Bring the launched CDP tab
+                        to the foreground
+                    </label>
+                    <div class="settings-hint">
+                        When enabled, the agent will switch focus to the provider tab it uses.
+                        Uncheck to keep the current window focus.
+                    </div>
+                </div>
                 <div class="settings-status">
                     <div><strong>CDP running:</strong> {{ cdpRunning ? "yes" : "no" }}</div>
                     <div><strong>Chrome path:</strong> {{ chromePath || "auto" }}</div>
@@ -76,40 +86,35 @@
 </template>
 <script setup>
     import { onMounted, ref } from "vue";
-
     const emit = defineEmits(["close", "saved"]);
-
     const desktop = typeof window !== "undefined" ? window.xmlAgentDesktop : null;
     const isElectron = !!(desktop && desktop.isElectron);
-
     const loading = ref(true);
     const saving = ref(false);
     const chromePath = ref("");
     const cdpUrl = ref("http://127.0.0.1:9222");
     const autoStartChrome = ref(true);
+    const focusCdpPage = ref(true);
     const detectedChrome = ref("");
     const cdpRunning = ref(false);
     const settingsPath = ref("");
     const message = ref("");
-
     async function load() {
         if (!isElectron) {
             loading.value = false;
             message.value = "This panel is only available in the desktop app.";
             return;
         }
-
         try {
             const [settings, status, path] = await Promise.all([
                 desktop.settings.read(),
                 desktop.chrome.status(),
                 desktop.settings.path(),
             ]);
-
             chromePath.value = settings.chromePath || "";
             cdpUrl.value = settings.cdpUrl || "http://127.0.0.1:9222";
             autoStartChrome.value = settings.autoStartChrome !== false;
-
+            focusCdpPage.value = settings.focusCdpPage !== false;
             cdpRunning.value = status.cdpRunning === true;
             detectedChrome.value = status.chromePath || "";
             settingsPath.value = path || "";
@@ -119,10 +124,8 @@
             loading.value = false;
         }
     }
-
     async function refreshStatus() {
         if (!isElectron) return;
-
         try {
             const status = await desktop.chrome.status();
             cdpRunning.value = status.cdpRunning === true;
@@ -132,13 +135,10 @@
             message.value = error.message;
         }
     }
-
     async function pickChrome() {
         if (!isElectron) return;
-
         try {
             const picked = await desktop.chrome.pickFile();
-
             if (picked) {
                 chromePath.value = picked;
             }
@@ -146,36 +146,29 @@
             message.value = error.message;
         }
     }
-
     async function launchChrome() {
         if (!isElectron) return;
-
         message.value = "Starting Chrome...";
-
         try {
             const result = await desktop.chrome.launch();
             message.value = result.message;
-
             const status = await desktop.chrome.status();
             cdpRunning.value = status.cdpRunning === true;
         } catch (error) {
             message.value = error.message;
         }
     }
-
     async function save() {
         if (!isElectron) return;
-
         saving.value = true;
         message.value = "";
-
         try {
             await desktop.settings.write({
                 chromePath: chromePath.value.trim(),
                 cdpUrl: cdpUrl.value.trim() || "http://127.0.0.1:9222",
                 autoStartChrome: autoStartChrome.value === true,
+                focusCdpPage: focusCdpPage.value === true,
             });
-
             message.value = "Saved. New sessions will use the updated settings.";
             emit("saved");
         } catch (error) {
@@ -184,10 +177,8 @@
             saving.value = false;
         }
     }
-
     onMounted(load);
 </script>
-
 <style scoped>
     .settings-mask {
         position: fixed;
@@ -307,6 +298,9 @@
         gap: 8px;
         color: var(--c-text-body);
         font-weight: 500;
+    }
+    .settings-field-inline .settings-hint {
+        margin-left: 24px;
     }
     .settings-status {
         margin-top: 6px;
