@@ -12,13 +12,10 @@ DeepSeek Provider 真机综合测试（CDP 浏览器）
 连接 127.0.0.1:9222 上已登录 DeepSeek 的 Chrome
 
 
-
 发送真实 prompt，等待真实回复
 
 
-
 覆盖：短文 / 长文 / 代码 / markdown / XML Action / 特殊字符
-
 
 
 重点验证：内容不失真（markdown 结构、代码围栏、特殊字符不丢失）
@@ -32,13 +29,10 @@ DeepSeek Provider 真机综合测试（CDP 浏览器）
 用法：
 
 
-
 node test/test-deepseek-comprehensive.js
 
 
-
 node test/test-deepseek-comprehensive.js --cid=<conversationId>
-
 
 
 node test/test-deepseek-comprehensive.js --reuse
@@ -48,13 +42,10 @@ node test/test-deepseek-comprehensive.js --reuse
 前置条件：
 
 
-
 config/agent-config.js 里 chromePath 指向本机 Chrome
 
 
-
 127.0.0.1:9222 已启动带 CDP 的 Chrome，且 DeepSeek 已登录
-
 
 
 该脚本只做验证，不修改项目文件（除 test-output 目录下的临时产物）。
@@ -82,23 +73,37 @@ function parseArgs(argv) {
         reuse: false,
     };
     for (const raw of argv) {
-        if (!raw.startsWith("--")) continue;
+        if (!raw.startsWith("--")) {
+            continue;
+        }
+
         const eq = raw.indexOf("=");
         const key = eq === -1 ? raw.substring(2) : raw.substring(2, eq);
         const value = eq === -1 ? "" : raw.substring(eq + 1);
-        if (key === "cid") args.conversationId = value || null;
-        if (key === "reuse") args.reuse = true;
+
+        if (key === "cid") {
+            args.conversationId = value || null;
+        }
+
+        if (key === "reuse") {
+            args.reuse = true;
+        }
     }
+
     return args;
 }
 function countOccurrences(text, needle) {
-    if (!text || !needle) return 0;
+    if (!text || !needle) {
+        return 0;
+    }
     let count = 0;
     let idx = text.indexOf(needle);
+
     while (idx !== -1) {
         count++;
         idx = text.indexOf(needle, idx + needle.length);
     }
+
     return count;
 }
 async function runCase(provider, runtime, name, prompt, check) {
@@ -108,29 +113,37 @@ async function runCase(provider, runtime, name, prompt, check) {
     console.log("==============================================");
     const t0 = Date.now();
     let response;
+
     try {
         response = await provider.send(prompt);
     } catch (e) {
         console.log("SEND FAILED: " + e.message);
         return { name, ok: false, error: "send: " + e.message };
     }
+
     const elapsed = Date.now() - t0;
+
     console.log("Response length: " + response.length + ", elapsed: " + elapsed + "ms");
     console.log("Response head: " + response.substring(0, 200));
     console.log("Response tail: " + response.substring(Math.max(0, response.length - 150)));
+
     let action = null;
     let parseError = null;
+
     try {
         action = extractXML(response);
     } catch (e) {
         parseError = e.message;
     }
+
     if (parseError) {
         console.log("extractXML FAILED: " + parseError);
     } else if (action) {
         console.log("Parsed action: " + action.action);
     }
+
     let result = null;
+
     if (action) {
         try {
             result = await runtime.run(action);
@@ -138,23 +151,33 @@ async function runCase(provider, runtime, name, prompt, check) {
             console.log("runtime.run FAILED: " + e.message);
         }
     }
+
     if (result) {
         console.log("Runtime result ok: " + result.ok + ", action: " + result.action);
     }
+
     let items;
+
     try {
         items = await check(response, action, result, runtime);
     } catch (e) {
         console.log("check FAILED: " + e.message);
         return { name, ok: false, error: "check: " + e.message };
     }
+
     let pass = 0;
+
     for (const item of items) {
         const label = item[0];
         const ok = item[1];
+
         console.log((ok ? "PASS" : "FAIL") + " - " + label);
-        if (ok) pass++;
+
+        if (ok) {
+            pass++;
+        }
     }
+
     return {
         name,
         ok: pass === items.length,
@@ -182,8 +205,10 @@ async function main() {
     if (fs.existsSync(OUTPUT_DIR)) {
         fs.rmSync(OUTPUT_DIR, { recursive: true, force: true });
     }
+
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
     fs.writeFileSync(path.join(OUTPUT_DIR, "seed.txt"), "hello from seed\nline2\n", "utf8");
+
     const provider = createProvider("deepseek", {
         autoStart: false,
         cdpUrl: agentConfig.browser.cdpUrl,
@@ -194,14 +219,18 @@ async function main() {
         responseTimeout: 15 * 60 * 1000,
         responseInitialTimeout: 120 * 1000,
     });
+
     console.log("[deepseek-comprehensive] starting provider...");
     await provider.start();
+
     console.log(
         "[deepseek-comprehensive] connected: " + (provider.page ? provider.page.url() : "(none)")
     );
+
     const runtime = createRuntime(OUTPUT_DIR);
     const results = [];
     const exampleLine = buildExampleWriteLine();
+
     // ---------- Case 1: 短文，纯文本，不失真 ----------
     results.push(
         await runCase(
@@ -225,6 +254,7 @@ async function main() {
             }
         )
     );
+
     // ---------- Case 2: 短 markdown，结构保真 ----------
     results.push(
         await runCase(
@@ -247,6 +277,7 @@ async function main() {
                         ? path.join(OUTPUT_DIR, action.node["@_path"])
                         : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+
                 return [
                     ["action=write", action && action.action === "write"],
                     ["runtime ok", result && result.ok === true],
@@ -257,8 +288,10 @@ async function main() {
             }
         )
     );
+
     // ---------- Case 3: 长 markdown，多级标题 + 代码块，保真 ----------
     const fence = BACKTICK + BACKTICK + BACKTICK;
+
     results.push(
         await runCase(
             provider,
@@ -295,6 +328,7 @@ async function main() {
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
                 const fenceCount = countOccurrences(text, fence);
                 const chineseCount = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+
                 return [
                     ["action=write", action && action.action === "write"],
                     ["runtime ok", result && result.ok === true],
@@ -312,6 +346,7 @@ async function main() {
             }
         )
     );
+
     // ---------- Case 4: 长代码，可直接运行 ----------
     results.push(
         await runCase(
@@ -333,6 +368,8 @@ async function main() {
                 "4. 可直接 node 运行，不 require 外部包，不使用 export",
                 "5. 至少为多个函数提供边界情况测试",
                 "6. 不要省略函数实现，不要使用伪代码、TODO 或“此处省略”。",
+                "7. deepClone 必须正确处理循环引用：递归复制对象属性之前，必须先把当前源对象和新对象放入 WeakMap；遇到 WeakMap 已存在的对象时直接返回已缓存副本。",
+                "8. deepClone 的循环引用测试必须可以通过：cloned.self === cloned，不能出现 Maximum call stack size exceeded。",
                 "只输出一个 XML Action，不要输出解释。",
             ].join("\n"),
             async (response, action, result, rt) => {
@@ -340,14 +377,19 @@ async function main() {
                     action && action.node && action.node["@_path"] ? action.node["@_path"] : null;
                 const p = rel ? path.join(OUTPUT_DIR, rel) : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+
                 let execResult = null;
+
                 if (rel) {
                     try {
-                        execResult = await rt.execute({ "@_command": "node " + rel });
+                        execResult = await rt.execute({
+                            "@_command": "node " + rel,
+                        });
                     } catch (e) {
                         execResult = { ok: false, output: "" };
                     }
                 }
+
                 const out = execResult ? execResult.output || execResult.stdout || "" : "";
 
                 return [
@@ -365,6 +407,7 @@ async function main() {
             }
         )
     );
+
     // ---------- Case 5: JSON 文件，结构保真 ----------
     results.push(
         await runCase(
@@ -387,7 +430,9 @@ async function main() {
                     action && action.node && action.node["@_path"]
                         ? path.join(OUTPUT_DIR, action.node["@_path"])
                         : null;
+
                 let parsed = null;
+
                 if (p && fs.existsSync(p)) {
                     try {
                         parsed = JSON.parse(fs.readFileSync(p, "utf8"));
@@ -395,6 +440,7 @@ async function main() {
                         parsed = null;
                     }
                 }
+
                 return [
                     ["action=write", action && action.action === "write"],
                     ["runtime ok", result && result.ok === true],
@@ -410,6 +456,7 @@ async function main() {
             }
         )
     );
+
     // ---------- Case 6: 特殊字符，不失真 ----------
     results.push(
         await runCase(
@@ -434,6 +481,7 @@ async function main() {
                         ? path.join(OUTPUT_DIR, action.node["@_path"])
                         : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+
                 return [
                     ["action=write", action && action.action === "write"],
                     ["有中文特殊字符测试", text.indexOf("特殊字符测试") !== -1],
@@ -453,6 +501,7 @@ async function main() {
             }
         )
     );
+
     // ---------- Case 7: 内联格式（粗体/斜体/行内 code/链接）保真 ----------
     results.push(
         await runCase(
@@ -476,6 +525,7 @@ async function main() {
                         ? path.join(OUTPUT_DIR, action.node["@_path"])
                         : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+
                 return [
                     ["action=write", action && action.action === "write"],
                     ["runtime ok", result && result.ok === true],
@@ -490,19 +540,28 @@ async function main() {
             }
         )
     );
+
     await provider.close();
+
     console.log("");
     console.log("");
     console.log("==============================================");
     console.log("汇总");
     console.log("==============================================");
+
     let okCount = 0;
+
     for (const r of results) {
-        if (r.ok) okCount++;
+        if (r.ok) {
+            okCount++;
+        }
+
         console.log(JSON.stringify(r));
     }
+
     console.log("");
     console.log("Total: " + okCount + "/" + results.length + " cases passed");
+
     if (okCount !== results.length) {
         process.exitCode = 1;
     }
