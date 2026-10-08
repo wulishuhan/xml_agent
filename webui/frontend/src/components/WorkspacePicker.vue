@@ -41,11 +41,47 @@
                 </button>
                 <button
                     type="button"
+                    class="btn"
+                    :disabled="!canCreateFolder || loading"
+                    @click="openNewFolderPrompt"
+                >
+                    New Folder
+                </button>
+                <button
+                    type="button"
                     class="btn btn-primary"
                     :disabled="!currentPath || loading"
                     @click="selectCurrent"
                 >
                     Select this folder
+                </button>
+            </div>
+            <div v-if="newFolderOpen" class="workspace-picker-new-folder">
+                <input
+                    ref="newFolderInput"
+                    v-model="newFolderName"
+                    class="workspace-picker-input"
+                    type="text"
+                    placeholder="Folder name"
+                    :disabled="creatingFolder"
+                    @keyup.enter="confirmNewFolder"
+                    @keyup.esc="cancelNewFolder"
+                />
+                <button
+                    type="button"
+                    class="btn btn-primary"
+                    :disabled="creatingFolder || !newFolderName.trim()"
+                    @click="confirmNewFolder"
+                >
+                    {{ creatingFolder ? "Creating..." : "Create" }}
+                </button>
+                <button
+                    type="button"
+                    class="btn"
+                    :disabled="creatingFolder"
+                    @click="cancelNewFolder"
+                >
+                    Cancel
                 </button>
             </div>
             <div v-if="errorMessage" class="error-banner">
@@ -83,8 +119,8 @@
     </div>
 </template>
 <script setup>
-    import { computed, onMounted, ref } from "vue";
-    import { browseWorkspace } from "../services/agent-api.js";
+    import { computed, nextTick, onMounted, ref } from "vue";
+    import { browseWorkspace, createWorkspaceFolder } from "../services/agent-api.js";
     const emit = defineEmits(["select", "close"]);
     const currentPath = ref("");
     const displayPath = ref("");
@@ -93,6 +129,10 @@
     const isRootList = ref(false);
     const loading = ref(false);
     const errorMessage = ref("");
+    const newFolderOpen = ref(false);
+    const newFolderName = ref("");
+    const newFolderInput = ref(null);
+    const creatingFolder = ref(false);
     const canGoUp = computed(() => {
         if (isRootList.value || !currentPath.value) {
             return false;
@@ -104,6 +144,10 @@
             return false;
         }
         return parentPath.value !== currentPath.value;
+    });
+    // 只有在真实目录（非 "This PC" 驱动器列表）下才允许新建文件夹。
+    const canCreateFolder = computed(() => {
+        return Boolean(currentPath.value) && !isRootList.value;
     });
     function isFilesystemRoot(targetPath) {
         if (targetPath === "/") {
@@ -151,6 +195,45 @@
             return;
         }
         emit("select", currentPath.value);
+    }
+    function openNewFolderPrompt() {
+        if (!canCreateFolder.value || loading.value) {
+            return;
+        }
+        errorMessage.value = "";
+        newFolderOpen.value = true;
+        newFolderName.value = "";
+        nextTick(() => {
+            if (newFolderInput.value) {
+                newFolderInput.value.focus();
+            }
+        });
+    }
+    function cancelNewFolder() {
+        if (creatingFolder.value) {
+            return;
+        }
+        newFolderOpen.value = false;
+        newFolderName.value = "";
+    }
+    async function confirmNewFolder() {
+        const name = newFolderName.value.trim();
+        if (!name || creatingFolder.value) {
+            return;
+        }
+        creatingFolder.value = true;
+        errorMessage.value = "";
+        try {
+            await createWorkspaceFolder(currentPath.value, name);
+            newFolderOpen.value = false;
+            newFolderName.value = "";
+            // 重新加载当前目录，让新文件夹立即出现在列表中。
+            await load(currentPath.value);
+        } catch (error) {
+            errorMessage.value = error.message || "Failed to create folder";
+        } finally {
+            creatingFolder.value = false;
+        }
     }
     onMounted(() => {
         load("");
@@ -258,6 +341,32 @@
     .workspace-picker-toolbar .btn-primary {
         min-width: 142px;
         margin-left: auto;
+    }
+    .workspace-picker-new-folder {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--c-border-soft);
+        background: var(--c-panel-bg);
+    }
+    .workspace-picker-input {
+        min-width: 0;
+        flex: 1;
+        padding: 7px 10px;
+        border: 1px solid var(--c-border-strong);
+        border-radius: 7px;
+        background: var(--c-raised-bg);
+        color: var(--c-text-body);
+        font-family: "Cascadia Code", Consolas, monospace;
+        font-size: 12px;
+    }
+    .workspace-picker-input:focus {
+        border-color: var(--c-accent-2);
+        outline: none;
+    }
+    .workspace-picker-new-folder .btn-primary {
+        min-width: 92px;
     }
     .workspace-picker-list {
         min-height: 240px;

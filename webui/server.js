@@ -5,25 +5,20 @@ const { SessionManager } = require("./session/session-manager");
 const app = express();
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const sessionManager = new SessionManager();
-
 // 进程启动时，从用户主目录恢复上次的会话，避免重启后 WebUI 变成空会话。
 try {
     const restoredCount = sessionManager.restore();
-
     if (restoredCount > 0) {
         console.log("[WebUI] Restored " + restoredCount + " session(s) from disk");
     }
-
     // 顺带清理上次异常退出遗留的 .tmp 临时文件，避免占用磁盘。
     const cleanedBytes = sessionManager.cleanOrphanTmpFiles();
-
     if (cleanedBytes > 0) {
         console.log("[WebUI] Cleaned " + cleanedBytes + " bytes of orphan temp files");
     }
 } catch (error) {
     console.error("[WebUI] Failed to restore sessions:", error.message);
 }
-
 const frontendDistPath = path.join(__dirname, "frontend", "dist");
 const BACKSLASH = String.fromCharCode(92);
 app.use(express.json());
@@ -57,7 +52,6 @@ function getWindowsDrives() {
             // Drive is unavailable or inaccessible.
         }
     }
-
     return drives;
 }
 function getDirectoryEntries(targetPath) {
@@ -70,7 +64,6 @@ function getDirectoryEntries(targetPath) {
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 }
-
 // 把用户传入的 conversationId 规范化。
 // 允许的输入：
 // 1. 纯 conversation id，例如 9efa4714-38db-4038-a971-226570f7155d
@@ -80,36 +73,28 @@ function getDirectoryEntries(targetPath) {
 // - 是一个 URL 但无法提取出会话 id（例如新会话入口 https://chat.deepseek.com）
 var DEEPSEEK_CID_PATTERN = new RegExp("/a/chat/s/([0-9a-fA-F-]+)");
 var DEFAULT_CID_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
-
 function normalizeConversationId(provider, raw) {
     if (raw === undefined || raw === null) {
         return null;
     }
-
     const trimmed = String(raw).trim();
-
     if (!trimmed) {
         return null;
     }
-
     const looksLikeUrl =
         trimmed.indexOf("http://") === 0 ||
         trimmed.indexOf("https://") === 0 ||
         trimmed.indexOf("/") !== -1;
-
     if (!looksLikeUrl) {
         return trimmed;
     }
-
     if (provider === "deepseek") {
         const deepseekMatch = trimmed.match(DEEPSEEK_CID_PATTERN);
         return deepseekMatch ? deepseekMatch[1] : null;
     }
-
     const defaultMatch = trimmed.match(DEFAULT_CID_PATTERN);
     return defaultMatch ? defaultMatch[1] : null;
 }
-
 app.get("/api/workspace/browse", (req, res) => {
     const requestedPath = typeof req.query.path === "string" ? req.query.path.trim() : "";
     if (!requestedPath && process.platform === "win32") {
@@ -121,18 +106,14 @@ app.get("/api/workspace/browse", (req, res) => {
             entries: getWindowsDrives(),
         });
     }
-
     const targetPath = requestedPath ? path.resolve(requestedPath) : path.parse(process.cwd()).root;
-
     try {
         const stat = fs.statSync(targetPath);
-
         if (!stat.isDirectory()) {
             return res.status(400).json({
                 error: "Not a directory: " + targetPath,
             });
         }
-
         return res.json({
             path: targetPath,
             displayPath: targetPath,
@@ -146,23 +127,78 @@ app.get("/api/workspace/browse", (req, res) => {
         });
     }
 });
-
+// 在当前浏览目录下新建文件夹，供 WorkspacePicker 的 "New Folder" 按钮使用。
+app.post("/api/workspace/mkdir", (req, res) => {
+    const parentPath = req.body && typeof req.body.path === "string" ? req.body.path.trim() : "";
+    const folderName = req.body && typeof req.body.name === "string" ? req.body.name.trim() : "";
+    if (!parentPath) {
+        return res.status(400).json({
+            error: "Parent path is required",
+        });
+    }
+    if (!folderName) {
+        return res.status(400).json({
+            error: "Folder name is required",
+        });
+    }
+    // 仅允许新建单层文件夹名，禁止路径分隔符与非法字符，避免越权创建。
+    if (
+        folderName === "." ||
+        folderName === ".." ||
+        folderName.indexOf("/") !== -1 ||
+        folderName.indexOf(BACKSLASH) !== -1 ||
+        /[:*?"<>|]/.test(folderName)
+    ) {
+        return res.status(400).json({
+            error: "Invalid folder name: " + folderName,
+        });
+    }
+    const resolvedParent = path.resolve(parentPath);
+    try {
+        const stat = fs.statSync(resolvedParent);
+        if (!stat.isDirectory()) {
+            return res.status(400).json({
+                error: "Not a directory: " + resolvedParent,
+            });
+        }
+    } catch (error) {
+        return res.status(400).json({
+            error: "Unable to access path: " + error.message,
+        });
+    }
+    const targetPath = path.join(resolvedParent, folderName);
+    if (fs.existsSync(targetPath)) {
+        return res.status(409).json({
+            error: "Folder already exists: " + folderName,
+        });
+    }
+    try {
+        fs.mkdirSync(targetPath);
+        return res.json({
+            message: "Folder created",
+            name: folderName,
+            path: targetPath,
+            parent: resolvedParent,
+        });
+    } catch (error) {
+        return res.status(500).json({
+            error: "Unable to create folder: " + error.message,
+        });
+    }
+});
 // 会话存储占用统计：供前端显示数量/磁盘占用并提示用户清理。
 app.get("/api/storage", (req, res) => {
     res.json(sessionManager.getStorageStats());
 });
-
 // 手动清理遗留的 .tmp 临时文件。
 app.post("/api/storage/clean", (req, res) => {
     const cleanedBytes = sessionManager.cleanOrphanTmpFiles();
-
     return res.json({
         message: "Cleaned orphan temp files",
         cleanedBytes,
         stats: sessionManager.getStorageStats(),
     });
 });
-
 app.post("/api/run", (req, res) => {
     const { workspace, provider, task, conversationId } = req.body;
     if (!workspace || !task) {
@@ -170,22 +206,18 @@ app.post("/api/run", (req, res) => {
             error: "Workspace and task are required",
         });
     }
-
     if (!fs.existsSync(workspace)) {
         return res.status(400).json({
             error: "Workspace does not exist: " + workspace,
         });
     }
-
     const providerName = provider || "chatgpt";
     const cid = normalizeConversationId(providerName, conversationId);
-
     // 如果指定了 conversationId，优先复用同一 provider 下相同会话 id 且仍在运行的 session。
     // 若已有 session 已结束，则删除它并创建新的 session 继续该会话，
     // 否则用户无法在同一个 conversation 上继续执行新任务。
     if (cid) {
         const existing = sessionManager.findByConversation(providerName, cid);
-
         if (existing && existing.isRunning()) {
             return res.json({
                 message: "Session already running for this conversation",
@@ -194,7 +226,6 @@ app.post("/api/run", (req, res) => {
                 reused: true,
             });
         }
-
         if (existing) {
             try {
                 sessionManager.remove(existing.id);
@@ -206,22 +237,17 @@ app.post("/api/run", (req, res) => {
             }
         }
     }
-
     // 复用已结束会话时上面的 remove 会释放名额，因此这里再检查一次容量。
     const capacity = sessionManager.checkCapacity();
-
     if (!capacity.ok) {
         console.warn("[WebUI] Session capacity exceeded:", capacity.code);
-
         return res.status(429).json({
             error: capacity.message,
             code: capacity.code,
             stats: capacity.stats,
         });
     }
-
     let session;
-
     try {
         session = sessionManager.create({
             workspace,
@@ -229,11 +255,8 @@ app.post("/api/run", (req, res) => {
             task,
             conversationId: cid,
         });
-
         session.start();
-
         console.log("[WebUI] Session started: " + session.id);
-
         return res.json({
             message: "Agent started successfully",
             sessionId: session.id,
@@ -250,12 +273,9 @@ app.post("/api/run", (req, res) => {
                 );
             }
         }
-
         console.error("[WebUI] Failed to start session:", error);
-
         // 容量类错误用 429，其余用 500
         const status = error.code === "MAX_SESSIONS" || error.code === "MAX_DISK" ? 429 : 500;
-
         return res.status(status).json({
             error: error.message,
             code: error.code || null,
@@ -284,50 +304,37 @@ app.get("/api/sessions/:id/events", (req, res) => {
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
     });
-
     const NEWLINE = String.fromCharCode(10);
-
     const send = (eventName, data) => {
         if (res.writableEnded) return;
-
         res.write("event: " + eventName + NEWLINE);
         res.write("data: " + JSON.stringify(data) + NEWLINE + NEWLINE);
     };
-
     const sendOutput = (output) => send("output", output);
     const sendFinished = (info) => send("finished", info);
     const sendError = (error) => send("error", { message: error.message });
     const sendConversation = (info) => send("conversation", info);
-
     let replaying = true;
     const pendingOutputs = [];
-
     const handleOutput = (output) => {
         if (replaying) {
             pendingOutputs.push(output);
             return;
         }
-
         sendOutput(output);
     };
-
     session.on("output", handleOutput);
     session.on("finished", sendFinished);
     session.on("session.error", sendError);
     session.on("conversation", sendConversation);
-
     const existingOutput = session.getOutput();
-
     for (const output of existingOutput) {
         sendOutput(output);
     }
-
     replaying = false;
-
     for (const output of pendingOutputs) {
         sendOutput(output);
     }
-
     // 如果 session 已经关联了 conversationId，补发给前端，避免错过事件
     if (session.conversationId) {
         sendConversation({
@@ -335,16 +342,13 @@ app.get("/api/sessions/:id/events", (req, res) => {
             conversationId: session.conversationId,
         });
     }
-
     if (!session.isRunning()) {
         sendFinished(session.getInfo());
     }
-
     const heartbeat = setInterval(() => {
         if (res.writableEnded) return;
         res.write(": heartbeat" + NEWLINE + NEWLINE);
     }, 15000);
-
     req.on("close", () => {
         clearInterval(heartbeat);
         session.removeListener("output", handleOutput);
@@ -359,17 +363,14 @@ app.post("/api/sessions/:id/stop", async (req, res) => {
     if (!session.isRunning()) {
         return res.status(400).json({ error: "Agent is not running" });
     }
-
     try {
         await sessionManager.stop(session.id);
-
         return res.json({
             message: "Agent stopped",
             sessionId: session.id,
         });
     } catch (error) {
         console.error("[WebUI] Failed to stop session " + session.id + ":", error.message);
-
         return res.status(500).json({ error: error.message });
     }
 });
@@ -384,7 +385,6 @@ app.delete("/api/sessions/:id", (req, res) => {
     if (!session) return;
     try {
         sessionManager.remove(session.id);
-
         return res.json({
             message: "Session deleted",
             sessionId: session.id,
@@ -404,14 +404,11 @@ function startServer(options = {}) {
     if (server) {
         return server;
     }
-
     const port = Number(options.port) || DEFAULT_PORT;
-
     server = app.listen(port, "127.0.0.1", () => {
         console.log("[WebUI] Server running on localhost port " + port);
         console.log("[WebUI] Open your browser on http://localhost:" + port + "/xml_agent_web/");
     });
-
     return server;
 }
 async function shutdown() {
@@ -421,11 +418,9 @@ async function shutdown() {
     } catch (error) {
         console.error("[WebUI] Failed to stop sessions:", error.message);
     }
-
     if (!server) {
         return;
     }
-
     await new Promise((resolve) => {
         server.close(() => {
             server = null;

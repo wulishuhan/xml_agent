@@ -4,180 +4,147 @@ function getBaseUrl() {
     if (typeof window !== "undefined" && window.xmlAgentDesktop && window.xmlAgentDesktop.baseUrl) {
         return window.xmlAgentDesktop.baseUrl;
     }
-
     return "";
 }
-
 function api(path) {
     return getBaseUrl() + path;
 }
-
 export async function runAgent(data) {
     const response = await fetch(api("/api/run"), {
         method: "POST",
-
         headers: {
             "Content-Type": "application/json",
         },
-
         body: JSON.stringify(data),
     });
-
     const result = await response.json();
-
     if (!response.ok) {
         const error = new Error(result.error || "Failed to start agent");
         error.code = result.code || null;
         error.stats = result.stats || null;
         throw error;
     }
-
     return result;
 }
-
 export async function browseWorkspace(targetPath) {
     const query = targetPath ? "?path=" + encodeURIComponent(targetPath) : "";
     const response = await fetch(api("/api/workspace/browse" + query));
-
     if (!response.ok) {
         const text = await response.text();
         let message = "Failed to browse workspace";
-
         try {
             const result = JSON.parse(text);
             message = result.error || message;
         } catch (error) {
             message = text || message;
         }
-
         throw new Error(message);
     }
-
     return response.json();
 }
-
+// 在指定目录下新建文件夹，供 WorkspacePicker 的 "New Folder" 按钮使用。
+export async function createWorkspaceFolder(parentPath, name) {
+    const response = await fetch(api("/api/workspace/mkdir"), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            path: parentPath,
+            name,
+        }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to create folder");
+    }
+    return result;
+}
 export async function getSession(sessionId) {
     const response = await fetch(api("/api/sessions/" + sessionId));
-
     const result = await response.json();
-
     if (!response.ok) {
         throw new Error(result.error || "Failed to get session");
     }
-
     return result;
 }
-
 export async function getSessionOutput(sessionId) {
     const response = await fetch(api("/api/sessions/" + sessionId + "/output"));
-
     const result = await response.json();
-
     if (!response.ok) {
         throw new Error(result.error || "Failed to get session output");
     }
-
     return result;
 }
-
 export async function stopSession(sessionId) {
     const response = await fetch(api("/api/sessions/" + sessionId + "/stop"), {
         method: "POST",
     });
-
     const result = await response.json();
-
     if (!response.ok) {
         throw new Error(result.error || "Failed to stop session");
     }
-
     return result;
 }
-
 export async function getSessions() {
     const response = await fetch(api("/api/sessions"));
-
     const result = await response.json();
-
     if (!response.ok) {
         throw new Error(result.error || "Failed to get sessions");
     }
-
     return result;
 }
-
 export async function deleteSession(sessionId) {
     const response = await fetch(api("/api/sessions/" + sessionId), {
         method: "DELETE",
     });
-
     const result = await response.json();
-
     if (!response.ok) {
         throw new Error(result.error || "Failed to delete session");
     }
-
     return result;
 }
-
 // 获取会话存储占用统计（数量、磁盘体积、上限、告警状态）。
 export async function getStorage() {
     const response = await fetch(api("/api/storage"));
-
     const result = await response.json();
-
     if (!response.ok) {
         throw new Error(result.error || "Failed to get storage stats");
     }
-
     return result;
 }
-
 // 清理遗留的 .tmp 临时文件。
 export async function cleanStorage() {
     const response = await fetch(api("/api/storage/clean"), {
         method: "POST",
     });
-
     const result = await response.json();
-
     if (!response.ok) {
         throw new Error(result.error || "Failed to clean storage");
     }
-
     return result;
 }
-
 export function getEventSourceUrl(sessionId) {
     return api("/api/sessions/" + sessionId + "/events");
 }
-
 /**
-
 从 provider 页面 URL 中提取 conversationId。
-
 前端不直接依赖 provider 逻辑，只做一点轻量解析，用于提示用户。
-
 @param {string} provider "chatgpt" | "deepseek" | "qwen"
-
 @param {string} url
-
 @returns {string|null}
 */
 export function extractConversationId(provider, url) {
     if (!url || typeof url !== "string") {
         return null;
     }
-
     if (provider === "deepseek") {
         const match = url.match(new RegExp("/a/chat/s/([0-9a-fA-F-]+)"));
         return match ? match[1] : null;
     }
-
     if (provider === "chatgpt" || provider === "qwen") {
         const match = url.match(new RegExp("/c/([0-9a-zA-Z-]+)"));
         return match ? match[1] : null;
     }
-
     return null;
 }
