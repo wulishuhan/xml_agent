@@ -499,6 +499,7 @@ select {
 .workspace-heading {
     display: flex;
     min-width: 0;
+    flex: 1;
     align-items: center;
     gap: 12px;
 }
@@ -515,9 +516,17 @@ select {
     font-size: 17px;
 }
 
+/* 标题容器：允许收缩，配合子元素 ellipsis 生效 */
+.workspace-heading-text {
+    display: flex;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+}
+
 .workspace-title {
     overflow: hidden;
-    max-width: min(620px, 50vw);
+    max-width: 100%;
     color: var(--c-text-strong);
     font-size: 14px;
     font-weight: 650;
@@ -527,7 +536,7 @@ select {
 
 .workspace-path {
     overflow: hidden;
-    max-width: min(620px, 50vw);
+    max-width: 100%;
     margin-top: 3px;
     color: var(--c-text-soft);
     font-family: "Cascadia Code", Consolas, monospace;

@@ -4,6 +4,82 @@ const { promises: fs } = require("fs");
 const path = require("path");
 const os = require("os");
 const http = require("http");
+// 按浏览器类型返回候选可执行文件路径（与 electron/chrome-finder.js 保持一致语义，
+// 但这里不依赖 Electron，供纯 Node / WebUI 运行时使用）。
+function normalizeBrowserType(value) {
+    const text = String(value || "")
+        .trim()
+        .toLowerCase();
+    if (text === "edge" || text === "msedge" || text === "microsoft-edge") {
+        return "edge";
+    }
+    return "chrome";
+}
+function detectBrowserTypeFromPath(filePath) {
+    const base = path.basename(String(filePath || "")).toLowerCase();
+    if (base.indexOf("msedge") !== -1 || base === "microsoft edge") {
+        return "edge";
+    }
+    return "chrome";
+}
+function getBrowserCandidates(browserType) {
+    const type = normalizeBrowserType(browserType);
+    if (type === "edge") {
+        if (process.platform === "win32") {
+            const programFiles = process.env.ProgramFiles || "C:\Program Files";
+            const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\Program Files (x86)";
+            const localAppData = process.env.LOCALAPPDATA || "";
+            return [
+                path.join(programFilesX86, "Microsoft", "Edge", "Application", "msedge.exe"),
+                path.join(programFiles, "Microsoft", "Edge", "Application", "msedge.exe"),
+                path.join(localAppData, "Microsoft", "Edge", "Application", "msedge.exe"),
+                path.join(programFiles, "Microsoft", "Edge Beta", "Application", "msedge.exe"),
+                path.join(programFiles, "Microsoft", "Edge Dev", "Application", "msedge.exe"),
+            ];
+        }
+        if (process.platform === "darwin") {
+            return [
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta",
+                "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev",
+            ];
+        }
+        return [
+            "/usr/bin/microsoft-edge",
+            "/usr/bin/microsoft-edge-stable",
+            "/usr/bin/microsoft-edge-beta",
+            "/usr/bin/microsoft-edge-dev",
+            "/opt/microsoft/msedge/msedge",
+        ];
+    }
+    if (process.platform === "win32") {
+        const programFiles = process.env.ProgramFiles || "C:\Program Files";
+        const programFilesX86 = process.env["ProgramFiles(x86)"] || "C:\Program Files (x86)";
+        const localAppData = process.env.LOCALAPPDATA || "";
+        return [
+            path.join(programFiles, "Google", "Chrome", "Application", "chrome.exe"),
+            path.join(programFilesX86, "Google", "Chrome", "Application", "chrome.exe"),
+            path.join(localAppData, "Google", "Chrome", "Application", "chrome.exe"),
+            path.join(programFiles, "Google", "Chrome Beta", "Application", "chrome.exe"),
+            path.join(programFiles, "Google", "Chrome SxS", "Application", "chrome.exe"),
+        ];
+    }
+    if (process.platform === "darwin") {
+        return [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            path.join(os.homedir(), "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ];
+    }
+    return [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/snap/bin/chromium",
+    ];
+}
 class BrowserAgent {
     constructor(options = {}) {
         this.cdpUrl = options.cdpUrl || process.env.XML_AGENT_CDP_URL || "http://127.0.0.1:9222";
@@ -14,15 +90,30 @@ class BrowserAgent {
         this.autoStart = options.autoStart !== undefined ? options.autoStart : true;
         this.startTimeout = options.startTimeout || 30000;
         this.retryInterval = options.retryInterval || 1000;
+        // 浏览器类型：chrome（默认）| edge
+        this.browserType = normalizeBrowserType(
+            options.browserType !== undefined
+                ? options.browserType
+                : process.env.BROWSER_TYPE || process.env.XML_AGENT_BROWSER_TYPE
+        );
         this.chromePath =
             options.chromePath ||
-            process.env.CHROME_PATH ||
-            process.env.XML_AGENT_CHROME_PATH ||
+            (this.browserType === "edge"
+                ? process.env.BROWSER_EDGE_PATH ||
+                  process.env.EDGE_PATH ||
+                  process.env.XML_AGENT_EDGE_PATH
+                : process.env.CHROME_PATH || process.env.XML_AGENT_CHROME_PATH) ||
             "";
         this.focusCdpPage =
             options.focusCdpPage !== undefined
                 ? options.focusCdpPage
                 : process.env.BROWSER_FOCUS_CDP_PAGE !== "false";
+        // 是否在启动浏览器时显示浏览器窗口（有界面模式）。
+        // 默认 true，用户可看到 Agent 正在使用的浏览器。
+        this.headless =
+            options.headless !== undefined
+                ? options.headless === true
+                : process.env.BROWSER_HEADLESS === "true";
         this.responseTimeout = this.getNumberOption(
             options.responseTimeout,
             process.env.XML_AGENT_RESPONSE_TIMEOUT_MS,
@@ -93,6 +184,42 @@ class BrowserAgent {
     get name() {
         return "BrowserAgent";
     }
+    /**
+当前浏览器类型的人类可读名称。
+*/
+    getBrowserLabel() {
+        return this.browserType === "edge" ? "Edge" : "Chrome";
+    }
+    /**
+自动探测浏览器可执行文件路径。
+优先使用显式传入/环境变量中的路径；否则按平台常见安装路径查找。
+*/
+    resolveBrowserPath() {
+        if (this.chromePath && this.chromePath.trim()) {
+            return this.chromePath.trim();
+        }
+        const candidates = getBrowserCandidates(this.browserType);
+        // 追加环境变量兜底路径
+        if (this.browserType === "edge") {
+            if (process.env.BROWSER_EDGE_PATH) candidates.unshift(process.env.BROWSER_EDGE_PATH);
+            if (process.env.EDGE_PATH) candidates.unshift(process.env.EDGE_PATH);
+        } else {
+            if (process.env.BROWSER_CHROME_PATH)
+                candidates.unshift(process.env.BROWSER_CHROME_PATH);
+            if (process.env.CHROME_PATH) candidates.unshift(process.env.CHROME_PATH);
+        }
+        const fsSync = require("fs");
+        for (const candidate of candidates) {
+            try {
+                if (candidate && fsSync.statSync(candidate).isFile()) {
+                    return candidate;
+                }
+            } catch (error) {
+                continue;
+            }
+        }
+        return "";
+    }
     matchPage(page) {
         throw new Error("matchPage() must be implemented");
     }
@@ -125,20 +252,13 @@ class BrowserAgent {
             return false;
         }
     }
-    async startChromeCdpServer() {
-        const chromePath = this.chromePath;
-        if (!chromePath) {
-            throw new Error(
-                "Could not find Chrome executable. Please install Chrome or set CHROME_PATH environment variable or chromePath in config."
-            );
-        }
-        const url = new URL(this.cdpUrl);
-        const port = parseInt(url.port) || 9222;
-        const userDataDir = path.join(os.tmpdir(), "chrome-agent-profile-" + port);
-        console.log(
-            "[" + this.name + "] Starting Chrome with remote debugging on port " + port + "..."
-        );
-        console.log("[" + this.name + "] Chrome path: " + chromePath);
+    /**
+构造启动参数。Chrome 与 Edge 均基于 Chromium。
+注意：不要加 --no-startup-window，否则浏览器只在后台运行、不显示任何窗口，
+用户会以为浏览器没有启动。默认使用有界面模式（headless=false）启动，
+让用户可以看到 Agent 正在操作的浏览器窗口。
+*/
+    buildLaunchArgs(port, userDataDir) {
         const args = [
             "--remote-debugging-port=" + port,
             "--user-data-dir=" + userDataDir,
@@ -152,19 +272,63 @@ class BrowserAgent {
             "--disable-client-side-phishing-detection",
             "--disable-crash-reporter",
             "--disable-breakpad",
-            "--no-startup-window",
+            // 显式带一个空白页，确保有可见窗口
+            "about:blank",
         ];
-        this.chromeProcess = spawn(chromePath, args, {
+        if (this.browserType === "edge") {
+            args.push("--disable-features=msEdgeSidebarV2,msEdgeIdentityFeatures,EdgeCollections");
+            args.push("--disable-edge-shopping");
+        }
+        if (this.headless) {
+            // 仅在用户明确要求无界面模式时才添加
+            args.push("--headless=new");
+            args.push("--disable-gpu");
+        }
+        return args;
+    }
+    async startChromeCdpServer() {
+        const browserPath = this.resolveBrowserPath();
+        const label = this.getBrowserLabel();
+        if (!browserPath) {
+            throw new Error(
+                "Could not find " +
+                    label +
+                    " executable. Please install " +
+                    label +
+                    " or set " +
+                    (this.browserType === "edge" ? "BROWSER_EDGE_PATH" : "CHROME_PATH") +
+                    " environment variable or browser path in config."
+            );
+        }
+        const url = new URL(this.cdpUrl);
+        const port = parseInt(url.port) || 9222;
+        const profilePrefix =
+            this.browserType === "edge" ? "edge-agent-profile-" : "chrome-agent-profile-";
+        const userDataDir = path.join(os.tmpdir(), profilePrefix + port);
+        console.log(
+            "[" +
+                this.name +
+                "] Starting " +
+                label +
+                " with remote debugging on port " +
+                port +
+                "..."
+        );
+        console.log("[" + this.name + "] " + label + " path: " + browserPath);
+        const args = this.buildLaunchArgs(port, userDataDir);
+        this.chromeProcess = spawn(browserPath, args, {
             stdio: ["ignore", "ignore", "ignore"],
             detached: true,
-            windowsHide: true,
+            // 有界面模式必须让窗口可见；windowsHide 会隐藏控制台/窗口句柄，
+            // 这里设为 headless 时才隐藏。
+            windowsHide: this.headless === true,
         });
         if (!this.chromeProcess) {
-            throw new Error("Failed to spawn Chrome process");
+            throw new Error("Failed to spawn " + label + " process");
         }
         this.chromeProcess.unref();
         console.log(
-            "[" + this.name + "] Chrome process started with PID: " + this.chromeProcess.pid
+            "[" + this.name + "] " + label + " process started with PID: " + this.chromeProcess.pid
         );
         const startTime = Date.now();
         while (Date.now() - startTime < this.startTimeout) {
@@ -175,7 +339,7 @@ class BrowserAgent {
             }
             await this.sleep(this.retryInterval);
         }
-        throw new Error("Chrome CDP server did not start within " + this.startTimeout + "ms");
+        throw new Error(label + " CDP server did not start within " + this.startTimeout + "ms");
     }
     async openNewPageForTarget() {
         const url = this.buildTargetUrl();
@@ -385,7 +549,9 @@ class BrowserAgent {
                 );
             }
             this.browser = await chromium.connectOverCDP(this.cdpUrl);
-            console.log("[" + this.name + "] Connected to CDP server");
+            console.log(
+                "[" + this.name + "] Connected to CDP server (" + this.getBrowserLabel() + ")"
+            );
             await this.ensurePage();
             const pageUrl = this.isPageAlive() ? this.page.url() : "(none)";
             console.log("[" + this.name + "] Page URL: " + pageUrl);
@@ -704,8 +870,8 @@ class BrowserAgent {
     async close() {
         if (this.browser) {
             try {
-                // 这里连接的是外部 CDP Chrome。close() 会清理 Playwright 创建的上下文并断开连接，
-                // 但不会把通过 CDP 连接的外部 Chrome 进程作为本地 Playwright browser 关闭。
+                // 这里连接的是外部 CDP 浏览器。close() 会清理 Playwright 创建的上下文并断开连接，
+                // 但不会把通过 CDP 连接的外部浏览器进程作为本地 Playwright browser 关闭。
                 await this.browser.close();
             } catch (error) {
                 console.warn(
@@ -716,10 +882,12 @@ class BrowserAgent {
         if (this.chromeProcess && !this.chromeProcess.killed) {
             try {
                 console.log(
-                    "[" + this.name + "] Chrome process remains running: " + this.chromeProcess.pid
+                    "[" + this.name + "] Browser process remains running: " + this.chromeProcess.pid
                 );
             } catch (error) {
-                console.warn("[" + this.name + "] Error handling Chrome process: " + error.message);
+                console.warn(
+                    "[" + this.name + "] Error handling browser process: " + error.message
+                );
             }
         }
         this.page = null;
@@ -731,4 +899,7 @@ class BrowserAgent {
 }
 module.exports = {
     BrowserAgent,
+    normalizeBrowserType,
+    detectBrowserTypeFromPath,
+    getBrowserCandidates,
 };

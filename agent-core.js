@@ -30,18 +30,20 @@ class Agent extends EventEmitter {
         this.providerName = options.provider || "chatgpt";
         this.task = options.task;
         // 可选：provider 页面 URL 中的会话 ID。
-        // 有值时，Provider 会直接打开该会话的 URL；无值时表示新会话。
         this.conversationId = options.conversationId || null;
-        // 运行时从 provider 同步到的最新会话 ID（消息发送后回填）
         this.currentConversationId = this.conversationId;
         this.maxSteps = options.maxSteps ?? agentConfig.agent.maxSteps;
         this.maxProviderErrors = options.maxProviderErrors ?? agentConfig.agent.maxProviderErrors;
-        // 是否在激活 CDP 页面时把窗口焦点切到该页面标签。
-        // 未显式传入时回退到 agentConfig.browser.focusCdpPage。
         this.focusCdpPage =
             options.focusCdpPage !== undefined
                 ? options.focusCdpPage
                 : agentConfig.browser.focusCdpPage;
+        // 浏览器类型（chrome/edge），未显式传入时使用配置。
+        this.browserType = normalizeBrowserType(
+            options.browserType !== undefined
+                ? options.browserType
+                : agentConfig.browser.browserType
+        );
         this.history = createHistory();
         this.runtime = createRuntime(this.workspace);
         this.provider = null;
@@ -61,10 +63,6 @@ class Agent extends EventEmitter {
         this.emit(type, event);
         return event;
     }
-    /**
-从 provider 同步 conversationId。
-只在发生变化时 emit 事件，避免刷屏。
-*/
     syncConversationId() {
         if (!this.provider) {
             return null;
@@ -82,6 +80,40 @@ class Agent extends EventEmitter {
         }
         return cid;
     }
+    /**
+解析当前浏览器应使用的可执行文件路径。
+优先使用环境变量中由主进程按当前 browserType 写入的路径，
+其次回退到 agentConfig。
+*/
+    resolveBrowserPath() {
+        if (this.browserType === "edge") {
+            const envEdge =
+                process.env.BROWSER_EDGE_PATH ||
+                process.env.EDGE_PATH ||
+                process.env.XML_AGENT_EDGE_PATH;
+            if (envEdge) {
+                return envEdge;
+            }
+            return agentConfig.browser.edgePath || agentConfig.browser.chromePath || "";
+        }
+        const envChrome = process.env.BROWSER_CHROME_PATH || process.env.CHROME_PATH;
+        if (envChrome) {
+            return envChrome;
+        }
+        return agentConfig.browser.chromePath || "";
+    }
+    /**
+解析 CDP URL。
+优先使用主进程按 browserType 解析后写入环境变量的端口
+（Chrome 默认 9222，Edge 默认 9223），避免两者共用同一端口。
+*/
+    resolveCdpUrl() {
+        const envCdp = process.env.BROWSER_CDP_URL || process.env.XML_AGENT_CDP_URL;
+        if (envCdp && String(envCdp).trim()) {
+            return String(envCdp).trim();
+        }
+        return agentConfig.browser.cdpUrl;
+    }
     async run() {
         if (this.status !== "created") {
             throw new Error("Agent can only be run once");
@@ -96,15 +128,19 @@ class Agent extends EventEmitter {
             this.emitEvent("agent.started", {
                 workspace: currentWorkspace,
                 provider: this.providerName,
+                browserType: this.browserType,
                 task: this.task,
                 conversationId: this.conversationId,
             });
+            const cdpUrl = this.resolveCdpUrl();
             this.provider = createProvider(this.providerName, {
                 autoStart: agentConfig.browser.autoStart,
                 startTimeout: agentConfig.browser.startTimeout,
                 retryInterval: agentConfig.browser.retryInterval,
-                cdpUrl: agentConfig.browser.cdpUrl,
-                chromePath: agentConfig.browser.chromePath,
+                cdpUrl,
+                // 保持旧字段 chromePath 兼容，同时显式传入 browserType。
+                chromePath: this.resolveBrowserPath(),
+                browserType: this.browserType,
                 targetUrl: agentConfig.browser.targetUrls[this.providerName],
                 reuseExistingPage: agentConfig.browser.reuseExistingPage,
                 focusCdpPage: this.focusCdpPage,
@@ -112,6 +148,7 @@ class Agent extends EventEmitter {
             });
             this.emitEvent("provider.starting", {
                 provider: this.providerName,
+                browserType: this.browserType,
             });
             await this.provider.start();
             if (this.stopRequested || this.status !== "running") {
@@ -119,8 +156,8 @@ class Agent extends EventEmitter {
             }
             this.emitEvent("provider.started", {
                 provider: this.providerName,
+                browserType: this.browserType,
             });
-            // 启动后尝试同步一次会话 ID（如果页面已在某个 conversation 中）
             this.syncConversationId();
             let prompt = getFirstPrompt(currentWorkspace, manifest, this.task);
             const providerErrorState = {
@@ -180,7 +217,6 @@ class Agent extends EventEmitter {
                 };
             }
             providerErrorState.count = 0;
-            // 每次响应后尝试同步 conversationId，让上层及时感知新会话 ID
             this.syncConversationId();
             this.emitEvent("provider.response", {
                 step: this.step,
@@ -194,7 +230,6 @@ class Agent extends EventEmitter {
                 };
             }
             providerErrorState.count++;
-            // 指数退避延迟，最多30秒
             const delay = Math.min(1000 * Math.pow(2, providerErrorState.count - 1), 30000);
             this.emitEvent("provider.retry", {
                 step: this.step,
@@ -242,8 +277,6 @@ class Agent extends EventEmitter {
         }
         let result;
         try {
-            // runtime.run 现在可能是异步的（exec 已改为异步 child_process），
-            // 必须 await，否则会拿到 Promise 而不是执行结果。
             result = await this.runtime.run(action);
         } catch (error) {
             result = {
@@ -305,7 +338,6 @@ class Agent extends EventEmitter {
         const provider = this.provider;
         this.provider = null;
         try {
-            // 关闭前再尝试同步一次 conversationId，避免丢失最后的会话信息
             const cid = provider.currentConversationId;
             if (cid && cid !== this.currentConversationId) {
                 this.currentConversationId = cid;
@@ -330,6 +362,7 @@ class Agent extends EventEmitter {
             status: this.status,
             workspace: this.workspace,
             provider: this.providerName,
+            browserType: this.browserType,
             task: this.task,
             step: this.step,
             answer: this.answer,
@@ -339,6 +372,16 @@ class Agent extends EventEmitter {
         };
     }
 }
+function normalizeBrowserType(value) {
+    const text = String(value || "")
+        .trim()
+        .toLowerCase();
+    if (text === "edge" || text === "msedge" || text === "microsoft-edge") {
+        return "edge";
+    }
+    return "chrome";
+}
 module.exports = {
     Agent,
+    normalizeBrowserType,
 };

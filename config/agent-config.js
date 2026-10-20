@@ -11,13 +11,24 @@ BROWSER_AUTO_START (true/false)
 BROWSER_START_TIMEOUT (ms)
 BROWSER_RETRY_INTERVAL (ms)
 BROWSER_CDP_URL
+BROWSER_TYPE (chrome/edge)
 BROWSER_CHROME_PATH
+BROWSER_EDGE_PATH
 BROWSER_REUSE_PAGE (true/false)
 BROWSER_FOCUS_CDP_PAGE (true/false)
 WEBUI_MAX_SESSIONS
-WEBUI_MAX_DISK_BYTES (bytes)
+WEBUI_MAX_DISK_BYTES
 WEBUI_WARN_THRESHOLD (0-1)
 */
+function normalizeBrowserType(value) {
+    const text = String(value || "")
+        .trim()
+        .toLowerCase();
+    if (text === "edge" || text === "msedge" || text === "microsoft-edge") {
+        return "edge";
+    }
+    return "chrome";
+}
 const agentConfig = {
     agent: {
         maxSteps: 100,
@@ -49,9 +60,15 @@ const agentConfig = {
         retryInterval: 1000,
         // CDP 服务器 URL
         cdpUrl: "http://127.0.0.1:9222",
-        // Chrome.exe Path
+        // 浏览器类型：chrome（默认）| edge
+        // Edge 基于 Chromium，同样实现了 CDP 协议，可直接复用。
+        browserType: "chrome",
+        // Chrome / Edge 可执行文件路径。
+        // 留空时由 BrowserAgent 按 browserType 自动探测常见安装路径。
         // chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
-        chromePath: "C:/Users/hunte/AppData/Local/Google/Chrome/Application/chrome.exe",
+        chromePath: "",
+        // Edge 专用路径（当 browserType 为 edge 时优先使用）。
+        edgePath: "",
         // 默认值为 false：每个 Agent Session 都会创建独立 Page，
         // 避免新会话复用已有对话的标签页（导致多个 Session 串到同一个 Conversation）。
         // 如需在同一个 Provider 标签页中继续对话，可手动改为 true，
@@ -126,8 +143,17 @@ function applyEnvOverrides(config) {
     if (env.BROWSER_CDP_URL) {
         config.browser.cdpUrl = env.BROWSER_CDP_URL;
     }
+    if (env.BROWSER_TYPE) {
+        config.browser.browserType = normalizeBrowserType(env.BROWSER_TYPE);
+    }
+    if (env.XML_AGENT_BROWSER_TYPE) {
+        config.browser.browserType = normalizeBrowserType(env.XML_AGENT_BROWSER_TYPE);
+    }
     if (env.BROWSER_CHROME_PATH) {
         config.browser.chromePath = env.BROWSER_CHROME_PATH;
+    }
+    if (env.BROWSER_EDGE_PATH) {
+        config.browser.edgePath = env.BROWSER_EDGE_PATH;
     }
     if (env.BROWSER_REUSE_PAGE) {
         const val = env.BROWSER_REUSE_PAGE.toLowerCase();
@@ -185,7 +211,15 @@ function validateConfig(config) {
         if (config.browser.retryInterval && config.browser.retryInterval <= 0) {
             throw new Error("browser.retryInterval must be a positive number");
         }
+        if (
+            config.browser.browserType &&
+            config.browser.browserType !== "chrome" &&
+            config.browser.browserType !== "edge"
+        ) {
+            throw new Error("browser.browserType must be 'chrome' or 'edge'");
+        }
     }
 }
 validateConfig(agentConfig);
 module.exports = agentConfig;
+module.exports.normalizeBrowserType = normalizeBrowserType;
