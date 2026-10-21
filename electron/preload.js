@@ -42,6 +42,11 @@ contextBridge.exposeInMainWorld("xmlAgentDesktop", {
         status: () => ipcRenderer.invoke("chrome:status"),
         pickFile: () => ipcRenderer.invoke("dialog:pickChrome"),
     },
+    // 系统通知：任务完成后给用户发送 Windows 通知。
+    notifications: {
+        taskDone: (sessionInfo) => ipcRenderer.invoke("notify:task-done", sessionInfo),
+        send: (payload) => ipcRenderer.invoke("notify:send", payload),
+    },
     app: {
         port: () => ipcRenderer.invoke("app:port"),
     },

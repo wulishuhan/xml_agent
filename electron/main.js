@@ -1,7 +1,8 @@
 const path = require("path");
 const fs = require("fs");
 const net = require("net");
-const { app, BrowserWindow, dialog, shell, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, shell, ipcMain, Notification } = require("electron");
+const { notify, buildTaskNotification, shouldNotify } = require("./notifier");
 const {
     findBrowser,
     getPlatformCandidates,
@@ -19,6 +20,8 @@ const {
 const HOST = "127.0.0.1";
 const PORT_START = 3000;
 const PORT_END = 3999;
+// Windows 通知（Toast）必须设置 AppUserModelID，否则系统会静默丢弃通知。
+const APP_USER_MODEL_ID = "com.shuhan.xmlagent";
 let mainWindow = null;
 let serverModule = null;
 let serverInstance = null;
@@ -399,6 +402,38 @@ async function getBrowserStatus(settings) {
         typeMatches: running ? connectedBrowserType === requestedType : false,
     };
 }
+/**
+弹出 Windows 系统通知。
+使用 Electron 原生 Notification；点击通知时聚焦/恢复主窗口。
+返回是否成功调用 show()。
+*/
+function showDesktopNotification(payload) {
+    const title = payload && payload.title ? payload.title : "XML Agent";
+    const body = payload && payload.body ? payload.body : "任务完成了";
+    if (typeof Notification === "undefined" || !Notification.isSupported()) {
+        console.warn("[Electron] Notification not supported on this system");
+        return false;
+    }
+    try {
+        const notification = new Notification({ title, body });
+        notification.on("click", () => {
+            if (!mainWindow) {
+                return;
+            }
+            if (mainWindow.isMinimized()) {
+                mainWindow.restore();
+            }
+            mainWindow.show();
+            mainWindow.focus();
+        });
+        notification.show();
+        console.log("[Electron] Notification shown: " + title + " | " + body);
+        return true;
+    } catch (error) {
+        console.warn("[Electron] Failed to show notification:", error.message);
+        return false;
+    }
+}
 function registerIpcHandlers() {
     ipcMain.handle("settings:read", () => {
         return readSettings(app);
@@ -473,6 +508,21 @@ function registerIpcHandlers() {
         return getBrowserStatus(settings);
     });
     ipcMain.handle("app:port", () => currentPort);
+    // 桌面通知：任务完成后由渲染进程调用，弹出 Windows 系统通知。
+    ipcMain.handle("notify:task-done", (event, sessionInfo) => {
+        const info = sessionInfo && typeof sessionInfo === "object" ? sessionInfo : {};
+        if (!shouldNotify(info.status)) {
+            return { ok: false, skipped: true, reason: "status is not completed" };
+        }
+        const payload = buildTaskNotification(info);
+        const delivered = showDesktopNotification(payload);
+        return { ok: delivered, payload };
+    });
+    // 允许前端发送任意通知（例如自定义文案）。
+    ipcMain.handle("notify:send", (event, payload) => {
+        const delivered = showDesktopNotification(payload);
+        return { ok: delivered };
+    });
     ipcMain.handle("dialog:pickBrowser", async () => {
         const result = await dialog.showOpenDialog(mainWindow, {
             title: "Select browser executable",
@@ -640,6 +690,10 @@ if (!app.requestSingleInstanceLock()) {
         mainWindow.focus();
     });
     app.whenReady().then(() => {
+        // 关键：Windows 上必须设置 AppUserModelID，否则 Toast 通知不显示。
+        if (process.platform === "win32") {
+            app.setAppUserModelId(APP_USER_MODEL_ID);
+        }
         registerIpcHandlers();
         return bootstrap();
     });

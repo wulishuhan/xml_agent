@@ -204,6 +204,7 @@
         stopSession,
     } from "./services/agent-api.js";
     import { applyTheme, persistTheme, resolveInitialTheme } from "./services/theme.js";
+    import { notifyTaskCompleted } from "./services/desktop-notify.js";
     const sessions = ref([]);
     const activeSessionId = ref(null);
     const activeSession = ref(null);
@@ -390,6 +391,13 @@
     function subscribeToSession(sessionId) {
         closeEventSource();
         const source = new EventSource(getEventSourceUrl(sessionId));
+        // 记录本次订阅期间是否真的观察到了 running 状态。
+        // 只有从 running -> completed 的转变才发送"任务完成"通知，
+        // 避免打开一个已完成的历史会话时（服务端会立即重放 finished）误弹通知。
+        let sawRunning = false;
+        if (activeSession.value && activeSession.value.running === true) {
+            sawRunning = true;
+        }
         source.addEventListener("output", (event) => {
             try {
                 const record = JSON.parse(event.data);
@@ -425,13 +433,20 @@
             }
         });
         source.addEventListener("finished", (event) => {
+            let finishedInfo = null;
             try {
-                activeSession.value = JSON.parse(event.data);
+                finishedInfo = JSON.parse(event.data);
+                activeSession.value = finishedInfo;
                 updateSessionList(activeSession.value);
             } catch (error) {
                 errorMessage.value = error.message;
             }
             refreshStorage();
+            // 仅在本次订阅期间确实处于过 running 状态、且最终状态为 completed 时通知。
+            if (sawRunning && finishedInfo) {
+                notifyTaskCompleted(finishedInfo);
+            }
+            sawRunning = false;
         });
         source.addEventListener("error", (event) => {
             if (event.data) {
