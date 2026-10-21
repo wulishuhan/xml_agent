@@ -148,3 +148,61 @@ export function extractConversationId(provider, url) {
     }
     return null;
 }
+// ---- 浏览器设置与切换（Web 版，通过 HTTP API）----
+export async function getBrowserSettings() {
+    const response = await fetch(api("/api/browser/settings"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read browser settings");
+    }
+    return result;
+}
+export async function saveBrowserSettings(settings) {
+    const response = await fetch(api("/api/browser/settings"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings || {}),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to save browser settings");
+    }
+    return result;
+}
+export async function detectBrowser(browserType) {
+    const query = browserType ? "?type=" + encodeURIComponent(browserType) : "";
+    const response = await fetch(api("/api/browser/detect" + query));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to detect browser");
+    }
+    return result;
+}
+export async function getBrowserStatus() {
+    const response = await fetch(api("/api/browser/status"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to get browser status");
+    }
+    return result;
+}
+export async function launchBrowser() {
+    const response = await fetch(api("/api/browser/launch"), { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to launch browser");
+    }
+    return result;
+}
+export async function switchBrowser(browserType) {
+    const response = await fetch(api("/api/browser/switch"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ browserType: browserType || "" }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to switch browser");
+    }
+    return result;
+}

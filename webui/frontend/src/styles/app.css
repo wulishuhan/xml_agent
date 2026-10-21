@@ -487,11 +487,12 @@ select {
 
 .workspace-header {
     display: flex;
+    flex-wrap: wrap;
     min-height: 68px;
     align-items: center;
     justify-content: space-between;
-    gap: 20px;
-    padding: 0 25px;
+    gap: 12px 20px;
+    padding: 10px 25px;
     border-bottom: 1px solid var(--c-border);
     background: var(--c-header-bg);
 }
@@ -545,9 +546,14 @@ select {
     white-space: nowrap;
 }
 
+/* 保证右侧操作按钮不被标题挤压或推出可视区域 */
 .workspace-actions {
     display: flex;
+    flex: 0 0 auto;
+    flex-shrink: 0;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 10px;
 }
 

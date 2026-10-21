@@ -1,4 +1,3 @@
-
 <template>
     <div class="settings-mask" @click.self="$emit('close')">
         <section
@@ -11,7 +10,9 @@
                 <div class="settings-heading">
                     <div class="settings-icon">⚙</div>
                     <div>
-                        <strong id="settings-title">Desktop Settings</strong>
+                        <strong id="settings-title">{{
+                            isElectron ? "Desktop Settings" : "Browser Settings"
+                        }}</strong>
                         <span>Choose which browser the agent drives via CDP</span>
                     </div>
                 </div>
@@ -69,7 +70,9 @@
                             type="text"
                             :placeholder="'Leave empty to auto-detect ' + browserLabel"
                         />
-                        <button type="button" class="btn" @click="pickBrowser">Browse</button>
+                        <button v-if="isElectron" type="button" class="btn" @click="pickBrowser">
+                            Browse
+                        </button>
                     </div>
                     <div class="settings-hint">
                         <span v-if="chromePath"
@@ -105,7 +108,7 @@
                         unattended runs but makes it harder to log in to providers.
                     </div>
                 </div>
-                <div class="settings-field settings-field-inline">
+                <div v-if="isElectron" class="settings-field settings-field-inline">
                     <label>
                         <input v-model="focusCdpPage" type="checkbox" /> Bring the launched CDP tab
                         to the foreground
@@ -129,7 +132,7 @@
                         <strong>{{ browserLabel }} path:</strong>
                         {{ chromePath || detectedBrowser || "auto" }}
                     </div>
-                    <div>
+                    <div v-if="settingsPath">
                         <strong>Settings file:</strong> <code>{{ settingsPath }}</code>
                     </div>
                 </div>
@@ -148,248 +151,273 @@
     </div>
 </template>
 <script setup>
-    import { computed, onMounted, ref } from "vue";const emit = defineEmits(["close", "saved"]);
-const desktop = typeof window !== "undefined" ? window.xmlAgentDesktop : null;
-const isElectron = !!(desktop && desktop.isElectron);
-const DEFAULT_CDP_URLS = {
-chrome: "http://127.0.0.1:9222",
-edge: "http://127.0.0.1:9223",
-};
-const loading = ref(true);
-const saving = ref(false);
-const switching = ref(false);
-const browserType = ref("chrome");
-const chromePath = ref("");
-// 各浏览器类型对应的 CDP URL
-const cdpUrls = ref({
-chrome: DEFAULT_CDP_URLS.chrome,
-edge: DEFAULT_CDP_URLS.edge,
-});
-const autoStartChrome = ref(true);
-const headless = ref(false);
-const focusCdpPage = ref(true);
-const detectedBrowser = ref("");
-const chromeAvailable = ref(false);
-const edgeAvailable = ref(false);
-const cdpRunning = ref(false);
-const connectedBrowser = ref("");
-const typeMatches = ref(null);
-const settingsPath = ref("");
-const message = ref("");
-const browserLabel = computed(() => (browserType.value === "edge" ? "Edge" : "Chrome"));
-const cdpPlaceholder = computed(() => DEFAULT_CDP_URLS[browserType.value]);
-// 编辑当前所选浏览器类型的 CDP URL（双向绑定到 cdpUrls）。
-const currentCdpUrl = computed({
-get() {
-return cdpUrls.value[browserType.value] || DEFAULT_CDP_URLS[browserType.value];
-},
-set(value) {
-cdpUrls.value = Object.assign({}, cdpUrls.value, {
-[browserType.value]: value,
-});
-},
-});
-function normalizeBrowserType(value) {
-const text = String(value || "")
-.trim()
-.toLowerCase();
-return text === "edge" ? "edge" : "chrome";
-}
-function browserApi() {
-if (!desktop) {
-return null;
-}
-return desktop.browser || desktop.chrome || null;
-}
-async function detectAvailability() {
-const api = browserApi();
-if (!api) {
-return;
-}
-try {
-const [chromeResult, edgeResult] = await Promise.all([
-api.detect("chrome"),
-api.detect("edge"),
-]);
-chromeAvailable.value = !!(chromeResult && chromeResult.found);
-edgeAvailable.value = !!(edgeResult && edgeResult.found);
-} catch (error) {
-// 忽略探测失败，仅影响界面提示
-}
-}
-async function load() {
-if (!isElectron) {
-loading.value = false;
-message.value = "This panel is only available in the desktop app.";
-return;
-}
-try {
-const api = browserApi();
-const [settings, status, path] = await Promise.all([
-desktop.settings.read(),
-api.status(),
-desktop.settings.path(),
-]);
-browserType.value = normalizeBrowserType(settings.browserType);
-chromePath.value = settings.chromePath || "";
-const incomingUrls = settings.cdpUrls || {};
-cdpUrls.value = {
-chrome:
-incomingUrls.chrome ||
-settings.cdpUrl ||
-DEFAULT_CDP_URLS.chrome,
-edge: incomingUrls.edge || DEFAULT_CDP_URLS.edge,
-};
-autoStartChrome.value = settings.autoStartChrome !== false;
-headless.value = settings.headless === true;
-focusCdpPage.value = settings.focusCdpPage !== false;
-applyStatus(status);
-settingsPath.value = path || "";
-await detectAvailability();
-} catch (error) {
-message.value = error.message;
-} finally {
-loading.value = false;
-}
-}
-function applyStatus(status) {
-if (!status) {
-return;
-}
-cdpRunning.value = status.cdpRunning === true;
-connectedBrowser.value = status.connectedBrowser || "";
-if (typeof status.typeMatches === "boolean") {
-typeMatches.value = status.typeMatches;
-}
-const path = status.browserPath || status.chromePath || "";
-detectedBrowser.value = path;
-}
-/**
-构建要写回 settings 的完整对象，保留两种浏览器的 CDP 端口。
-*/
-function buildSettingsPayload() {
-const urls = {
-chrome: (cdpUrls.value.chrome || DEFAULT_CDP_URLS.chrome).trim(),
-edge: (cdpUrls.value.edge || DEFAULT_CDP_URLS.edge).trim(),
-};
-return {
-browserType: browserType.value,
-chromePath: chromePath.value.trim(),
-cdpUrls: urls,
-// 兼容旧字段：当前所选浏览器对应的端口
-cdpUrl: urls[browserType.value],
-autoStartChrome: autoStartChrome.value === true,
-headless: headless.value === true,
-focusCdpPage: focusCdpPage.value === true,
-};
-}
-async function selectBrowserType(nextType) {
-const next = normalizeBrowserType(nextType);
-if (browserType.value === next) {
-return;
-}
-browserType.value = next;
-// 切换类型后重新探测该浏览器可执行文件，并清空不匹配的手动路径。
-try {
-const api = browserApi();
-const result = await api.detect(next);
-detectedBrowser.value = (result && result.found) || "";
-chromePath.value = "";
-if (cdpRunning.value && typeMatches.value === false) {
-message.value =
-"Selected " +
-(next === "edge" ? "Edge" : "Chrome") +
-'. Click "Switch to ' +
-(next === "edge" ? "Edge" : "Chrome") +
-' now" to close the current browser and start the selected one.';
-} else {
-message.value = "Selected " + (next === "edge" ? "Edge" : "Chrome") + ".";
-}
-} catch (error) {
-message.value = error.message;
-}
-}
-async function refreshStatus() {
-if (!isElectron) return;
-try {
-const api = browserApi();
-const status = await api.status();
-applyStatus(status);
-message.value = "Status refreshed.";
-} catch (error) {
-message.value = error.message;
-}
-}
-async function pickBrowser() {
-if (!isElectron) return;
-try {
-const api = browserApi();
-const picked = await api.pickFile();
-if (picked) {
-chromePath.value = picked;
-}
-} catch (error) {
-message.value = error.message;
-}
-}
-/**
-切换到当前选中的浏览器：
-主进程会先关闭旧的浏览器进程，再以独立端口启动目标浏览器。
-*/
-async function switchBrowserNow() {
-if (!isElectron) return;
-const api = browserApi();
-if (!api || typeof api.switch !== "function") {
-message.value = "Browser switching is not supported in this build.";
-return;
-}
-switching.value = true;
-message.value = "Switching to " + browserLabel.value + "...";
-try {
-// 先保存当前选择，保证后续 session 使用新浏览器
-const saved = await desktop.settings.write(buildSettingsPayload());
-if (saved && saved.browserType) {
-browserType.value = normalizeBrowserType(saved.browserType);
-}
-const result = await api.switch(browserType.value);
-message.value = result.message;
-const status = await api.status();
-applyStatus(status);
-emit("saved");
-} catch (error) {
-message.value = error.message;
-} finally {
-switching.value = false;
-}
-}
-async function save() {
-if (!isElectron) return;
-saving.value = true;
-message.value = "";
-try {
-const previousType = normalizeBrowserType((await desktop.settings.read()).browserType);
-await desktop.settings.write(buildSettingsPayload());
-const nextType = browserType.value;
-if (cdpRunning.value && previousType !== nextType) {
-message.value =
-"Saved. The running CDP browser is still " +
-(connectedBrowser.value || "the previous one") +
-". To use " +
-browserLabel.value +
-', click "Switch to ' +
-browserLabel.value +
-' now".';
-} else {
-message.value = "Saved. New sessions will use " + browserLabel.value + ".";
-}
-emit("saved");
-} catch (error) {
-message.value = error.message;
-} finally {
-saving.value = false;
-}
-}
-onMounted(load);
+    import { computed, onMounted, ref } from "vue";
+    import {
+        getBrowserSettings,
+        saveBrowserSettings,
+        detectBrowser,
+        getBrowserStatus,
+        switchBrowser as apiSwitchBrowser,
+    } from "../services/agent-api.js";
+    const emit = defineEmits(["close", "saved"]);
+    const desktop = typeof window !== "undefined" ? window.xmlAgentDesktop : null;
+    const isElectron = !!(desktop && desktop.isElectron);
+    const DEFAULT_CDP_URLS = {
+        chrome: "http://127.0.0.1:9222",
+        edge: "http://127.0.0.1:9223",
+    };
+    const loading = ref(true);
+    const saving = ref(false);
+    const switching = ref(false);
+    const browserType = ref("chrome");
+    const chromePath = ref("");
+    const cdpUrls = ref({
+        chrome: DEFAULT_CDP_URLS.chrome,
+        edge: DEFAULT_CDP_URLS.edge,
+    });
+    const autoStartChrome = ref(true);
+    const headless = ref(false);
+    const focusCdpPage = ref(true);
+    const detectedBrowser = ref("");
+    const chromeAvailable = ref(false);
+    const edgeAvailable = ref(false);
+    const cdpRunning = ref(false);
+    const connectedBrowser = ref("");
+    const typeMatches = ref(null);
+    const settingsPath = ref("");
+    const message = ref("");
+    const browserLabel = computed(() => (browserType.value === "edge" ? "Edge" : "Chrome"));
+    const cdpPlaceholder = computed(() => DEFAULT_CDP_URLS[browserType.value]);
+    const currentCdpUrl = computed({
+        get() {
+            return cdpUrls.value[browserType.value] || DEFAULT_CDP_URLS[browserType.value];
+        },
+        set(value) {
+            cdpUrls.value = Object.assign({}, cdpUrls.value, {
+                [browserType.value]: value,
+            });
+        },
+    });
+    function normalizeBrowserType(value) {
+        const text = String(value || "")
+            .trim()
+            .toLowerCase();
+        return text === "edge" ? "edge" : "chrome";
+    }
+    // ---- 统一后端适配：Electron 用 IPC，Web 用 HTTP ----
+    const backend = {
+        async readSettings() {
+            if (isElectron) {
+                return desktop.settings.read();
+            }
+            return getBrowserSettings();
+        },
+        async writeSettings(payload) {
+            if (isElectron) {
+                return desktop.settings.write(payload);
+            }
+            return saveBrowserSettings(payload);
+        },
+        async detect(browserTypeValue) {
+            if (isElectron) {
+                const api = desktop.browser || desktop.chrome;
+                return api.detect(browserTypeValue);
+            }
+            return detectBrowser(browserTypeValue);
+        },
+        async status() {
+            if (isElectron) {
+                const api = desktop.browser || desktop.chrome;
+                return api.status();
+            }
+            return getBrowserStatus();
+        },
+        async switchBrowser(browserTypeValue) {
+            if (isElectron) {
+                const api = desktop.browser || desktop.chrome;
+                if (api && typeof api.switch === "function") {
+                    return api.switch(browserTypeValue);
+                }
+                return { message: "Browser switching is not supported in this build." };
+            }
+            return apiSwitchBrowser(browserTypeValue);
+        },
+        async pickFile() {
+            if (isElectron && desktop.browser && desktop.browser.pickFile) {
+                return desktop.browser.pickFile();
+            }
+            return "";
+        },
+    };
+    async function detectAvailability() {
+        try {
+            const [chromeResult, edgeResult] = await Promise.all([
+                backend.detect("chrome"),
+                backend.detect("edge"),
+            ]);
+            chromeAvailable.value = !!(chromeResult && chromeResult.found);
+            edgeAvailable.value = !!(edgeResult && edgeResult.found);
+        } catch (error) {
+            // 忽略探测失败，仅影响界面提示
+        }
+    }
+    async function load() {
+        try {
+            const settings = await backend.readSettings();
+            browserType.value = normalizeBrowserType(settings.browserType);
+            chromePath.value = settings.chromePath || "";
+            const incomingUrls = settings.cdpUrls || {};
+            cdpUrls.value = {
+                chrome: incomingUrls.chrome || settings.cdpUrl || DEFAULT_CDP_URLS.chrome,
+                edge: incomingUrls.edge || DEFAULT_CDP_URLS.edge,
+            };
+            autoStartChrome.value = settings.autoStartChrome !== false;
+            headless.value = settings.headless === true;
+            if (typeof settings.focusCdpPage !== "undefined") {
+                focusCdpPage.value = settings.focusCdpPage !== false;
+            }
+            if (isElectron && desktop.settings && desktop.settings.path) {
+                try {
+                    settingsPath.value = (await desktop.settings.path()) || "";
+                } catch (error) {
+                    settingsPath.value = "";
+                }
+            }
+            await detectAvailability();
+            try {
+                const status = await backend.status();
+                applyStatus(status);
+            } catch (error) {
+                // 状态获取失败不影响设置读取
+            }
+        } catch (error) {
+            message.value = error.message;
+        } finally {
+            loading.value = false;
+        }
+    }
+    function applyStatus(status) {
+        if (!status) {
+            return;
+        }
+        cdpRunning.value = status.cdpRunning === true;
+        connectedBrowser.value = status.connectedBrowser || "";
+        if (typeof status.typeMatches === "boolean") {
+            typeMatches.value = status.typeMatches;
+        }
+        const path = status.browserPath || status.chromePath || "";
+        detectedBrowser.value = path;
+    }
+    function buildSettingsPayload() {
+        const urls = {
+            chrome: (cdpUrls.value.chrome || DEFAULT_CDP_URLS.chrome).trim(),
+            edge: (cdpUrls.value.edge || DEFAULT_CDP_URLS.edge).trim(),
+        };
+        return {
+            browserType: browserType.value,
+            chromePath: chromePath.value.trim(),
+            cdpUrls: urls,
+            cdpUrl: urls[browserType.value],
+            autoStartChrome: autoStartChrome.value === true,
+            headless: headless.value === true,
+            focusCdpPage: focusCdpPage.value === true,
+        };
+    }
+    async function selectBrowserType(nextType) {
+        const next = normalizeBrowserType(nextType);
+        if (browserType.value === next) {
+            return;
+        }
+        browserType.value = next;
+        try {
+            const result = await backend.detect(next);
+            detectedBrowser.value = (result && result.found) || "";
+            chromePath.value = "";
+            if (cdpRunning.value && typeMatches.value === false) {
+                message.value =
+                    "Selected " +
+                    (next === "edge" ? "Edge" : "Chrome") +
+                    '. Click "Switch to ' +
+                    (next === "edge" ? "Edge" : "Chrome") +
+                    ' now" to close the current browser and start the selected one.';
+            } else {
+                message.value = "Selected " + (next === "edge" ? "Edge" : "Chrome") + ".";
+            }
+        } catch (error) {
+            message.value = error.message;
+        }
+    }
+    async function refreshStatus() {
+        try {
+            const status = await backend.status();
+            applyStatus(status);
+            message.value = "Status refreshed.";
+        } catch (error) {
+            message.value = error.message;
+        }
+    }
+    async function pickBrowser() {
+        try {
+            const picked = await backend.pickFile();
+            if (picked) {
+                chromePath.value = picked;
+            }
+        } catch (error) {
+            message.value = error.message;
+        }
+    }
+    async function switchBrowserNow() {
+        switching.value = true;
+        message.value = "Switching to " + browserLabel.value + "...";
+        try {
+            // 先保存选择，保证后续 session 使用新浏览器
+            const saved = await backend.writeSettings(buildSettingsPayload());
+            if (saved && saved.browserType) {
+                browserType.value = normalizeBrowserType(saved.browserType);
+            }
+            const result = await backend.switchBrowser(browserType.value);
+            message.value = (result && result.message) || "Switched.";
+            try {
+                const status = await backend.status();
+                applyStatus(status);
+            } catch (error) {
+                // ignore
+            }
+            emit("saved");
+        } catch (error) {
+            message.value = error.message;
+        } finally {
+            switching.value = false;
+        }
+    }
+    async function save() {
+        saving.value = true;
+        message.value = "";
+        try {
+            const previous = await backend.readSettings();
+            const previousType = normalizeBrowserType(previous.browserType);
+            await backend.writeSettings(buildSettingsPayload());
+            const nextType = browserType.value;
+            if (cdpRunning.value && previousType !== nextType) {
+                message.value =
+                    "Saved. The running CDP browser is still " +
+                    (connectedBrowser.value || "the previous one") +
+                    ". To use " +
+                    browserLabel.value +
+                    ', click "Switch to ' +
+                    browserLabel.value +
+                    ' now".';
+            } else {
+                message.value = "Saved. New sessions will use " + browserLabel.value + ".";
+            }
+            emit("saved");
+        } catch (error) {
+            message.value = error.message;
+        } finally {
+            saving.value = false;
+        }
+    }
+    onMounted(load);
 </script>
 <style scoped>
     .settings-mask {

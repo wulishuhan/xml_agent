@@ -1,4 +1,3 @@
-
 <template>
     <div class="app-shell">
         <SessionSidebar
@@ -64,13 +63,12 @@
                         }}</span>
                     </button>
                     <button
-                        v-if="isElectron"
                         type="button"
                         class="btn"
-                        title="Desktop settings"
+                        :title="isElectron ? 'Desktop settings' : 'Browser settings'"
                         @click="showSettings = true"
                     >
-                        Settings
+                        {{ isElectron ? "Settings" : "Browser Settings" }}
                     </button>
                 </div>
             </header>
@@ -161,27 +159,28 @@
                     </div>
                 </div>
             </section>
-        </main><WorkspacePicker
-v-if="showWorkspacePicker"
-@select="selectWorkspace"
-@close="closeWorkspacePicker"
-/>
-<DesktopSettings
-v-if="showSettings"
-@close="showSettings = false"
-@saved="onSettingsSaved"
-/>
-<AnswerHistory
-v-if="showHistory"
-:initial-session-id="activeSessionId"
-@close="showHistory = false"
-/>
-<AgentTrace
-v-if="showTrace"
-:session-id="activeSessionId"
-:live-output="output"
-@close="showTrace = false"
-/>
+        </main>
+        <WorkspacePicker
+            v-if="showWorkspacePicker"
+            @select="selectWorkspace"
+            @close="closeWorkspacePicker"
+        />
+        <DesktopSettings
+            v-if="showSettings"
+            @close="showSettings = false"
+            @saved="onSettingsSaved"
+        />
+        <AnswerHistory
+            v-if="showHistory"
+            :initial-session-id="activeSessionId"
+            @close="showHistory = false"
+        />
+        <AgentTrace
+            v-if="showTrace"
+            :session-id="activeSessionId"
+            :live-output="output"
+            @close="showTrace = false"
+        />
     </div>
 </template>
 <script setup>
@@ -214,398 +213,399 @@ v-if="showTrace"
     const workspace = ref("");
     const provider = ref("chatgpt");
     const task = ref("");
-    const storage = ref(null);const theme = ref(resolveInitialTheme());
-function toggleTheme() {
-theme.value = theme.value === "dark" ? "light" : "dark";
-applyTheme(theme.value);
-persistTheme(theme.value);
-}
-const conversationId = ref("");
-const workspaceInput = ref(null);
-const showWorkspacePicker = ref(false);
-const showSettings = ref(false);
-const showHistory = ref(false);
-const showTrace = ref(false);
-const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
-const MIN_RATIO = 0.2;
-const MAX_RATIO = 0.85;
-const DEFAULT_RATIO = 0.68;
-const splitArea = ref(null);
-const ratio = ref(DEFAULT_RATIO);
-const resizing = ref(false);
-const ratioPercent = computed(() => Math.round(ratio.value * 100));
-const consoleStyle = computed(() => ({ flex: ratio.value + " 1 0" }));
-const composerStyle = computed(() => ({ flex: 1 - ratio.value + " 1 0" }));
-function clampRatio(value) {
-if (value < MIN_RATIO) {
-return MIN_RATIO;
-}
-if (value > MAX_RATIO) {
-return MAX_RATIO;
-}
-return value;
-}
-function loadRatio() {
-try {
-const raw = window.localStorage.getItem(SPLIT_STORAGE_KEY);
-if (raw) {
-const parsed = parseFloat(raw);
-if (!isNaN(parsed)) {
-ratio.value = clampRatio(parsed);
-}
-}
-} catch (error) {}
-}
-function persistRatio() {
-try {
-window.localStorage.setItem(SPLIT_STORAGE_KEY, String(ratio.value));
-} catch (error) {}
-}
-function applyPointerRatio(clientY) {
-const el = splitArea.value;
-if (!el) {
-return;
-}
-const rect = el.getBoundingClientRect();
-if (rect.height <= 0) {
-return;
-}
-const next = (clientY - rect.top) / rect.height;
-ratio.value = clampRatio(next);
-}
-function onPointerMove(event) {
-applyPointerRatio(event.clientY);
-}
-function stopResize() {
-if (!resizing.value) {
-return;
-}
-resizing.value = false;
-window.removeEventListener("pointermove", onPointerMove);
-window.removeEventListener("pointerup", stopResize);
-window.removeEventListener("pointercancel", stopResize);
-persistRatio();
-}
-function startResize(event) {
-if (event.button !== undefined && event.button !== 0) {
-return;
-}
-event.preventDefault();
-resizing.value = true;
-window.addEventListener("pointermove", onPointerMove);
-window.addEventListener("pointerup", stopResize);
-window.addEventListener("pointercancel", stopResize);
-}
-function resetRatio() {
-ratio.value = DEFAULT_RATIO;
-persistRatio();
-}
-const isElectron = computed(() => {
-return (
-typeof window !== "undefined" &&
-window.xmlAgentDesktop &&
-window.xmlAgentDesktop.isElectron === true
-);
-});
-const electronPort = computed(() => {
-if (!isElectron.value) {
-return "";
-}
-return String(window.xmlAgentDesktop.port || "");
-});
-const activeConversationId = computed(() => {
-return activeSession.value?.conversationId || "";
-});
-const sessionStatus = computed(() => {
-return activeSession.value?.status || "created";
-});
-const running = computed(() => {
-return activeSession.value?.running === true;
-});
-const workspaceTitle = computed(() => {
-return activeSession.value ? sessionTitle(activeSession.value) : "New Agent Session";
-});
-const statusText = computed(() => {
-const labels = {
-created: "Ready",
-running: "Running",
-completed: "Completed",
-stopped: "Stopped",
-interrupted: "Interrupted",
-error: "Error",
-};
-return labels[sessionStatus.value] || sessionStatus.value;
-});
-async function refreshStorage() {
-try {
-storage.value = await getStorage();
-} catch (error) {}
-}
-async function loadSessions() {
-try {
-const result = await getSessions();
-sessions.value = result.sessions || [];
-if (result.storage) {
-storage.value = result.storage;
-}
-if (activeSessionId.value) {
-const existing = sessions.value.find(
-(session) => session.id === activeSessionId.value
-);
-if (existing) {
-await selectSession(existing.id);
-return;
-}
-}
-if (sessions.value.length) {
-await selectSession(sessions.value[0].id);
-}
-} catch (error) {
-errorMessage.value = error.message;
-}
-}
-async function selectSession(sessionId) {
-if (!sessionId) {
-return;
-}
-activeSessionId.value = sessionId;
-errorMessage.value = "";
-closeEventSource();
-try {
-const [sessionResult, outputResult] = await Promise.all([
-getSession(sessionId),
-getSessionOutput(sessionId),
-]);
-activeSession.value = sessionResult;
-output.value = outputResult.output || [];
-workspace.value = sessionResult.workspace || "";
-provider.value = sessionResult.provider || provider.value;
-task.value = sessionResult.task || "";
-conversationId.value = sessionResult.conversationId || "";
-subscribeToSession(sessionId);
-} catch (error) {
-errorMessage.value = error.message;
-}
-}
-function subscribeToSession(sessionId) {
-closeEventSource();
-const source = new EventSource(getEventSourceUrl(sessionId));
-source.addEventListener("output", (event) => {
-try {
-const record = JSON.parse(event.data);
-if (
-!output.value.some((item) => {
-return (
-item.timestamp === record.timestamp &&
-item.type === record.type &&
-item.content === record.content
-);
-})
-) {
-output.value.push(record);
-}
-} catch (error) {
-errorMessage.value = error.message;
-}
-});
-source.addEventListener("conversation", (event) => {
-try {
-const info = JSON.parse(event.data);
-if (info && info.conversationId) {
-if (activeSession.value) {
-activeSession.value = Object.assign({}, activeSession.value, {
-conversationId: info.conversationId,
-});
-updateSessionList(activeSession.value);
-}
-conversationId.value = info.conversationId;
-}
-} catch (error) {
-errorMessage.value = error.message;
-}
-});
-source.addEventListener("finished", (event) => {
-try {
-activeSession.value = JSON.parse(event.data);
-updateSessionList(activeSession.value);
-} catch (error) {
-errorMessage.value = error.message;
-}
-refreshStorage();
-});
-source.addEventListener("error", (event) => {
-if (event.data) {
-try {
-const result = JSON.parse(event.data);
-errorMessage.value = result.message || "Agent error";
-} catch {
-errorMessage.value = "Agent event stream error";
-}
-}
-});
-eventSource.value = source;
-}
-function normalizeConversationId() {
-const raw = (conversationId.value || "").trim();
-if (!raw) {
-return "";
-}
-const parsed = extractConversationId(provider.value, raw);
-if (parsed) {
-return parsed;
-}
-return raw;
-}
-async function runAgent() {
-if (running.value) {
-return;
-}
-if (!workspace.value.trim()) {
-errorMessage.value = "Please enter a workspace path before running the agent.";
-await nextTick();
-workspaceInput.value?.focus();
-return;
-}
-if (!task.value.trim()) {
-errorMessage.value = "Please describe the task before running the agent.";
-return;
-}
-errorMessage.value = "";
-try {
-const payload = {
-workspace: workspace.value.trim(),
-provider: provider.value,
-task: task.value.trim(),
-};
-const cid = normalizeConversationId();
-if (cid) {
-payload.conversationId = cid;
-}
-const result = await apiRunAgent(payload);
-activeSessionId.value = result.sessionId;
-await loadSessions();
-await selectSession(result.sessionId);
-} catch (error) {
-errorMessage.value = error.message;
-if (error.code === "MAX_SESSIONS" || error.code === "MAX_DISK") {
-refreshStorage();
-}
-}
-}
-async function stopAgent() {
-if (!activeSessionId.value || !running.value) {
-return;
-}
-try {
-await stopSession(activeSessionId.value);
-await selectSession(activeSessionId.value);
-await loadSessions();
-} catch (error) {
-errorMessage.value = error.message;
-}
-}
-async function deleteSessionById(sessionId) {
-if (!sessionId) {
-return;
-}
-errorMessage.value = "";
-try {
-const result = await deleteSession(sessionId);
-if (result.storage) {
-storage.value = result.storage;
-}
-} catch (error) {
-errorMessage.value = error.message;
-return;
-}
-const wasActive = activeSessionId.value === sessionId;
-sessions.value = sessions.value.filter((session) => session.id !== sessionId);
-if (!wasActive) {
-return;
-}
-closeEventSource();
-activeSessionId.value = null;
-activeSession.value = null;
-output.value = [];
-if (sessions.value.length) {
-await selectSession(sessions.value[0].id);
-return;
-}
-createNewSession();
-}
-function createNewSession() {
-closeEventSource();
-activeSessionId.value = null;
-activeSession.value = null;
-output.value = [];
-errorMessage.value = "";
-task.value = "";
-workspace.value = "";
-conversationId.value = "";
-}
-function clearConsole() {
-output.value = [];
-}
-function updateSessionList(session) {
-const index = sessions.value.findIndex((item) => item.id === session.id);
-if (index === -1) {
-sessions.value.unshift(session);
-return;
-}
-sessions.value[index] = session;
-}
-function closeEventSource() {
-if (!eventSource.value) {
-return;
-}
-eventSource.value.close();
-eventSource.value = null;
-}
-function sessionTitle(session) {
-const value = (session.task || "").trim();
-if (!value) {
-return "Untitled session";
-}
-return value.length > 72 ? value.slice(0, 72) + "..." : value;
-}
-function shortId(id) {
-return id ? id.slice(0, 8) : "-";
-}
-function focusTask() {
-if (running.value) {
-return;
-}
-const textarea = document.querySelector(".composer textarea");
-textarea?.focus();
-}
-function openWorkspacePicker() {
-if (running.value) {
-return;
-}
-showWorkspacePicker.value = true;
-}
-function closeWorkspacePicker() {
-showWorkspacePicker.value = false;
-}
-function selectWorkspace(selectedPath) {
-if (!selectedPath) {
-return;
-}
-workspace.value = selectedPath;
-showWorkspacePicker.value = false;
-errorMessage.value = "";
-}
-function onSettingsSaved() {
-errorMessage.value = "";
-}
-onMounted(() => {
-applyTheme(theme.value);
-loadRatio();
-loadSessions();
-refreshStorage();
-});
-onUnmounted(closeEventSource);
-onBeforeUnmount(stopResize);
+    const storage = ref(null);
+    const theme = ref(resolveInitialTheme());
+    function toggleTheme() {
+        theme.value = theme.value === "dark" ? "light" : "dark";
+        applyTheme(theme.value);
+        persistTheme(theme.value);
+    }
+    const conversationId = ref("");
+    const workspaceInput = ref(null);
+    const showWorkspacePicker = ref(false);
+    const showSettings = ref(false);
+    const showHistory = ref(false);
+    const showTrace = ref(false);
+    const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
+    const MIN_RATIO = 0.2;
+    const MAX_RATIO = 0.85;
+    const DEFAULT_RATIO = 0.68;
+    const splitArea = ref(null);
+    const ratio = ref(DEFAULT_RATIO);
+    const resizing = ref(false);
+    const ratioPercent = computed(() => Math.round(ratio.value * 100));
+    const consoleStyle = computed(() => ({ flex: ratio.value + " 1 0" }));
+    const composerStyle = computed(() => ({ flex: 1 - ratio.value + " 1 0" }));
+    function clampRatio(value) {
+        if (value < MIN_RATIO) {
+            return MIN_RATIO;
+        }
+        if (value > MAX_RATIO) {
+            return MAX_RATIO;
+        }
+        return value;
+    }
+    function loadRatio() {
+        try {
+            const raw = window.localStorage.getItem(SPLIT_STORAGE_KEY);
+            if (raw) {
+                const parsed = parseFloat(raw);
+                if (!isNaN(parsed)) {
+                    ratio.value = clampRatio(parsed);
+                }
+            }
+        } catch (error) {}
+    }
+    function persistRatio() {
+        try {
+            window.localStorage.setItem(SPLIT_STORAGE_KEY, String(ratio.value));
+        } catch (error) {}
+    }
+    function applyPointerRatio(clientY) {
+        const el = splitArea.value;
+        if (!el) {
+            return;
+        }
+        const rect = el.getBoundingClientRect();
+        if (rect.height <= 0) {
+            return;
+        }
+        const next = (clientY - rect.top) / rect.height;
+        ratio.value = clampRatio(next);
+    }
+    function onPointerMove(event) {
+        applyPointerRatio(event.clientY);
+    }
+    function stopResize() {
+        if (!resizing.value) {
+            return;
+        }
+        resizing.value = false;
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", stopResize);
+        window.removeEventListener("pointercancel", stopResize);
+        persistRatio();
+    }
+    function startResize(event) {
+        if (event.button !== undefined && event.button !== 0) {
+            return;
+        }
+        event.preventDefault();
+        resizing.value = true;
+        window.addEventListener("pointermove", onPointerMove);
+        window.addEventListener("pointerup", stopResize);
+        window.addEventListener("pointercancel", stopResize);
+    }
+    function resetRatio() {
+        ratio.value = DEFAULT_RATIO;
+        persistRatio();
+    }
+    const isElectron = computed(() => {
+        return (
+            typeof window !== "undefined" &&
+            window.xmlAgentDesktop &&
+            window.xmlAgentDesktop.isElectron === true
+        );
+    });
+    const electronPort = computed(() => {
+        if (!isElectron.value) {
+            return "";
+        }
+        return String(window.xmlAgentDesktop.port || "");
+    });
+    const activeConversationId = computed(() => {
+        return activeSession.value?.conversationId || "";
+    });
+    const sessionStatus = computed(() => {
+        return activeSession.value?.status || "created";
+    });
+    const running = computed(() => {
+        return activeSession.value?.running === true;
+    });
+    const workspaceTitle = computed(() => {
+        return activeSession.value ? sessionTitle(activeSession.value) : "New Agent Session";
+    });
+    const statusText = computed(() => {
+        const labels = {
+            created: "Ready",
+            running: "Running",
+            completed: "Completed",
+            stopped: "Stopped",
+            interrupted: "Interrupted",
+            error: "Error",
+        };
+        return labels[sessionStatus.value] || sessionStatus.value;
+    });
+    async function refreshStorage() {
+        try {
+            storage.value = await getStorage();
+        } catch (error) {}
+    }
+    async function loadSessions() {
+        try {
+            const result = await getSessions();
+            sessions.value = result.sessions || [];
+            if (result.storage) {
+                storage.value = result.storage;
+            }
+            if (activeSessionId.value) {
+                const existing = sessions.value.find(
+                    (session) => session.id === activeSessionId.value
+                );
+                if (existing) {
+                    await selectSession(existing.id);
+                    return;
+                }
+            }
+            if (sessions.value.length) {
+                await selectSession(sessions.value[0].id);
+            }
+        } catch (error) {
+            errorMessage.value = error.message;
+        }
+    }
+    async function selectSession(sessionId) {
+        if (!sessionId) {
+            return;
+        }
+        activeSessionId.value = sessionId;
+        errorMessage.value = "";
+        closeEventSource();
+        try {
+            const [sessionResult, outputResult] = await Promise.all([
+                getSession(sessionId),
+                getSessionOutput(sessionId),
+            ]);
+            activeSession.value = sessionResult;
+            output.value = outputResult.output || [];
+            workspace.value = sessionResult.workspace || "";
+            provider.value = sessionResult.provider || provider.value;
+            task.value = sessionResult.task || "";
+            conversationId.value = sessionResult.conversationId || "";
+            subscribeToSession(sessionId);
+        } catch (error) {
+            errorMessage.value = error.message;
+        }
+    }
+    function subscribeToSession(sessionId) {
+        closeEventSource();
+        const source = new EventSource(getEventSourceUrl(sessionId));
+        source.addEventListener("output", (event) => {
+            try {
+                const record = JSON.parse(event.data);
+                if (
+                    !output.value.some((item) => {
+                        return (
+                            item.timestamp === record.timestamp &&
+                            item.type === record.type &&
+                            item.content === record.content
+                        );
+                    })
+                ) {
+                    output.value.push(record);
+                }
+            } catch (error) {
+                errorMessage.value = error.message;
+            }
+        });
+        source.addEventListener("conversation", (event) => {
+            try {
+                const info = JSON.parse(event.data);
+                if (info && info.conversationId) {
+                    if (activeSession.value) {
+                        activeSession.value = Object.assign({}, activeSession.value, {
+                            conversationId: info.conversationId,
+                        });
+                        updateSessionList(activeSession.value);
+                    }
+                    conversationId.value = info.conversationId;
+                }
+            } catch (error) {
+                errorMessage.value = error.message;
+            }
+        });
+        source.addEventListener("finished", (event) => {
+            try {
+                activeSession.value = JSON.parse(event.data);
+                updateSessionList(activeSession.value);
+            } catch (error) {
+                errorMessage.value = error.message;
+            }
+            refreshStorage();
+        });
+        source.addEventListener("error", (event) => {
+            if (event.data) {
+                try {
+                    const result = JSON.parse(event.data);
+                    errorMessage.value = result.message || "Agent error";
+                } catch {
+                    errorMessage.value = "Agent event stream error";
+                }
+            }
+        });
+        eventSource.value = source;
+    }
+    function normalizeConversationId() {
+        const raw = (conversationId.value || "").trim();
+        if (!raw) {
+            return "";
+        }
+        const parsed = extractConversationId(provider.value, raw);
+        if (parsed) {
+            return parsed;
+        }
+        return raw;
+    }
+    async function runAgent() {
+        if (running.value) {
+            return;
+        }
+        if (!workspace.value.trim()) {
+            errorMessage.value = "Please enter a workspace path before running the agent.";
+            await nextTick();
+            workspaceInput.value?.focus();
+            return;
+        }
+        if (!task.value.trim()) {
+            errorMessage.value = "Please describe the task before running the agent.";
+            return;
+        }
+        errorMessage.value = "";
+        try {
+            const payload = {
+                workspace: workspace.value.trim(),
+                provider: provider.value,
+                task: task.value.trim(),
+            };
+            const cid = normalizeConversationId();
+            if (cid) {
+                payload.conversationId = cid;
+            }
+            const result = await apiRunAgent(payload);
+            activeSessionId.value = result.sessionId;
+            await loadSessions();
+            await selectSession(result.sessionId);
+        } catch (error) {
+            errorMessage.value = error.message;
+            if (error.code === "MAX_SESSIONS" || error.code === "MAX_DISK") {
+                refreshStorage();
+            }
+        }
+    }
+    async function stopAgent() {
+        if (!activeSessionId.value || !running.value) {
+            return;
+        }
+        try {
+            await stopSession(activeSessionId.value);
+            await selectSession(activeSessionId.value);
+            await loadSessions();
+        } catch (error) {
+            errorMessage.value = error.message;
+        }
+    }
+    async function deleteSessionById(sessionId) {
+        if (!sessionId) {
+            return;
+        }
+        errorMessage.value = "";
+        try {
+            const result = await deleteSession(sessionId);
+            if (result.storage) {
+                storage.value = result.storage;
+            }
+        } catch (error) {
+            errorMessage.value = error.message;
+            return;
+        }
+        const wasActive = activeSessionId.value === sessionId;
+        sessions.value = sessions.value.filter((session) => session.id !== sessionId);
+        if (!wasActive) {
+            return;
+        }
+        closeEventSource();
+        activeSessionId.value = null;
+        activeSession.value = null;
+        output.value = [];
+        if (sessions.value.length) {
+            await selectSession(sessions.value[0].id);
+            return;
+        }
+        createNewSession();
+    }
+    function createNewSession() {
+        closeEventSource();
+        activeSessionId.value = null;
+        activeSession.value = null;
+        output.value = [];
+        errorMessage.value = "";
+        task.value = "";
+        workspace.value = "";
+        conversationId.value = "";
+    }
+    function clearConsole() {
+        output.value = [];
+    }
+    function updateSessionList(session) {
+        const index = sessions.value.findIndex((item) => item.id === session.id);
+        if (index === -1) {
+            sessions.value.unshift(session);
+            return;
+        }
+        sessions.value[index] = session;
+    }
+    function closeEventSource() {
+        if (!eventSource.value) {
+            return;
+        }
+        eventSource.value.close();
+        eventSource.value = null;
+    }
+    function sessionTitle(session) {
+        const value = (session.task || "").trim();
+        if (!value) {
+            return "Untitled session";
+        }
+        return value.length > 72 ? value.slice(0, 72) + "..." : value;
+    }
+    function shortId(id) {
+        return id ? id.slice(0, 8) : "-";
+    }
+    function focusTask() {
+        if (running.value) {
+            return;
+        }
+        const textarea = document.querySelector(".composer textarea");
+        textarea?.focus();
+    }
+    function openWorkspacePicker() {
+        if (running.value) {
+            return;
+        }
+        showWorkspacePicker.value = true;
+    }
+    function closeWorkspacePicker() {
+        showWorkspacePicker.value = false;
+    }
+    function selectWorkspace(selectedPath) {
+        if (!selectedPath) {
+            return;
+        }
+        workspace.value = selectedPath;
+        showWorkspacePicker.value = false;
+        errorMessage.value = "";
+    }
+    function onSettingsSaved() {
+        errorMessage.value = "";
+    }
+    onMounted(() => {
+        applyTheme(theme.value);
+        loadRatio();
+        loadSessions();
+        refreshStorage();
+    });
+    onUnmounted(closeEventSource);
+    onBeforeUnmount(stopResize);
 </script>
 <style scoped>
     .workspace-browse-button {
