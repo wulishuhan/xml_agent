@@ -631,14 +631,8 @@ async function bootstrap() {
     const appUrl = "http://" + HOST + ":" + port + "/xml_agent_web";
     console.log("[Electron] XML Agent is running at " + appUrl);
     console.log("[Electron] Settings file: " + getSettingsPath(app));
-    // 尝试自动准备浏览器 CDP（不阻塞界面）
-    ensureBrowserCdp(settings)
-        .then((result) => {
-            console.log("[Electron] Browser CDP: " + result.message);
-        })
-        .catch((error) => {
-            console.warn("[Electron] Browser CDP setup failed:", error.message);
-        });
+    // 不在启动时自动拉起浏览器：避免每次打开应用都弹出浏览器窗口。
+    // 浏览器会在真正发送任务时由 Provider 按需启动（BrowserAgent 内置 autoStart）。
     const window = createWindow(appUrl);
     await loadApp(window, appUrl);
 }
@@ -655,6 +649,14 @@ async function shutdown() {
         }
     }
     serverInstance = null;
+
+    // 桌面版退出时关闭由本应用启动的 CDP 浏览器进程。
+    // Web 版不经过 electron/main.js，因此不受影响。
+    try {
+        await closeLaunchedBrowser();
+    } catch (error) {
+        console.warn("[Electron] Failed to close launched browser:", error.message);
+    }
 }
 app.on("window-all-closed", () => {
     if (process.platform !== "darwin") {
