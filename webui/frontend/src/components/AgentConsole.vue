@@ -76,39 +76,15 @@
                             <span v-if="getActionTag(item)" class="event-tag">{{
                                 getActionTag(item)
                             }}</span>
-                            <span v-if="isCollapsible(item)" class="event-lines"
+                            <span
+                                v-if="isCollapsible(item) && !isAnswerItem(item)"
+                                class="event-lines"
                                 >{{ getLineCount(item) }} lines</span
                             >
                             <time v-if="item.timestamp">{{ formatTime(item.timestamp) }}</time>
                         </div>
                         <template v-if="isAnswerItem(item)">
-                            <div
-                                v-if="isCollapsible(item) && !isExpanded(index)"
-                                class="event-preview-wrap"
-                            >
-                                <div class="event-preview">{{ getPreview(item) }}</div>
-                            </div>
-                            <div v-else class="event-answer-body">
-                                <div class="answer-row">
-                                    <span class="answer-key">ok</span>
-                                    <span class="answer-value">true</span>
-                                </div>
-                                <div class="answer-row">
-                                    <span class="answer-key">action</span>
-                                    <span class="answer-value">answer</span>
-                                </div>
-                                <div class="answer-row">
-                                    <span class="answer-key">content</span>
-                                </div>
-                                <div
-                                    v-if="renderMarkdown(getAnswerContent(item))"
-                                    class="answer-content markdown-body"
-                                    v-html="renderMarkdown(getAnswerContent(item))"
-                                ></div>
-                                <pre v-else class="answer-content">{{
-                                    getAnswerContent(item)
-                                }}</pre>
-                            </div>
+                            <!-- Answer items are hidden from the main list to avoid duplication -->
                         </template>
                         <template v-else>
                             <div
@@ -119,30 +95,34 @@
                             </div>
                             <pre v-else-if="isStructured(item)">{{ getBody(item) }}</pre>
                             <div v-else class="event-text">{{ getBody(item) }}</div>
+                            <button
+                                v-if="isCollapsible(item) && !isAnswerItem(item)"
+                                class="event-toggle"
+                                @click="toggle(index)"
+                            >
+                                <span class="event-toggle-icon">{{ toggleIcon(index) }}</span>
+                                <span>{{ toggleText(index) }}</span>
+                            </button>
                         </template>
-                        <button
-                            v-if="isCollapsible(item)"
-                            class="event-toggle"
-                            @click="toggle(index)"
-                        >
-                            <span class="event-toggle-icon">{{ toggleIcon(index) }}</span>
-                            <span>{{ toggleText(index) }}</span>
-                        </button>
                     </div>
                 </article>
                 <article v-if="finalAnswer.content" class="event-card event-final-answer">
                     <div class="event-marker"><span>+</span></div>
                     <div class="event-content">
-                        <div class="event-meta">
-                            <span class="event-type">Final Answer</span>
-                            <span class="event-tag">answer</span>
+                        <div class="final-answer-card">
+                            <div class="event-meta">
+                                <span class="event-type">Final Answer</span>
+                                <span class="event-tag">answer</span>
+                            </div>
+                            <div
+                                v-if="finalAnswer.html"
+                                class="final-answer-content markdown-body"
+                                v-html="finalAnswer.html"
+                            ></div>
+                            <div v-else class="final-answer-content final-answer-plain">
+                                {{ finalAnswer.content }}
+                            </div>
                         </div>
-                        <div
-                            v-if="finalAnswer.html"
-                            class="final-answer-content markdown-body"
-                            v-html="finalAnswer.html"
-                        ></div>
-                        <div v-else class="final-answer-content">{{ finalAnswer.content }}</div>
                     </div>
                 </article>
             </template>
@@ -358,7 +338,7 @@
         if (tag === "answer") return "*";
         if (tag === "read") return "R";
         if (tag === "write") return "W";
-        if (tag === "exec") return "";
+        if (tag === "exec") return ">";
         if (tag === "done") return "=";
         return ">";
     }
@@ -413,12 +393,12 @@
         return text.split("\n").length;
     }
     function isCollapsible(item) {
+        if (isAnswerItem(item)) {
+            return false; // Answer items are handled separately
+        }
         const text = getBody(item);
         if (!text) {
             return false;
-        }
-        if (getActionTag(item) === "answer") {
-            return true;
         }
         if (text.length > PREVIEW_MAX_CHARS) {
             return true;
