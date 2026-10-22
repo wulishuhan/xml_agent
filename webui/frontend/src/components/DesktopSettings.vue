@@ -10,26 +10,46 @@
                 <div class="settings-heading">
                     <div class="settings-icon">⚙</div>
                     <div>
-                        <strong id="settings-title">{{
-                            isElectron ? "Desktop Settings" : "Browser Settings"
-                        }}</strong>
-                        <span>Choose which browser the agent drives via CDP</span>
+                        <strong id="settings-title">
+                            {{ isElectron ? t("titleDesktop") : t("titleBrowser") }}
+                        </strong>
+                        <span>{{ t("subtitle") }}</span>
                     </div>
                 </div>
-                <button
-                    class="icon-button"
-                    type="button"
-                    aria-label="Close"
-                    @click="$emit('close')"
-                >
-                    ×
-                </button>
+                <div class="settings-header-actions">
+                    <div class="lang-switch" role="group" :aria-label="t('language')">
+                        <button
+                            type="button"
+                            class="lang-option"
+                            :class="{ active: lang === 'zh' }"
+                            @click="setLang('zh')"
+                        >
+                            中文
+                        </button>
+                        <button
+                            type="button"
+                            class="lang-option"
+                            :class="{ active: lang === 'en' }"
+                            @click="setLang('en')"
+                        >
+                            EN
+                        </button>
+                    </div>
+                    <button
+                        class="icon-button"
+                        type="button"
+                        :aria-label="t('close')"
+                        @click="$emit('close')"
+                    >
+                        ×
+                    </button>
+                </div>
             </header>
-            <div v-if="loading" class="settings-loading">Loading...</div>
+            <div v-if="loading" class="settings-loading">{{ t("loading") }}</div>
             <div v-else class="settings-body">
                 <div class="settings-field">
-                    <label>Browser</label>
-                    <div class="settings-segmented" role="radiogroup" aria-label="Browser">
+                    <label>{{ t("browser") }}</label>
+                    <div class="settings-segmented" role="radiogroup" :aria-label="t('browser')">
                         <button
                             type="button"
                             class="segmented-option"
@@ -39,9 +59,9 @@
                             @click="selectBrowserType('chrome')"
                         >
                             <span class="segmented-title">Google Chrome</span>
-                            <span class="segmented-sub">{{
-                                chromeAvailable ? "detected" : "not found"
-                            }}</span>
+                            <span class="segmented-sub">
+                                {{ chromeAvailable ? t("detected") : t("notFound") }}
+                            </span>
                         </button>
                         <button
                             type="button"
@@ -52,99 +72,94 @@
                             @click="selectBrowserType('edge')"
                         >
                             <span class="segmented-title">Microsoft Edge</span>
-                            <span class="segmented-sub">{{
-                                edgeAvailable ? "detected" : "not found"
-                            }}</span>
+                            <span class="segmented-sub">
+                                {{ edgeAvailable ? t("detected") : t("notFound") }}
+                            </span>
                         </button>
                     </div>
-                    <div class="settings-hint">
-                        Both Chrome and Edge are Chromium-based and expose the same CDP endpoint.
-                        The agent will drive the browser you select here.
-                    </div>
+                    <div class="settings-hint">{{ t("browserHint") }}</div>
                 </div>
                 <div class="settings-field">
-                    <label>{{ browserLabel }} executable path</label>
+                    <label>{{ browserLabel }} {{ t("executablePath") }}</label>
                     <div class="settings-row">
                         <input
                             v-model="chromePath"
                             type="text"
-                            :placeholder="'Leave empty to auto-detect ' + browserLabel"
+                            :placeholder="t('pathPlaceholder') + ' ' + browserLabel"
                         />
                         <button v-if="isElectron" type="button" class="btn" @click="pickBrowser">
-                            Browse
+                            {{ t("browse") }}
                         </button>
                     </div>
                     <div class="settings-hint">
-                        <span v-if="chromePath"
-                            >Using custom path: <code>{{ chromePath }}</code></span
-                        >
-                        <span v-else-if="detectedBrowser"
-                            >Auto-detected: <code>{{ detectedBrowser }}</code></span
-                        >
-                        <span v-else>Not found automatically. Please set the path manually.</span>
+                        <span v-if="chromePath">
+                            {{ t("usingCustomPath") }} <code>{{ chromePath }}</code>
+                        </span>
+                        <span v-else-if="detectedBrowser">
+                            {{ t("autoDetected") }} <code>{{ detectedBrowser }}</code>
+                        </span>
+                        <span v-else>{{ t("notFoundManually") }}</span>
                     </div>
                 </div>
                 <div class="settings-field">
-                    <label>{{ browserLabel }} CDP URL</label>
+                    <label>{{ browserLabel }} {{ t("cdpUrl") }}</label>
                     <input v-model="currentCdpUrl" type="text" :placeholder="cdpPlaceholder" />
-                    <div class="settings-hint">
-                        {{ browserLabel }} DevTools Protocol endpoint. Each browser uses its own
-                        port so switching between Chrome and Edge won't conflict.
-                    </div>
+                    <div class="settings-hint">{{ browserLabel }} {{ t("cdpHint") }}</div>
                 </div>
                 <div class="settings-field settings-field-inline">
                     <label>
-                        <input v-model="autoStartChrome" type="checkbox" /> Auto-start
-                        {{ browserLabel }} with remote debugging on launch
+                        <input v-model="autoStartChrome" type="checkbox" />
+                        {{ t("autoStart") }}
                     </label>
                 </div>
                 <div class="settings-field settings-field-inline">
                     <label>
-                        <input v-model="headless" type="checkbox" /> Run {{ browserLabel }} in
-                        headless mode (no visible window)
+                        <input v-model="headless" type="checkbox" />
+                        {{ t("headless") }}
                     </label>
-                    <div class="settings-hint">
-                        Leave unchecked to see the browser window. Headless mode is useful for
-                        unattended runs but makes it harder to log in to providers.
-                    </div>
+                    <div class="settings-hint">{{ t("headlessHint") }}</div>
                 </div>
                 <div v-if="isElectron" class="settings-field settings-field-inline">
                     <label>
-                        <input v-model="focusCdpPage" type="checkbox" /> Bring the launched CDP tab
-                        to the foreground
+                        <input v-model="focusCdpPage" type="checkbox" />
+                        {{ t("focusCdp") }}
                     </label>
-                    <div class="settings-hint">
-                        When enabled, the agent will switch focus to the provider tab it uses.
-                        Uncheck to keep the current window focus.
-                    </div>
+                    <div class="settings-hint">{{ t("focusCdpHint") }}</div>
                 </div>
                 <div class="settings-status">
-                    <div><strong>Selected browser:</strong> {{ browserLabel }}</div>
-                    <div><strong>CDP running:</strong> {{ cdpRunning ? "yes" : "no" }}</div>
                     <div>
-                        <strong>Connected browser:</strong>
-                        {{ connectedBrowser || (cdpRunning ? "unknown" : "none") }}
+                        <strong>{{ t("selectedBrowser") }}</strong> {{ browserLabel }}
+                    </div>
+                    <div>
+                        <strong>{{ t("cdpRunning") }}</strong>
+                        {{ cdpRunning ? t("yes") : t("no") }}
+                    </div>
+                    <div>
+                        <strong>{{ t("connectedBrowser") }}</strong>
+                        {{ connectedBrowser || (cdpRunning ? t("unknown") : t("none")) }}
                         <span v-if="cdpRunning && typeMatches === false" class="settings-warn">
-                            (different from selected)
+                            {{ t("differentFromSelected") }}
                         </span>
                     </div>
                     <div>
-                        <strong>{{ browserLabel }} path:</strong>
-                        {{ chromePath || detectedBrowser || "auto" }}
+                        <strong>{{ browserLabel }} {{ t("path") }}</strong>
+                        {{ chromePath || detectedBrowser || t("auto") }}
                     </div>
                     <div v-if="settingsPath">
-                        <strong>Settings file:</strong> <code>{{ settingsPath }}</code>
+                        <strong>{{ t("settingsFile") }}</strong> <code>{{ settingsPath }}</code>
                     </div>
                 </div>
                 <div v-if="message" class="settings-message">{{ message }}</div>
             </div>
             <footer class="settings-footer">
-                <button type="button" class="btn" @click="refreshStatus">Refresh status</button>
+                <button type="button" class="btn" @click="refreshStatus">
+                    {{ t("refreshStatus") }}
+                </button>
                 <button type="button" class="btn" :disabled="switching" @click="switchBrowserNow">
-                    {{ switching ? "Switching..." : "Switch to " + browserLabel + " now" }}
+                    {{ switching ? t("switching") : t("switchNow") + " " + browserLabel }}
                 </button>
                 <button type="button" class="btn btn-primary" :disabled="saving" @click="save">
-                    {{ saving ? "Saving..." : "Save" }}
+                    {{ saving ? t("saving") : t("save") }}
                 </button>
             </footer>
         </section>
@@ -166,6 +181,155 @@
         chrome: "http://127.0.0.1:9222",
         edge: "http://127.0.0.1:9223",
     };
+    // ---------- 国际化（中英双语） ----------
+    const LANG_STORAGE_KEY = "xml-agent:settings-lang";
+    const MESSAGES = {
+        zh: {
+            titleDesktop: "桌面设置",
+            titleBrowser: "浏览器设置",
+            subtitle: "选择 Agent 通过 CDP 驱动的浏览器",
+            language: "语言",
+            close: "关闭",
+            loading: "加载中…",
+            browser: "浏览器",
+            detected: "已检测到",
+            notFound: "未找到",
+            browserHint:
+                "Chrome 与 Edge 同为 Chromium 内核，暴露相同的 CDP 端点。Agent 将使用你在此选择的浏览器。",
+            executablePath: "可执行文件路径",
+            pathPlaceholder: "留空则自动探测",
+            browse: "浏览",
+            usingCustomPath: "使用自定义路径：",
+            autoDetected: "自动检测到：",
+            notFoundManually: "未自动找到，请手动填写路径。",
+            cdpUrl: "CDP 地址",
+            cdpHint: "DevTools 协议端点。每个浏览器使用独立端口，切换 Chrome 与 Edge 时不会冲突。",
+            autoStart: "启动时自动以远程调试模式启动浏览器",
+            headless: "以无界面（headless）模式运行浏览器",
+            headlessHint:
+                "不勾选可看到浏览器窗口。无界面模式适合无人值守运行，但登录第三方平台会更麻烦。",
+            focusCdp: "将启动的 CDP 标签页切换到前台",
+            focusCdpHint: "开启后 Agent 会把焦点切到它使用的标签页；取消则保持当前窗口焦点。",
+            selectedBrowser: "当前浏览器：",
+            cdpRunning: "CDP 运行中：",
+            connectedBrowser: "已连接浏览器：",
+            differentFromSelected: "（与所选不一致）",
+            path: "路径：",
+            settingsFile: "设置文件：",
+            refreshStatus: "刷新状态",
+            switchNow: "立即切换到",
+            switching: "切换中…",
+            save: "保存",
+            saving: "保存中…",
+            yes: "是",
+            no: "否",
+            unknown: "未知",
+            none: "无",
+            auto: "自动",
+            statusRefreshed: "状态已刷新。",
+            savedNewSessions: "已保存。新会话将使用 {browser}。",
+            savedSwitchHint:
+                "已保存。当前运行的 CDP 浏览器仍为 {current}。要使用 {target}，请点击“立即切换到 {target}”。",
+            selectedNeedSwitch:
+                "已选择 {target}。请点击“立即切换到 {target}”以关闭当前浏览器并启动所选浏览器。",
+            selected: "已选择 {browser}。",
+            switchNotSupported: "当前构建不支持浏览器切换。",
+            switched: "已切换。",
+        },
+        en: {
+            titleDesktop: "Desktop Settings",
+            titleBrowser: "Browser Settings",
+            subtitle: "Choose which browser the agent drives via CDP",
+            language: "Language",
+            close: "Close",
+            loading: "Loading...",
+            browser: "Browser",
+            detected: "detected",
+            notFound: "not found",
+            browserHint:
+                "Both Chrome and Edge are Chromium-based and expose the same CDP endpoint. The agent will drive the browser you select here.",
+            executablePath: "executable path",
+            pathPlaceholder: "Leave empty to auto-detect",
+            browse: "Browse",
+            usingCustomPath: "Using custom path:",
+            autoDetected: "Auto-detected:",
+            notFoundManually: "Not found automatically. Please set the path manually.",
+            cdpUrl: "CDP URL",
+            cdpHint:
+                "DevTools Protocol endpoint. Each browser uses its own port so switching between Chrome and Edge won't conflict.",
+            autoStart: "Auto-start the browser with remote debugging on launch",
+            headless: "Run the browser in headless mode (no visible window)",
+            headlessHint:
+                "Leave unchecked to see the browser window. Headless mode is useful for unattended runs but makes it harder to log in to providers.",
+            focusCdp: "Bring the launched CDP tab to the foreground",
+            focusCdpHint:
+                "When enabled, the agent will switch focus to the provider tab it uses. Uncheck to keep the current window focus.",
+            selectedBrowser: "Selected browser:",
+            cdpRunning: "CDP running:",
+            connectedBrowser: "Connected browser:",
+            differentFromSelected: "(different from selected)",
+            path: "path:",
+            settingsFile: "Settings file:",
+            refreshStatus: "Refresh status",
+            switchNow: "Switch to",
+            switching: "Switching...",
+            save: "Save",
+            saving: "Saving...",
+            yes: "yes",
+            no: "no",
+            unknown: "unknown",
+            none: "none",
+            auto: "auto",
+            statusRefreshed: "Status refreshed.",
+            savedNewSessions: "Saved. New sessions will use {browser}.",
+            savedSwitchHint:
+                'Saved. The running CDP browser is still {current}. To use {target}, click "Switch to {target} now".',
+            selectedNeedSwitch:
+                'Selected {target}. Click "Switch to {target} now" to close the current browser and start the selected one.',
+            selected: "Selected {browser}.",
+            switchNotSupported: "Browser switching is not supported in this build.",
+            switched: "Switched.",
+        },
+    };
+    function detectInitialLang() {
+        try {
+            const saved = window.localStorage.getItem(LANG_STORAGE_KEY);
+            if (saved === "zh" || saved === "en") {
+                return saved;
+            }
+        } catch (error) {
+            // ignore
+        }
+        const nav = typeof navigator !== "undefined" ? String(navigator.language || "") : "";
+        return nav.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+    }
+    const lang = ref(detectInitialLang());
+    function setLang(next) {
+        if (next !== "zh" && next !== "en") {
+            return;
+        }
+        lang.value = next;
+        try {
+            window.localStorage.setItem(LANG_STORAGE_KEY, next);
+        } catch (error) {
+            // ignore
+        }
+    }
+    function format(template, params) {
+        const data = params || {};
+        return String(template).replace(/{(\w+)}/g, (match, key) => {
+            return Object.prototype.hasOwnProperty.call(data, key) ? String(data[key]) : match;
+        });
+    }
+    function t(key, params) {
+        const table = MESSAGES[lang.value] || MESSAGES.en;
+        const text = table[key] !== undefined ? table[key] : MESSAGES.en[key];
+        if (text === undefined) {
+            return key;
+        }
+        return params ? format(text, params) : text;
+    }
+    // ---------- 状态 ----------
     const loading = ref(true);
     const saving = ref(false);
     const switching = ref(false);
@@ -238,7 +402,7 @@
                 if (api && typeof api.switch === "function") {
                     return api.switch(browserTypeValue);
                 }
-                return { message: "Browser switching is not supported in this build." };
+                return { message: t("switchNotSupported") };
             }
             return apiSwitchBrowser(browserTypeValue);
         },
@@ -329,19 +493,15 @@
             return;
         }
         browserType.value = next;
+        const targetLabel = next === "edge" ? "Edge" : "Chrome";
         try {
             const result = await backend.detect(next);
             detectedBrowser.value = (result && result.found) || "";
             chromePath.value = "";
             if (cdpRunning.value && typeMatches.value === false) {
-                message.value =
-                    "Selected " +
-                    (next === "edge" ? "Edge" : "Chrome") +
-                    '. Click "Switch to ' +
-                    (next === "edge" ? "Edge" : "Chrome") +
-                    ' now" to close the current browser and start the selected one.';
+                message.value = t("selectedNeedSwitch", { target: targetLabel });
             } else {
-                message.value = "Selected " + (next === "edge" ? "Edge" : "Chrome") + ".";
+                message.value = t("selected", { browser: targetLabel });
             }
         } catch (error) {
             message.value = error.message;
@@ -351,7 +511,7 @@
         try {
             const status = await backend.status();
             applyStatus(status);
-            message.value = "Status refreshed.";
+            message.value = t("statusRefreshed");
         } catch (error) {
             message.value = error.message;
         }
@@ -368,15 +528,14 @@
     }
     async function switchBrowserNow() {
         switching.value = true;
-        message.value = "Switching to " + browserLabel.value + "...";
+        message.value = t("switching");
         try {
-            // 先保存选择，保证后续 session 使用新浏览器
             const saved = await backend.writeSettings(buildSettingsPayload());
             if (saved && saved.browserType) {
                 browserType.value = normalizeBrowserType(saved.browserType);
             }
             const result = await backend.switchBrowser(browserType.value);
-            message.value = (result && result.message) || "Switched.";
+            message.value = (result && result.message) || t("switched");
             try {
                 const status = await backend.status();
                 applyStatus(status);
@@ -399,16 +558,12 @@
             await backend.writeSettings(buildSettingsPayload());
             const nextType = browserType.value;
             if (cdpRunning.value && previousType !== nextType) {
-                message.value =
-                    "Saved. The running CDP browser is still " +
-                    (connectedBrowser.value || "the previous one") +
-                    ". To use " +
-                    browserLabel.value +
-                    ', click "Switch to ' +
-                    browserLabel.value +
-                    ' now".';
+                message.value = t("savedSwitchHint", {
+                    current: connectedBrowser.value || "Chrome",
+                    target: browserLabel.value,
+                });
             } else {
-                message.value = "Saved. New sessions will use " + browserLabel.value + ".";
+                message.value = t("savedNewSessions", { browser: browserLabel.value });
             }
             emit("saved");
         } catch (error) {
@@ -481,6 +636,33 @@
         margin-top: 3px;
         color: var(--c-text-muted);
         font-size: 11px;
+    }
+    .settings-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .lang-switch {
+        display: inline-flex;
+        overflow: hidden;
+        border: 1px solid var(--c-border-strong);
+        border-radius: 7px;
+    }
+    .lang-option {
+        padding: 4px 9px;
+        border: 0;
+        background: transparent;
+        color: var(--c-text-muted);
+        font-size: 11px;
+        line-height: 1.4;
+    }
+    .lang-option + .lang-option {
+        border-left: 1px solid var(--c-border-strong);
+    }
+    .lang-option.active {
+        background: var(--c-elevated-bg);
+        color: var(--c-text-strong);
+        font-weight: 650;
     }
     .settings-body {
         flex: 1;
