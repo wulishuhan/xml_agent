@@ -264,6 +264,8 @@ class Agent extends EventEmitter {
             this.emitEvent("action.parsed", {
                 step: this.step,
                 action: action.action,
+                // 附带解析出的完整动作，便于在 Trace 中查看该 Action 的细节
+                parsed: action,
             });
         } catch (error) {
             this.emitEvent("action.parse_error", {

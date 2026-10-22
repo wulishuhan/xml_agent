@@ -93,48 +93,58 @@
                                             :class="'trace-event-' + event.kind"
                                         >
                                             <div class="trace-event-head">
-                                                <span
-                                                    class="trace-event-kind"
-                                                    :class="eventClass(event)"
-                                                >
-                                                    {{ event.label }}
+                                                <span class="trace-event-main">
+                                                    <span
+                                                        class="trace-event-kind"
+                                                        :class="eventClass(event)"
+                                                    >
+                                                        {{ event.label }}
+                                                    </span>
+                                                    <span
+                                                        v-if="event.action"
+                                                        class="trace-event-action"
+                                                        >action: {{ event.action }}</span
+                                                    >
                                                 </span>
-                                                <span v-if="event.action" class="trace-event-action"
-                                                    >action: {{ event.action }}</span
-                                                >
-                                                <span
-                                                    v-if="event.ok === false"
-                                                    class="trace-event-badge trace-event-badge-error"
-                                                    >failed</span
-                                                >
-                                                <span
-                                                    v-else-if="event.ok === true"
-                                                    class="trace-event-badge trace-event-badge-ok"
-                                                    >ok</span
-                                                >
-                                                <span
-                                                    v-if="event.timestamp"
-                                                    class="trace-event-ts"
-                                                    >{{ formatTime(event.timestamp) }}</span
-                                                >
-                                                <button
-                                                    v-if="event.payload"
-                                                    type="button"
-                                                    class="trace-event-toggle"
-                                                    @click.stop="
-                                                        toggleEvent(run.runIndex, step.step, index)
-                                                    "
-                                                >
-                                                    {{
-                                                        isEventExpanded(
-                                                            run.runIndex,
-                                                            step.step,
-                                                            index
-                                                        )
-                                                            ? "Hide"
-                                                            : "Details"
-                                                    }}
-                                                </button>
+                                                <span class="trace-event-side">
+                                                    <span
+                                                        v-if="event.ok === false"
+                                                        class="trace-event-badge trace-event-badge-error"
+                                                        >failed</span
+                                                    >
+                                                    <span
+                                                        v-else-if="event.ok === true"
+                                                        class="trace-event-badge trace-event-badge-ok"
+                                                        >ok</span
+                                                    >
+                                                    <span
+                                                        v-if="event.timestamp"
+                                                        class="trace-event-ts"
+                                                        >{{ formatTime(event.timestamp) }}</span
+                                                    >
+                                                    <button
+                                                        v-if="event.payload"
+                                                        type="button"
+                                                        class="trace-event-toggle"
+                                                        @click.stop="
+                                                            toggleEvent(
+                                                                run.runIndex,
+                                                                step.step,
+                                                                index
+                                                            )
+                                                        "
+                                                    >
+                                                        {{
+                                                            isEventExpanded(
+                                                                run.runIndex,
+                                                                step.step,
+                                                                index
+                                                            )
+                                                                ? "Hide"
+                                                                : "Details"
+                                                        }}
+                                                    </button>
+                                                </span>
                                             </div>
                                             <div v-if="event.summary" class="trace-event-summary">
                                                 {{ event.summary }}
@@ -223,6 +233,29 @@
         };
         return map[event.type] || event.type;
     }
+    /**
+给动作对象生成可读摘要，例如：
+read  -> path: package.json
+write -> path: src/a.js
+exec  -> command: npm test
+answer -> content: xxx
+*/
+    function describeParsedAction(parsed) {
+        if (!parsed || typeof parsed !== "object") {
+            return "";
+        }
+        if (typeof parsed.path === "string" && parsed.path) {
+            return "path: " + parsed.path;
+        }
+        if (typeof parsed.command === "string" && parsed.command) {
+            return "command: " + parsed.command;
+        }
+        if (typeof parsed.content === "string" && parsed.content) {
+            const flat = parsed.content.split("\n").join(" ").replace(/\s+/g, " ").trim();
+            return "content: " + (flat.length > 80 ? flat.slice(0, 80) + "..." : flat);
+        }
+        return "";
+    }
     function buildEvent(record) {
         const event = record && record.event ? record.event : null;
         if (!event || !event.type) {
@@ -236,7 +269,14 @@
         let payload = "";
         if (event.type === "action.parsed") {
             action = event.action || "";
-            summary = "Parsed XML action: " + (event.action || "unknown");
+            const detail = describeParsedAction(event.parsed);
+            summary =
+                "Parsed XML action: " +
+                (event.action || "unknown") +
+                (detail ? " · " + detail : "");
+            if (event.parsed && typeof event.parsed === "object") {
+                payload = JSON.stringify(event.parsed, null, 2);
+            }
         } else if (event.type === "action.parse_error") {
             summary = "Failed to parse action: " + (event.error || "");
             payload = event.error || "";
@@ -763,13 +803,31 @@
     .trace-event + .trace-event {
         border-top: 1px dashed var(--c-border-soft);
     }
+
+    /* 事件头：左侧（类型 + action）与右侧（徽标 + 时间 + Details）两端对齐 */
     .trace-event-head {
         display: flex;
-        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 22px;
+    }
+    .trace-event-main {
+        display: flex;
         align-items: center;
         gap: 8px;
+        min-width: 0;
+        overflow: hidden;
+    }
+    .trace-event-side {
+        display: flex;
+        flex: 0 0 auto;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
     }
     .trace-event-kind {
+        flex: 0 0 auto;
         font-size: 11px;
         font-weight: 650;
     }
@@ -802,7 +860,7 @@
     }
     .trace-event-action {
         overflow: hidden;
-        max-width: 320px;
+        min-width: 0;
         color: var(--c-text-muted);
         font-size: 11px;
         font-family: "Cascadia Code", Consolas, monospace;
@@ -810,6 +868,7 @@
         white-space: nowrap;
     }
     .trace-event-badge {
+        flex: 0 0 auto;
         padding: 1px 6px;
         border-radius: 4px;
         font-size: 10px;
@@ -823,22 +882,22 @@
         background: rgb(248 113 113 / 15%);
         color: #f87171;
     }
-    .trace-event-time {
-        color: var(--c-text-faint);
-        font-size: 10px;
-    }
     .trace-event-ts {
-        margin-left: auto;
+        flex: 0 0 auto;
         color: var(--c-text-faint);
         font-size: 10px;
+        font-variant-numeric: tabular-nums;
     }
     .trace-event-toggle {
+        flex: 0 0 auto;
+        min-width: 54px;
         padding: 1px 8px;
         border: 1px solid var(--c-border-input);
         border-radius: 5px;
         background: transparent;
         color: var(--c-text-muted);
         font-size: 10px;
+        text-align: center;
         cursor: pointer;
     }
     .trace-event-toggle:hover {
@@ -847,6 +906,7 @@
     }
     .trace-event-summary {
         margin-top: 3px;
+        padding-left: 0;
         color: var(--c-text-body);
         font-size: 12px;
         line-height: 1.5;
