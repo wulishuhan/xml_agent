@@ -9,14 +9,14 @@
                         <span>
                             {{
                                 sessionId
-                                    ? "Step-by-step trace for each run in this session"
+                                    ? "Click a run to expand its steps and results"
                                     : "Step-by-step actions and runtime results"
                             }}
                         </span>
                     </div>
                 </div>
                 <div class="trace-header-actions">
-                    <button v-if="filteredCount" type="button" class="btn" @click="toggleExpandAll">
+                    <button v-if="runs.length" type="button" class="btn" @click="toggleExpandAll">
                         {{ allExpanded ? "Collapse all" : "Expand all" }}
                     </button>
                     <button
@@ -38,8 +38,21 @@
                     <span>Run the agent to see each action and runtime result here.</span>
                 </div>
                 <div v-else class="trace-runs">
-                    <div v-for="run in runs" :key="run.runIndex" class="trace-run">
-                        <div class="trace-run-head">
+                    <div
+                        v-for="run in runs"
+                        :key="run.runIndex"
+                        class="trace-run"
+                        :class="{ collapsed: !isRunExpanded(run.runIndex) }"
+                    >
+                        <button
+                            type="button"
+                            class="trace-run-head"
+                            :aria-expanded="isRunExpanded(run.runIndex)"
+                            @click="toggleRun(run.runIndex)"
+                        >
+                            <span class="trace-run-chevron">{{
+                                isRunExpanded(run.runIndex) ? "▾" : "▸"
+                            }}</span>
                             <span class="trace-run-index">Run {{ run.runIndex }}</span>
                             <span v-if="run.task" class="trace-run-task" :title="run.task">{{
                                 run.task
@@ -51,82 +64,92 @@
                             <span v-if="run.startTimestamp" class="trace-run-time">{{
                                 formatTime(run.startTimestamp)
                             }}</span>
-                        </div>
-                        <div v-if="run.runEvents.length" class="trace-run-events">
-                            <div
-                                v-for="(event, index) in run.runEvents"
-                                :key="'r' + index"
-                                class="trace-run-event"
-                                :class="eventClass(event)"
-                            >
-                                <span class="trace-run-event-kind">{{ event.label }}</span>
-                                <span v-if="event.summary" class="trace-run-event-summary">{{
-                                    event.summary
-                                }}</span>
-                            </div>
-                        </div>
-                        <div class="trace-timeline">
-                            <div v-for="step in run.steps" :key="step.step" class="trace-step">
-                                <div class="trace-step-head">
-                                    <span class="trace-step-index">Step {{ step.step }}</span>
-                                    <span class="trace-step-summary">{{ step.summary }}</span>
+                        </button>
+                        <div v-if="isRunExpanded(run.runIndex)" class="trace-run-body">
+                            <div v-if="run.runEvents.length" class="trace-run-events">
+                                <div
+                                    v-for="(event, index) in run.runEvents"
+                                    :key="'r' + index"
+                                    class="trace-run-event"
+                                    :class="eventClass(event)"
+                                >
+                                    <span class="trace-run-event-kind">{{ event.label }}</span>
+                                    <span v-if="event.summary" class="trace-run-event-summary">{{
+                                        event.summary
+                                    }}</span>
                                 </div>
-                                <ul class="trace-events">
-                                    <li
-                                        v-for="(event, index) in step.events"
-                                        :key="index"
-                                        class="trace-event"
-                                        :class="'trace-event-' + event.kind"
-                                    >
-                                        <div class="trace-event-head">
-                                            <span
-                                                class="trace-event-kind"
-                                                :class="eventClass(event)"
-                                            >
-                                                {{ event.label }}
-                                            </span>
-                                            <span v-if="event.action" class="trace-event-action"
-                                                >action: {{ event.action }}</span
-                                            >
-                                            <span
-                                                v-if="event.ok === false"
-                                                class="trace-event-badge trace-event-badge-error"
-                                                >failed</span
-                                            >
-                                            <span
-                                                v-else-if="event.ok === true"
-                                                class="trace-event-badge trace-event-badge-ok"
-                                                >ok</span
-                                            >
-                                            <span v-if="event.timestamp" class="trace-event-ts">{{
-                                                formatTime(event.timestamp)
-                                            }}</span>
-                                            <button
-                                                v-if="event.payload"
-                                                type="button"
-                                                class="trace-event-toggle"
-                                                @click="toggleEvent(run.runIndex, step.step, index)"
-                                            >
-                                                {{
-                                                    isEventExpanded(run.runIndex, step.step, index)
-                                                        ? "Hide"
-                                                        : "Details"
-                                                }}
-                                            </button>
-                                        </div>
-                                        <div v-if="event.summary" class="trace-event-summary">
-                                            {{ event.summary }}
-                                        </div>
-                                        <pre
-                                            v-if="
-                                                event.payload &&
-                                                isEventExpanded(run.runIndex, step.step, index)
-                                            "
-                                            class="trace-event-payload"
-                                            >{{ event.payload }}</pre
+                            </div>
+                            <div class="trace-timeline">
+                                <div v-for="step in run.steps" :key="step.step" class="trace-step">
+                                    <div class="trace-step-head">
+                                        <span class="trace-step-index">Step {{ step.step }}</span>
+                                        <span class="trace-step-summary">{{ step.summary }}</span>
+                                    </div>
+                                    <ul class="trace-events">
+                                        <li
+                                            v-for="(event, index) in step.events"
+                                            :key="index"
+                                            class="trace-event"
+                                            :class="'trace-event-' + event.kind"
                                         >
-                                    </li>
-                                </ul>
+                                            <div class="trace-event-head">
+                                                <span
+                                                    class="trace-event-kind"
+                                                    :class="eventClass(event)"
+                                                >
+                                                    {{ event.label }}
+                                                </span>
+                                                <span v-if="event.action" class="trace-event-action"
+                                                    >action: {{ event.action }}</span
+                                                >
+                                                <span
+                                                    v-if="event.ok === false"
+                                                    class="trace-event-badge trace-event-badge-error"
+                                                    >failed</span
+                                                >
+                                                <span
+                                                    v-else-if="event.ok === true"
+                                                    class="trace-event-badge trace-event-badge-ok"
+                                                    >ok</span
+                                                >
+                                                <span
+                                                    v-if="event.timestamp"
+                                                    class="trace-event-ts"
+                                                    >{{ formatTime(event.timestamp) }}</span
+                                                >
+                                                <button
+                                                    v-if="event.payload"
+                                                    type="button"
+                                                    class="trace-event-toggle"
+                                                    @click.stop="
+                                                        toggleEvent(run.runIndex, step.step, index)
+                                                    "
+                                                >
+                                                    {{
+                                                        isEventExpanded(
+                                                            run.runIndex,
+                                                            step.step,
+                                                            index
+                                                        )
+                                                            ? "Hide"
+                                                            : "Details"
+                                                    }}
+                                                </button>
+                                            </div>
+                                            <div v-if="event.summary" class="trace-event-summary">
+                                                {{ event.summary }}
+                                            </div>
+                                            <pre
+                                                v-if="
+                                                    event.payload &&
+                                                    isEventExpanded(run.runIndex, step.step, index)
+                                                "
+                                                class="trace-event-payload"
+                                                >{{ event.payload }}</pre
+                                            >
+                                        </li>
+                                    </ul>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -152,7 +175,10 @@
     const isLoading = ref(false);
     const errorMessage = ref("");
     const records = ref([]);
+    // 事件 payload 展开状态：runIndex:step:index
     const expanded = ref(new Set());
+    // Run 折叠状态：默认全部折叠，只有显式展开的 runIndex 才会出现在集合里
+    const expandedRuns = ref(new Set());
     function eventCategory(event) {
         if (!event || !event.type) {
             return "other";
@@ -290,16 +316,6 @@
         }
         return line.length > 90 ? line.slice(0, 90) + "..." : line;
     }
-    /**
-按"每次运行"分段：
-以 agent.started 事件作为一次运行的起点（resume 会再次触发 agent.started）。
-
-每次运行的 task 从 agent.started 事件中读取，用于区分 Run 1/2/3。
-
-agent.* 生命周期事件记录在 run 级别（runEvents），不进入 step 分组。
-
-step.started 只用于分组，不作为事件展示。
-*/
     function rebuild() {
         const source =
             props.liveOutput && props.liveOutput.length ? props.liveOutput : records.value;
@@ -401,7 +417,6 @@ step.started 只用于分组，不作为事件展示。
         }
         return runs.filter((run) => run.steps.length > 0 || run.runEvents.length > 0);
     }
-
     const runs = computed(() => rebuild());
     const totalSteps = computed(() => runs.value.reduce((sum, run) => sum + run.steps.length, 0));
     const totalEvents = computed(() =>
@@ -413,10 +428,36 @@ step.started 只用于分组，不作为事件展示。
             0
         )
     );
-    const filteredCount = computed(() => totalEvents.value);
     function eventClass(event) {
         return "trace-kind-" + event.kind;
     }
+    // ---- Run 折叠 ----
+    function isRunExpanded(runIndex) {
+        return expandedRuns.value.has(runIndex);
+    }
+    function toggleRun(runIndex) {
+        const next = new Set(expandedRuns.value);
+        if (next.has(runIndex)) {
+            next.delete(runIndex);
+        } else {
+            next.add(runIndex);
+        }
+        expandedRuns.value = next;
+    }
+    const allExpanded = computed(() => {
+        if (!runs.value.length) {
+            return false;
+        }
+        return runs.value.every((run) => expandedRuns.value.has(run.runIndex));
+    });
+    function toggleExpandAll() {
+        if (allExpanded.value) {
+            expandedRuns.value = new Set();
+            return;
+        }
+        expandedRuns.value = new Set(runs.value.map((run) => run.runIndex));
+    }
+    // ---- 事件 payload 展开 ----
     function eventKey(runIndex, step, index) {
         return runIndex + ":" + step + ":" + index;
     }
@@ -430,39 +471,6 @@ step.started 只用于分组，不作为事件展示。
             next.delete(key);
         } else {
             next.add(key);
-        }
-        expanded.value = next;
-    }
-    const allExpanded = computed(() => {
-        const keys = [];
-        for (const run of runs.value) {
-            for (const step of run.steps) {
-                step.events.forEach((event, index) => {
-                    if (event.payload) {
-                        keys.push(eventKey(run.runIndex, step.step, index));
-                    }
-                });
-            }
-        }
-        if (!keys.length) {
-            return false;
-        }
-        return keys.every((key) => expanded.value.has(key));
-    });
-    function toggleExpandAll() {
-        if (allExpanded.value) {
-            expanded.value = new Set();
-            return;
-        }
-        const next = new Set(expanded.value);
-        for (const run of runs.value) {
-            for (const step of run.steps) {
-                step.events.forEach((event, index) => {
-                    if (event.payload) {
-                        next.add(eventKey(run.runIndex, step.step, index));
-                    }
-                });
-            }
         }
         expanded.value = next;
     }
@@ -615,28 +623,45 @@ step.started 只用于分组，不作为事件展示。
     .trace-runs {
         display: flex;
         flex-direction: column;
-        gap: 20px;
+        gap: 10px;
     }
     .trace-run {
         border: 1px solid var(--c-border-strong);
-        border-radius: 12px;
+        border-radius: 10px;
         background: var(--c-card-bg);
         overflow: hidden;
     }
     .trace-run-head {
         display: flex;
+        width: 100%;
         flex-wrap: wrap;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         padding: 10px 14px;
+        border: 0;
         background: var(--c-elevated-bg);
-        border-bottom: 1px solid var(--c-border);
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.14s ease;
+    }
+    .trace-run-head:hover {
+        background: var(--c-hover-bg);
+    }
+    .trace-run.collapsed .trace-run-head {
+        border-bottom: 0;
+    }
+    .trace-run-chevron {
+        flex: 0 0 auto;
+        color: var(--c-text-muted);
+        font-size: 11px;
+        line-height: 1;
     }
     .trace-run-index {
+        flex: 0 0 auto;
         color: var(--c-accent-2);
         font-size: 13px;
         font-weight: 700;
-        flex: 0 0 auto;
     }
     .trace-run-task {
         overflow: hidden;
@@ -654,16 +679,21 @@ step.started 只用于分组，不作为事件展示。
     }
     .trace-run-summary {
         overflow: hidden;
-        max-width: 40%;
+        flex: 0 0 auto;
+        max-width: 30%;
         color: var(--c-text-muted);
         font-size: 11px;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
     .trace-run-time {
+        flex: 0 0 auto;
         margin-left: auto;
         color: var(--c-text-faint);
         font-size: 10px;
+    }
+    .trace-run-body {
+        border-top: 1px solid var(--c-border);
     }
     .trace-run-events {
         display: flex;
