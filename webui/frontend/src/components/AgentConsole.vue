@@ -1,12 +1,13 @@
+
 <template>
     <section class="agent-stream">
         <div class="stream-header">
             <div>
                 <span class="stream-title">Agent Activity</span>
                 <span class="stream-count">{{ displayOutput.length }} events</span>
-                <span v-if="runCount > 1" class="stream-run-badge"
-                    >Run {{ runCount }} · current</span
-                >
+                <span v-if="runCount > 1" class="stream-run-badge">
+                    Run {{ runCount }} · current
+                </span>
             </div>
             <div class="stream-actions">
                 <button
@@ -48,18 +49,13 @@
                         <div class="event-content">
                             <div class="event-meta">
                                 <span class="event-type">{{ getLabel(item) }}</span>
-                                <span
-                                    v-if="getActionTag(item)"
-                                    class="event-tag"
-                                    >{{\n                                    getActionTag(item)\n                                }}</span
-                                >
+                                <span v-if="getActionTag(item)" class="event-tag">
+                                    {{ getActionTag(item) }}
+                                </span>
                                 <time v-if="item.timestamp">{{ formatTime(item.timestamp) }}</time>
                             </div>
-                            <pre
-                                v-if="isStructured(item)"
-                                class="event-text"
-                                >{{\n                                getBody(item)\n                            }}</pre
-                            >
+                            <pre v-if="isStructured(item)" class="event-text">
+{{ getBody(item) }}</pre>
                             <div v-else class="event-text">{{ getBody(item) }}</div>
                         </div>
                     </article>
@@ -77,11 +73,9 @@
                     <div class="event-content">
                         <div class="event-meta">
                             <span class="event-type">{{ getLabel(item) }}</span>
-                            <span
-                                v-if="getActionTag(item)"
-                                class="event-tag"
-                                >{{\n                                getActionTag(item)\n                            }}</span
-                            >
+                            <span v-if="getActionTag(item)" class="event-tag">
+                                {{ getActionTag(item) }}
+                            </span>
                             <span
                                 v-if="isCollapsible(item) && !isAnswerItem(item)"
                                 class="event-lines"
@@ -369,8 +363,7 @@
         const truncatedByChar = head.length > PREVIEW_MAX_CHARS;
         const shown = truncatedByChar ? head.slice(0, PREVIEW_MAX_CHARS) : head;
         if (truncatedByLine || truncatedByChar) {
-            // 修正：原实现 /\\s+/ 只替换第一个空白，导致预览文字粘连。
-            // 这里改为 /\\s+/g，仅折叠空白用于单行预览；完整内容仍通过展开查看。
+            // 只替换所有空白用于单行预览；完整内容仍通过展开查看。
             return shown.replace(/\s+/g, " ") + " ...";
         }
         return shown;

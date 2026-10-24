@@ -1,132 +1,182 @@
+
 // Electron 版会把端口通过 window.xmlAgentDesktop.port 注入，
 // 浏览器版没有该对象，此时回退到相对路径（同源）。
 function getBaseUrl() {
-    if (typeof window !== "undefined" && window.xmlAgentDesktop && window.xmlAgentDesktop.baseUrl) {
-        return window.xmlAgentDesktop.baseUrl;
-    }
-    return "";
+if (typeof window !== "undefined" && window.xmlAgentDesktop && window.xmlAgentDesktop.baseUrl) {
+return window.xmlAgentDesktop.baseUrl;
+}
+return "";
 }
 function api(path) {
-    return getBaseUrl() + path;
+return getBaseUrl() + path;
 }
 export async function runAgent(data) {
-    const response = await fetch(api("/api/run"), {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(data),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-        const error = new Error(result.error || "Failed to start agent");
-        error.code = result.code || null;
-        error.stats = result.stats || null;
-        throw error;
-    }
-    return result;
+const response = await fetch(api("/api/run"), {
+method: "POST",
+headers: {
+"Content-Type": "application/json",
+},
+body: JSON.stringify(data),
+});
+const result = await response.json();
+if (!response.ok) {
+const error = new Error(result.error || "Failed to start agent");
+error.code = result.code || null;
+error.stats = result.stats || null;
+throw error;
+}
+return result;
 }
 export async function browseWorkspace(targetPath) {
-    const query = targetPath ? "?path=" + encodeURIComponent(targetPath) : "";
-    const response = await fetch(api("/api/workspace/browse" + query));
-    if (!response.ok) {
-        const text = await response.text();
-        let message = "Failed to browse workspace";
-        try {
-            const result = JSON.parse(text);
-            message = result.error || message;
-        } catch (error) {
-            message = text || message;
-        }
-        throw new Error(message);
-    }
-    return response.json();
+const query = targetPath ? "?path=" + encodeURIComponent(targetPath) : "";
+const response = await fetch(api("/api/workspace/browse" + query));
+if (!response.ok) {
+const text = await response.text();
+let message = "Failed to browse workspace";
+try {
+const result = JSON.parse(text);
+message = result.error || message;
+} catch (error) {
+message = text || message;
+}
+throw new Error(message);
+}
+return response.json();
 }
 // 在指定目录下新建文件夹，供 WorkspacePicker 的 "New Folder" 按钮使用。
 export async function createWorkspaceFolder(parentPath, name) {
-    const response = await fetch(api("/api/workspace/mkdir"), {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-            path: parentPath,
-            name,
-        }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to create folder");
-    }
-    return result;
+const response = await fetch(api("/api/workspace/mkdir"), {
+method: "POST",
+headers: {
+"Content-Type": "application/json",
+},
+body: JSON.stringify({
+path: parentPath,
+name,
+}),
+});
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to create folder");
+}
+return result;
 }
 export async function getSession(sessionId) {
-    const response = await fetch(api("/api/sessions/" + sessionId));
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to get session");
-    }
-    return result;
+const response = await fetch(api("/api/sessions/" + sessionId));
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to get session");
+}
+return result;
 }
 export async function getSessionOutput(sessionId) {
-    const response = await fetch(api("/api/sessions/" + sessionId + "/output"));
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to get session output");
-    }
-    return result;
+const response = await fetch(api("/api/sessions/" + sessionId + "/output"));
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to get session output");
+}
+return result;
 }
 export async function stopSession(sessionId) {
-    const response = await fetch(api("/api/sessions/" + sessionId + "/stop"), {
-        method: "POST",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to stop session");
-    }
-    return result;
+const response = await fetch(api("/api/sessions/" + sessionId + "/stop"), {
+method: "POST",
+});
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to stop session");
+}
+return result;
 }
 export async function getSessions() {
-    const response = await fetch(api("/api/sessions"));
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to get sessions");
-    }
-    return result;
+const response = await fetch(api("/api/sessions"));
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to get sessions");
+}
+return result;
 }
 export async function deleteSession(sessionId) {
-    const response = await fetch(api("/api/sessions/" + sessionId), {
-        method: "DELETE",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to delete session");
-    }
-    return result;
+const response = await fetch(api("/api/sessions/" + sessionId), {
+method: "DELETE",
+});
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to delete session");
+}
+return result;
 }
 // 获取会话存储占用统计（数量、磁盘体积、上限、告警状态）。
 export async function getStorage() {
-    const response = await fetch(api("/api/storage"));
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to get storage stats");
-    }
-    return result;
+const response = await fetch(api("/api/storage"));
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to get storage stats");
+}
+return result;
 }
 // 清理遗留的 .tmp 临时文件。
 export async function cleanStorage() {
-    const response = await fetch(api("/api/storage/clean"), {
-        method: "POST",
-    });
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to clean storage");
-    }
-    return result;
+const response = await fetch(api("/api/storage/clean"), {
+method: "POST",
+});
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to clean storage");
+}
+return result;
 }
 export function getEventSourceUrl(sessionId) {
-    return api("/api/sessions/" + sessionId + "/events");
+return api("/api/sessions/" + sessionId + "/events");
 }
+/**
+- 让用户选择图片。
+- - 桌面版（Electron）：走原生文件对话框，直接拿到本地绝对路径数组。
+- - Web 版：无法拿到本地绝对路径，返回 null，由调用方回退到 <input type="file"> + uploadWorkspaceImages。
+*/
+export async function pickImages() {
+if (
+typeof window !== "undefined" &&
+window.xmlAgentDesktop &&
+window.xmlAgentDesktop.dialog &&
+typeof window.xmlAgentDesktop.dialog.pickImages === "function"
+) {
+const paths = await window.xmlAgentDesktop.dialog.pickImages();
+return Array.isArray(paths) ? paths : [];
+}
+
+return null;
+}
+
+/**
+- Web 版上传图片：multipart 提交到 /api/uploads，服务端落到 workspace/uploads 下，
+- 返回相对 workspace 的路径数组，可直接作为 Agent 的 images 传入。
+*/
+export async function uploadWorkspaceImages(workspace, files) {
+if (!workspace || !workspace.trim()) {
+throw new Error("Workspace is required before uploading images");
+}
+const list = Array.from(files || []);
+if (!list.length) {
+return [];
+}
+const form = new FormData();
+for (const file of list) {
+form.append("images", file, file.name);
+}
+const response = await fetch(
+api("/api/uploads?workspace=" + encodeURIComponent(workspace.trim())),
+{
+method: "POST",
+body: form,
+}
+);
+const result = await response.json();
+if (!response.ok || !result.ok) {
+throw new Error(result.error || "Failed to upload images");
+}
+return result.paths || [];
+}
+
 /**
 从 provider 页面 URL 中提取 conversationId。
 前端不直接依赖 provider 逻辑，只做一点轻量解析，用于提示用户。
@@ -135,74 +185,74 @@ export function getEventSourceUrl(sessionId) {
 @returns {string|null}
 */
 export function extractConversationId(provider, url) {
-    if (!url || typeof url !== "string") {
-        return null;
-    }
-    if (provider === "deepseek") {
-        const match = url.match(new RegExp("/a/chat/s/([0-9a-fA-F-]+)"));
-        return match ? match[1] : null;
-    }
-    if (provider === "chatgpt" || provider === "qwen") {
-        const match = url.match(new RegExp("/c/([0-9a-zA-Z-]+)"));
-        return match ? match[1] : null;
-    }
-    return null;
+if (!url || typeof url !== "string") {
+return null;
+}
+if (provider === "deepseek") {
+const match = url.match(new RegExp("/a/chat/s/([0-9a-fA-F-]+)"));
+return match ? match[1] : null;
+}
+if (provider === "chatgpt" || provider === "qwen") {
+const match = url.match(new RegExp("/c/([0-9a-zA-Z-]+)"));
+return match ? match[1] : null;
+}
+return null;
 }
 // ---- 浏览器设置与切换（Web 版，通过 HTTP API）----
 export async function getBrowserSettings() {
-    const response = await fetch(api("/api/browser/settings"));
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to read browser settings");
-    }
-    return result;
+const response = await fetch(api("/api/browser/settings"));
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to read browser settings");
+}
+return result;
 }
 export async function saveBrowserSettings(settings) {
-    const response = await fetch(api("/api/browser/settings"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings || {}),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to save browser settings");
-    }
-    return result;
+const response = await fetch(api("/api/browser/settings"), {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify(settings || {}),
+});
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to save browser settings");
+}
+return result;
 }
 export async function detectBrowser(browserType) {
-    const query = browserType ? "?type=" + encodeURIComponent(browserType) : "";
-    const response = await fetch(api("/api/browser/detect" + query));
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to detect browser");
-    }
-    return result;
+const query = browserType ? "?type=" + encodeURIComponent(browserType) : "";
+const response = await fetch(api("/api/browser/detect" + query));
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to detect browser");
+}
+return result;
 }
 export async function getBrowserStatus() {
-    const response = await fetch(api("/api/browser/status"));
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to get browser status");
-    }
-    return result;
+const response = await fetch(api("/api/browser/status"));
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to get browser status");
+}
+return result;
 }
 export async function launchBrowser() {
-    const response = await fetch(api("/api/browser/launch"), { method: "POST" });
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to launch browser");
-    }
-    return result;
+const response = await fetch(api("/api/browser/launch"), { method: "POST" });
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to launch browser");
+}
+return result;
 }
 export async function switchBrowser(browserType) {
-    const response = await fetch(api("/api/browser/switch"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ browserType: browserType || "" }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-        throw new Error(result.error || "Failed to switch browser");
-    }
-    return result;
+const response = await fetch(api("/api/browser/switch"), {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify({ browserType: browserType || "" }),
+});
+const result = await response.json();
+if (!response.ok) {
+throw new Error(result.error || "Failed to switch browser");
+}
+return result;
 }

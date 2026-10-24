@@ -1,3 +1,4 @@
+
 <template>
     <div class="app-shell">
         <SessionSidebar
@@ -58,9 +59,7 @@
                         @click="toggleTheme"
                     >
                         <span class="theme-toggle-icon">{{ theme === "dark" ? "☾" : "☀" }}</span>
-                        <span class="theme-toggle-label">{{
-                            theme === "dark" ? "Dark" : "Light"
-                        }}</span>
+                        <span class="theme-toggle-label">{{ theme === "dark" ? "Dark" : "Light" }}</span>
                     </button>
                     <button
                         type="button"
@@ -88,9 +87,7 @@
                     </div>
                     <div v-if="activeConversationId" class="context-item">
                         <span class="context-label">Conversation</span>
-                        <code :title="activeConversationId">{{
-                            shortId(activeConversationId)
-                        }}</code>
+                        <code :title="activeConversationId">{{ shortId(activeConversationId) }}</code>
                     </div>
                     <div v-if="isElectron" class="context-item">
                         <span class="context-label">Port</span> <code>{{ electronPort }}</code>
@@ -151,8 +148,10 @@
                         <TaskComposer
                             v-model:task="task"
                             v-model:conversationId="conversationId"
+                            v-model:images="images"
                             :provider="provider"
                             :running="running"
+                            :workspace="workspace"
                             @run="runAgent"
                             @stop="stopAgent"
                         />
@@ -214,6 +213,8 @@
     const workspace = ref("");
     const provider = ref("chatgpt");
     const task = ref("");
+    // 用户随任务附带的图片：桌面端为本地绝对路径，Web 端为 workspace 下相对路径。
+    const images = ref([]);
     const storage = ref(null);
     const theme = ref(resolveInitialTheme());
     function toggleTheme() {
@@ -371,6 +372,8 @@
         }
         activeSessionId.value = sessionId;
         errorMessage.value = "";
+        // 切换会话时清空待发送图片，避免把上一个会话的图片带到新任务里。
+        images.value = [];
         closeEventSource();
         try {
             const [sessionResult, outputResult] = await Promise.all([
@@ -381,7 +384,14 @@
             output.value = outputResult.output || [];
             workspace.value = sessionResult.workspace || "";
             provider.value = sessionResult.provider || provider.value;
-            task.value = sessionResult.task || "";
+            // 只有当这是一个尚未运行过的会话（没有 conversationId、没有输出）时，
+            // 才把历史任务回填到输入框；已运行过的会话保持输入框为空，
+            // 避免用户看到上一次已经执行过的任务还以为没有提交。
+            const hasRunBefore =
+                !!sessionResult.conversationId ||
+                (sessionResult.runCount || 0) > 0 ||
+                (sessionResult.outputLength || 0) > 0;
+            task.value = hasRunBefore ? "" : sessionResult.task || "";
             conversationId.value = sessionResult.conversationId || "";
             subscribeToSession(sessionId);
         } catch (error) {
@@ -441,6 +451,10 @@
             } catch (error) {
                 errorMessage.value = error.message;
             }
+            // 任务结束后清空任务输入框，避免下一次误以为任务还没提交。
+            if (finishedInfo && finishedInfo.status !== "running") {
+                task.value = "";
+            }
             refreshStorage();
             // 仅在本次订阅期间确实处于过 running 状态、且最终状态为 completed 时通知。
             if (sawRunning && finishedInfo) {
@@ -496,8 +510,14 @@
             if (cid) {
                 payload.conversationId = cid;
             }
+            // 只提交图片路径；真正的上传由 Agent 在 provider 启动后执行。
+            if (images.value.length) {
+                payload.images = images.value.slice();
+            }
             const result = await apiRunAgent(payload);
             activeSessionId.value = result.sessionId;
+            // 启动后图片已交给本次运行，清空避免下次重复上传。
+            images.value = [];
             await loadSessions();
             await selectSession(result.sessionId);
         } catch (error) {
@@ -557,6 +577,7 @@
         task.value = "";
         workspace.value = "";
         conversationId.value = "";
+        images.value = [];
     }
     function clearConsole() {
         output.value = [];
