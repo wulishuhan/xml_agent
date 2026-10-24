@@ -16,6 +16,29 @@
                     </div>
                 </div>
                 <div class="trace-header-actions">
+                    <div class="trace-search">
+                        <span class="trace-search-icon" aria-hidden="true">⌕</span>
+                        <input
+                            v-model="searchQuery"
+                            type="search"
+                            class="trace-search-input"
+                            placeholder="Search trace (action, path, command, error...)"
+                            aria-label="Search trace"
+                            @keydown.esc="clearSearch"
+                        />
+                        <span v-if="normalizedQuery" class="trace-search-count">
+                            {{ matchCount }} hit(s)
+                        </span>
+                        <button
+                            v-if="searchQuery"
+                            type="button"
+                            class="trace-search-clear"
+                            aria-label="Clear search"
+                            @click="clearSearch"
+                        >
+                            ×
+                        </button>
+                    </div>
                     <button v-if="runs.length" type="button" class="btn" @click="toggleExpandAll">
                         {{ allExpanded ? "Collapse all" : "Expand all" }}
                     </button>
@@ -33,9 +56,17 @@
             <div v-else class="trace-body">
                 <div v-if="errorMessage" class="trace-error">{{ errorMessage }}</div>
                 <div v-if="!runs.length" class="trace-empty">
-                    <div class="trace-empty-orb">≡</div>
-                    <strong>No trace yet</strong>
-                    <span>Run the agent to see each action and runtime result here.</span>
+                    <template v-if="normalizedQuery">
+                        <div class="trace-empty-orb">⌕</div>
+                        <strong>No match</strong>
+                        <span>No trace event matches "{{ searchQuery.trim() }}".</span>
+                        <button type="button" class="btn" @click="clearSearch">Clear search</button>
+                    </template>
+                    <template v-else>
+                        <div class="trace-empty-orb">≡</div>
+                        <strong>No trace yet</strong>
+                        <span>Run the agent to see each action and runtime result here.</span>
+                    </template>
                 </div>
                 <div v-else class="trace-runs">
                     <div
@@ -168,6 +199,9 @@
             <footer class="trace-footer">
                 <span class="trace-footer-stat">
                     {{ runs.length }} run(s) · {{ totalSteps }} steps · {{ totalEvents }} events
+                    <template v-if="normalizedQuery">
+                        · filtered by "{{ searchQuery.trim() }}"</template
+                    >
                 </span>
                 <button type="button" class="btn" @click="refresh">Refresh</button>
             </footer>
@@ -175,13 +209,13 @@
     </div>
 </template>
 <script setup>
-    import { computed, onMounted, ref } from "vue";
+    import { computed, onMounted, ref, watch } from "vue";
     import { getSessionOutput } from "../services/agent-api.js";
     const props = defineProps({
         sessionId: { type: String, default: null },
         liveOutput: { type: Array, default: null },
     });
-    const emit = defineEmits(["close"]);
+    defineEmits(["close"]);
     const isLoading = ref(false);
     const errorMessage = ref("");
     const records = ref([]);
@@ -189,6 +223,12 @@
     const expanded = ref(new Set());
     // Run 折叠状态：默认全部折叠，只有显式展开的 runIndex 才会出现在集合里
     const expandedRuns = ref(new Set());
+    // trace 搜索关键字
+    const searchQuery = ref("");
+    const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
+    function clearSearch() {
+        searchQuery.value = "";
+    }
     function eventCategory(event) {
         if (!event || !event.type) {
             return "other";
@@ -373,7 +413,6 @@ answer -> content: xxx
                     task: "",
                     status: "in progress",
                     answerCount: 0,
-                    hasError: false,
                 };
                 runs.push(currentRun);
             }
@@ -399,12 +438,8 @@ answer -> content: xxx
                     run.status = built.raw.status || "completed";
                 } else if (built.raw.type === "agent.error") {
                     run.status = "error";
-                    run.hasError = true;
                 } else if (built.raw.type === "agent.stopped") {
                     run.status = "stopped";
-                }
-                if (built.kind === "agent-error") {
-                    run.hasError = true;
                 }
                 continue;
             }
@@ -457,7 +492,74 @@ answer -> content: xxx
         }
         return runs.filter((run) => run.steps.length > 0 || run.runEvents.length > 0);
     }
-    const runs = computed(() => rebuild());
+    const allRuns = computed(() => rebuild());
+    // ---- 搜索过滤 ----
+    function matchesQuery(text) {
+        if (!normalizedQuery.value) {
+            return true;
+        }
+        return String(text === null || text === undefined ? "" : text)
+            .toLowerCase()
+            .includes(normalizedQuery.value);
+    }
+    function eventMatchesQuery(event) {
+        if (!normalizedQuery.value) {
+            return true;
+        }
+        return (
+            matchesQuery(event.label) ||
+            matchesQuery(event.action) ||
+            matchesQuery(event.summary) ||
+            matchesQuery(event.payload)
+        );
+    }
+    function filterRuns(sourceRuns) {
+        if (!normalizedQuery.value) {
+            return sourceRuns;
+        }
+        const result = [];
+        for (const run of sourceRuns) {
+            // 任务描述命中时保留整条 Run，方便看完整上下文
+            if (matchesQuery(run.task)) {
+                result.push(run);
+                continue;
+            }
+            const runEvents = run.runEvents.filter(eventMatchesQuery);
+            const steps = [];
+            for (const step of run.steps) {
+                const events = step.events.filter(eventMatchesQuery);
+                if (events.length) {
+                    steps.push({ ...step, events });
+                }
+            }
+            if (runEvents.length || steps.length) {
+                result.push({ ...run, runEvents, steps });
+            }
+        }
+        return result;
+    }
+    const runs = computed(() => filterRuns(allRuns.value));
+    const matchCount = computed(() => {
+        if (!normalizedQuery.value) {
+            return 0;
+        }
+        let count = 0;
+        for (const run of allRuns.value) {
+            for (const event of run.runEvents) {
+                if (eventMatchesQuery(event)) {
+                    count += 1;
+                }
+            }
+            for (const step of run.steps) {
+                for (const event of step.events) {
+                    if (eventMatchesQuery(event)) {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        return count;
+    });
     const totalSteps = computed(() => runs.value.reduce((sum, run) => sum + run.steps.length, 0));
     const totalEvents = computed(() =>
         runs.value.reduce(
@@ -475,6 +577,10 @@ answer -> content: xxx
     function isRunExpanded(runIndex) {
         return expandedRuns.value.has(runIndex);
     }
+    // 搜索词变化时收拢所有 Run：避免多个匹配 Run 全部展开难以排查
+    watch(normalizedQuery, () => {
+        expandedRuns.value = new Set();
+    });
     function toggleRun(runIndex) {
         const next = new Set(expandedRuns.value);
         if (next.has(runIndex)) {
@@ -620,8 +726,67 @@ answer -> content: xxx
     }
     .trace-header-actions {
         display: flex;
+        flex: 1;
         align-items: center;
+        justify-content: flex-end;
         gap: 10px;
+    }
+    /* ---- Trace 搜索框 ---- */
+    .trace-search {
+        display: flex;
+        flex: 0 1 320px;
+        min-width: 180px;
+        align-items: center;
+        gap: 6px;
+        padding: 0 8px;
+        border: 1px solid var(--c-border-input);
+        border-radius: 8px;
+        background: var(--c-input-bg);
+        transition: border-color 0.14s ease;
+    }
+    .trace-search:focus-within {
+        border-color: var(--c-accent-2);
+    }
+    .trace-search-icon {
+        flex: 0 0 auto;
+        color: var(--c-text-faint);
+        font-size: 12px;
+    }
+    .trace-search-input {
+        width: 100%;
+        min-width: 0;
+        padding: 6px 0;
+        border: 0;
+        background: transparent;
+        color: var(--c-text-strong);
+        font-size: 12px;
+        outline: none;
+    }
+    .trace-search-input::placeholder {
+        color: var(--c-text-faint);
+    }
+    .trace-search-count {
+        flex: 0 0 auto;
+        color: var(--c-text-muted);
+        font-size: 10px;
+        white-space: nowrap;
+    }
+    .trace-search-clear {
+        flex: 0 0 auto;
+        width: 18px;
+        height: 18px;
+        padding: 0;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--c-text-muted);
+        font-size: 13px;
+        line-height: 1;
+        cursor: pointer;
+    }
+    .trace-search-clear:hover {
+        background: var(--c-hover-bg);
+        color: var(--c-text-strong);
     }
     .trace-body {
         flex: 1;
@@ -803,7 +968,6 @@ answer -> content: xxx
     .trace-event + .trace-event {
         border-top: 1px dashed var(--c-border-soft);
     }
-
     /* 事件头：左侧（类型 + action）与右侧（徽标 + 时间 + Details）两端对齐 */
     .trace-event-head {
         display: flex;
