@@ -28,6 +28,22 @@ class DeepSeekProvider extends BrowserAgent {
             ],
         });
         this.activeResponseKey = null;
+        // 上传按钮候选选择器：DeepSeek 输入框左侧的胶囊按钮（图标按钮）。
+        // 其 class 含随机哈希，因此用结构特征定位：iconLabelPrimary + capsule + role=button。
+        // 发送按钮：输入框右侧的圆形主按钮（向上箭头图标）。
+        // 用稳定结构定位，避免依赖随机哈希类名。
+        this.sendButtonSelectors = [
+            'div[role="button"].ds-button--primary.ds-button--circle:has(svg path[d^="M8.3125 0.980206"])',
+            'div[role="button"].ds-button--primary.ds-button--circle',
+            'div[role="button"][class*="ds-button--primary"][class*="circle"]',
+        ];
+        this.uploadButtonSelectors = [
+            // 精确定位：上传图标（回形针/图片）的 SVG path 前缀，唯一命中上传按钮
+            'div[role="button"]:has(svg path[d^="M5.5498 9.75V5H6.9502V9.75"])',
+            // 兜底：结构类名（不含随机哈希）
+            'div[role="button"].ds-button--capsule.ds-button--iconLabelPrimary',
+            'input[type="file"]',
+        ];
     }
     get name() {
         return "DeepSeek";
@@ -522,6 +538,223 @@ class DeepSeekProvider extends BrowserAgent {
         }
         throw new Error("DeepSeek did not start a response within " + timeout + "ms");
     }
+    /**
+    清空输入区中尚未发送的图片附件与文字残留，避免多次上传叠加。
+    只处理输入区待发附件（容器 _2afd28d），不影响历史消息中的图片。
+    */
+
+    /**
+    上传图片到 DeepSeek 输入框（点击上传按钮 -> 文件选择器）。
+    @param {string[]} imagePaths 本地图片绝对路径
+    @returns {Promise<{ok:boolean,count:number,reason?:string}>}
+    */
+    /**
+    统计页面上缩略图 img 的数量（用于校验上传是否成功、是否叠加）。
+    DeepSeek 的图片缩略图统一使用类名 _9f130b7。
+    */
+    async countImageThumbs() {
+        if (!this.isPageAlive()) {
+            return 0;
+        }
+        return this.page.evaluate(() => {
+            const list = Array.from(document.querySelectorAll("img._9f130b7"));
+            let visible = 0;
+            for (const img of list) {
+                const r = img.getBoundingClientRect();
+                if (r.width >= 20 && r.height >= 20) {
+                    visible += 1;
+                }
+            }
+            return visible;
+        });
+    }
+
+    /**
+清空输入区中尚未发送的图片附件（避免多次上传叠加）。
+待发附件结构：div._6d1b417 > .ds-animated-size-item
+每项内的删除按钮：div.c8b3f8a6（内含 ds-icon 的 × 图标）。
+只处理待发区，不影响聊天历史中的图片。
+*/
+    async clearPendingAttachments() {
+        if (!this.isPageAlive()) {
+            return 0;
+        }
+        let removed = 0;
+        for (let guard = 0; guard < 20; guard += 1) {
+            const handles = await this.page
+                .locator("div._6d1b417 .ds-animated-size-item")
+                .elementHandles();
+            let clicked = false;
+            for (const handle of handles) {
+                const visible = await handle.isVisible().catch(() => false);
+                if (!visible) {
+                    continue;
+                }
+                const del = await handle.$("div.c8b3f8a6");
+                if (!del) {
+                    continue;
+                }
+                try {
+                    await del.click({ timeout: 3000 });
+                    removed += 1;
+                    clicked = true;
+                    await this.sleep(300);
+                    break;
+                } catch (error) {
+                    // 尝试下一个
+                }
+            }
+            if (!clicked) {
+                break;
+            }
+        }
+        return removed;
+    }
+    async uploadImages(imagePaths) {
+        if (!this.isPageAlive()) {
+            const recovered = await this.ensurePageAlive();
+            if (!recovered || !this.isPageAlive()) {
+                throw new Error("DeepSeek page is not available for upload");
+            }
+        }
+        // 先清理输入区残留的待发附件，避免多次上传叠加
+        await this.clearPendingAttachments();
+        // 记录上传前的缩略图数量，用于上传后校验增量
+        const beforeCount = await this.countImageThumbs();
+        const result = await super.uploadImages(imagePaths, this.uploadButtonSelectors);
+        if (!result.ok) {
+            throw new Error("DeepSeek upload failed: " + (result.reason || "unknown"));
+        }
+        // 校验：缩略图数量应恰好增加本次图片数，否则说明有残留附件或上传失败
+        const expected = imagePaths.length;
+        let actualDelta = 0;
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+            // eslint-disable-next-line no-await-in-loop
+            const current = await this.countImageThumbs();
+            actualDelta = current - beforeCount;
+            if (actualDelta >= expected) {
+                break;
+            }
+            // eslint-disable-next-line no-await-in-loop
+            await this.sleep(500);
+        }
+        if (actualDelta !== expected) {
+            throw new Error(
+                "DeepSeek upload count mismatch: expected " +
+                    expected +
+                    " new image(s) but detected " +
+                    actualDelta +
+                    ". There may be leftover attachments in the input box."
+            );
+        }
+        return result;
+    }
+
+    /**
+    点击输入框右侧的发送按钮。返回是否点击成功。
+    */
+    /**
+通过鼠标坐标点击发送按钮。
+DeepSeek 的发送按钮上覆盖了 ds-focus-ring 层，locator.click() 会被拦截，
+因此用 boundingBox 中心点做真实鼠标点击。
+*/
+    async clickSendButtonByCoords() {
+        if (!this.isPageAlive()) {
+            return false;
+        }
+        const box = await this.page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('div[role="button"]'));
+            for (const button of buttons) {
+                const path = button.querySelector("svg path");
+                const d = path ? path.getAttribute("d") || "" : "";
+                if (!d.startsWith("M8.3125 0.980206")) {
+                    continue;
+                }
+                const rect = button.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) {
+                    continue;
+                }
+                return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+            }
+            return null;
+        });
+        if (!box) {
+            return false;
+        }
+        await this.page.mouse.click(box.x, box.y);
+        return true;
+    }
+    /**
+等待发送按钮从 disabled 状态恢复（附件上传/处理完成）。
+上传图片后按钮会带 ds-button--disabled 类，此时点击无效。
+*/
+    async waitForSendButtonReady(timeout) {
+        const limit = timeout || 60000;
+        const start = Date.now();
+        while (Date.now() - start < limit) {
+            if (!this.isPageAlive()) {
+                return false;
+            }
+            // eslint-disable-next-line no-await-in-loop
+            const ready = await this.page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('div[role="button"]'));
+                for (const button of buttons) {
+                    const path = button.querySelector("svg path");
+                    const d = path ? path.getAttribute("d") || "" : "";
+                    if (!d.startsWith("M8.3125 0.980206")) {
+                        continue;
+                    }
+                    const rect = button.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) {
+                        continue;
+                    }
+                    const disabled =
+                        button.className.indexOf("ds-button--disabled") !== -1 ||
+                        button.getAttribute("aria-disabled") === "true";
+                    return !disabled;
+                }
+                return false;
+            });
+            if (ready) {
+                return true;
+            }
+            // eslint-disable-next-line no-await-in-loop
+            await this.sleep(500);
+        }
+        return false;
+    }
+    async clickSendButton() {
+        if (!this.isPageAlive()) {
+            return false;
+        }
+        for (const selector of this.sendButtonSelectors) {
+            try {
+                const locator = this.page.locator(selector);
+                const count = await locator.count();
+                for (let index = count - 1; index >= 0; index -= 1) {
+                    const candidate = locator.nth(index);
+                    if (!(await candidate.isVisible().catch(() => false))) {
+                        continue;
+                    }
+                    const disabled = await candidate
+                        .evaluate((el) => {
+                            const aria = el.getAttribute("aria-disabled");
+                            return aria === "true" || el.classList.contains("ds-button--disabled");
+                        })
+                        .catch(() => false);
+                    if (disabled) {
+                        continue;
+                    }
+                    await candidate.click({ timeout: 5000 });
+                    return true;
+                }
+            } catch (error) {
+                // 尝试下一个选择器
+            }
+        }
+        return false;
+    }
+
     async send(message) {
         if (!message || !message.trim()) {
             throw new Error("DeepSeek message cannot be empty");
@@ -537,19 +770,42 @@ class DeepSeekProvider extends BrowserAgent {
         const oldAssistantCount = oldAssistantKeys.length;
         const oldResponse = await this.getLastResponse();
         await this.insertMessage(message);
+        // 优先点击输入框右侧的发送按钮；失败再回退到 Enter。
+        let sent = false;
+        // 上传附件后发送按钮会短暂禁用，需等待其恢复可点击
+        await this.waitForSendButtonReady(60000);
         try {
-            const input = await this.getInput();
-            if (!input) {
-                throw new Error("DeepSeek input not found before pressing Enter");
-            }
-            await input.press("Enter");
+            // 优先用真实鼠标坐标点击（可绕过 ds-focus-ring 遮挡）
+            sent = await this.clickSendButtonByCoords();
         } catch (error) {
-            throw new Error("DeepSeek failed to send message: " + error.message);
+            sent = false;
+        }
+        if (!sent) {
+            try {
+                sent = await this.clickSendButton();
+            } catch (error) {
+                sent = false;
+            }
+        }
+        if (!sent) {
+            try {
+                const input = await this.getInput();
+                if (!input) {
+                    throw new Error("DeepSeek input not found before pressing Enter");
+                }
+                await input.press("Enter");
+            } catch (error) {
+                throw new Error("DeepSeek failed to send message: " + error.message);
+            }
         }
         const inputCleared = await this.waitForInputClear();
         if (!inputCleared) {
-            console.warn("[DeepSeek] Input did not clear within timeout, continuing...");
+            // 发送后输入框未清空，说明本次发送没有真正生效（避免继续长时间空等）。
+            throw new Error(
+                "DeepSeek send did not take effect: input box was not cleared after clicking send/Enter."
+            );
         }
+        const sendVerification = true;
         this.refreshConversationId();
         try {
             this.activeResponseKey = await this.waitForNewResponseKey(oldAssistantKeys);

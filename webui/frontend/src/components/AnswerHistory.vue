@@ -137,14 +137,13 @@
 </template>
 <script setup>
     import { computed, onMounted, ref } from "vue";
-    import { marked } from "marked";
     import { getSession, getSessionOutput } from "../services/agent-api.js";
+    import { renderMarkdown } from "../services/markdown.mjs";
     const props = defineProps({
         // 当前会话 id，History 只展示这个会话的回复。
         initialSessionId: { type: String, default: null },
     });
     const emit = defineEmits(["close"]);
-    marked.setOptions({ gfm: true, breaks: false });
     const loading = ref(true);
     const errorMessage = ref("");
     const sessionId = ref(props.initialSessionId || null);
@@ -263,12 +262,9 @@
         if (!reply || !reply.answer.trim()) {
             return "";
         }
-        try {
-            const html = marked.parse(reply.answer);
-            return typeof html === "string" ? html : "";
-        } catch (error) {
-            return "";
-        }
+        // 使用统一的 renderMarkdown（breaks:true + 保留行内空格），
+        // 保证多行纯文本在页面上仍然保留换行与空格。
+        return renderMarkdown(reply.answer);
     });
     function selectReply(reply) {
         selectedReplyKey.value = reply.key;
@@ -409,9 +405,7 @@
     .history-columns {
         display: flex;
         height: 100%;
-    }
-
-    /* 左栏：时间线 */
+    } /* 左栏：时间线 */
     .timeline-column {
         width: 320px;
         flex: 0 0 320px;
@@ -550,7 +544,6 @@
     .history-status-stopped {
         color: #fbbf24;
     }
-
     /* 右栏：详情 */
     .detail-column {
         flex: 1;

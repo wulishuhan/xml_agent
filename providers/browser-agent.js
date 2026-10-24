@@ -697,6 +697,67 @@ class BrowserAgent {
             }
         }
     }
+    /**
+    通用的图片上传：点击上传按钮，在弹出的文件选择器中设置文件。
+    - imagePaths: 本地图片绝对路径数组
+    - buttonSelectors: 上传按钮候选选择器（按顺序尝试）
+    返回 { ok, count, reason }
+    */
+    async uploadImages(imagePaths, buttonSelectors) {
+        const paths = Array.isArray(imagePaths) ? imagePaths.filter(Boolean) : [];
+        if (!paths.length) {
+            return { ok: true, count: 0 };
+        }
+        if (!this.isPageAlive()) {
+            return { ok: false, count: 0, reason: "page is not available" };
+        }
+        const selectors = Array.isArray(buttonSelectors) ? buttonSelectors : [];
+        let button = null;
+        for (const selector of selectors) {
+            try {
+                const locator = this.page.locator(selector);
+                const count = await locator.count();
+                for (let index = 0; index < count; index += 1) {
+                    const candidate = locator.nth(index);
+                    if (!(await candidate.isVisible().catch(() => false))) {
+                        continue;
+                    }
+                    button = candidate;
+                    break;
+                }
+            } catch (error) {
+                // 继续尝试下一个选择器
+            }
+            if (button) {
+                break;
+            }
+        }
+        if (!button) {
+            return { ok: false, count: 0, reason: "upload button not found" };
+        }
+        try {
+            const [chooser] = await Promise.all([
+                this.page.waitForEvent("filechooser", { timeout: 10000 }),
+                button.click({ timeout: 5000 }),
+            ]);
+            await chooser.setFiles(paths);
+            await this.sleep(800);
+            return { ok: true, count: paths.length };
+        } catch (error) {
+            try {
+                const input = this.page.locator('input[type="file"]').last();
+                if ((await input.count()) > 0) {
+                    await input.setInputFiles(paths);
+                    await this.sleep(800);
+                    return { ok: true, count: paths.length };
+                }
+            } catch (innerError) {
+                // ignore
+            }
+            return { ok: false, count: 0, reason: error.message };
+        }
+    }
+
     async insertMessage(message) {
         console.log("[" + this.name + "] Inserting message: " + JSON.stringify(message));
         if (!this.isPageAlive()) {

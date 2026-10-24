@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const { SessionManager } = require("./session/session-manager");
 const browserSettings = require("./browser-settings");
+const { registerScreenshotRoutes } = require("./screenshot-api");
 const app = express();
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const sessionManager = new SessionManager();
@@ -26,10 +27,11 @@ try {
 } catch (error) {
     console.warn("[WebUI] Failed to apply browser settings to runtime:", error.message);
 }
-
 const frontendDistPath = path.join(__dirname, "frontend", "dist");
 const BACKSLASH = String.fromCharCode(92);
 app.use(express.json());
+// 截图接口：Web 版与桌面版共用同一份本地 Node 后端实现。
+registerScreenshotRoutes(app);
 app.use(express.static(frontendDistPath));
 app.get("/xml_agent_web", (req, res) => {
     res.sendFile(path.join(frontendDistPath, "index.html"));
@@ -258,7 +260,6 @@ app.post("/api/browser/switch", async (req, res) => {
         return res.status(500).json({ error: error.message });
     }
 });
-
 app.post("/api/run", (req, res) => {
     const { workspace, provider, task, conversationId } = req.body;
     if (!workspace || !task) {

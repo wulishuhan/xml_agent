@@ -1,32 +1,28 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn, exec } = require("child_process");
-const { getText } = require("./parse/xml-parse");
+const { getText, normalizeScreenshotTargets } = require("./parse/xml-parse");
 const agentConfig = require("./config/agent-config");
 const logger = require("./logger");
-
+const { takeScreenshot } = require("./webui/screenshot-api");
 const MAX_FILE_SIZE = agentConfig.runtime.maxFileSize;
 const MAX_READ_SIZE = agentConfig.runtime.maxReadSize;
 const MAX_EXEC_TIMEOUT = agentConfig.runtime.maxExecTimeout;
 const MAX_EXEC_OUTPUT_SIZE = agentConfig.runtime.maxExecOutputSize;
-
 function limitExecOutput(value, maxSize = MAX_EXEC_OUTPUT_SIZE) {
     const text = value || "";
     const buffer = Buffer.from(text, "utf8");
-
     if (buffer.length <= maxSize) {
         return {
             value: text,
             truncated: false,
         };
     }
-
     return {
         value: buffer.subarray(0, maxSize).toString("utf8"),
         truncated: true,
     };
 }
-
 // 验证写入内容（可选）
 function validateContent(filePath, content) {
     // 如果是 JSON 文件，尝试解析
@@ -39,27 +35,16 @@ function validateContent(filePath, content) {
     }
     // 可扩展其他验证
 }
-
 /**
-
 异步执行前台命令。
-
 重要：这里刻意使用 child_process.exec（异步）而不是 execSync。
-
 因为 Agent / WebUI 后端运行在 Electron 主进程的事件循环中，
-
 execSync 会阻塞整个事件循环，导致：
-
 Express 无法响应 HTTP 请求（输出轮询/SSE 心跳卡死）
-
 Electron 主进程无法处理渲染进程消息与窗口事件
-
 → 窗口被操作系统标记为"未响应"
-
 用户的"停止会话"请求无法被调度，只能强杀进程
-
 使用异步 API 后，命令执行期间事件循环仍然可用，
-
 界面不会卡死，用户也可以随时停止。
 */
 function execCommand(command, options) {
@@ -74,7 +59,6 @@ function execCommand(command, options) {
                 });
                 return;
             }
-
             resolve({
                 ok: true,
                 stdout,
@@ -83,76 +67,55 @@ function execCommand(command, options) {
         });
     });
 }
-
 class Runtime {
     constructor(workspace = null) {
         this.workspace = null;
-
         if (workspace) {
             this.setWorkspace(workspace);
         }
     }
-
     setWorkspace(workspace) {
         if (!workspace || typeof workspace !== "string") {
             throw new Error("Workspace path is required");
         }
-
         const resolved = path.resolve(workspace);
-
         if (!fs.existsSync(resolved)) {
             throw new Error("Workspace does not exist: " + resolved);
         }
-
         const stat = fs.statSync(resolved);
-
         if (!stat.isDirectory()) {
             throw new Error("Workspace is not a directory: " + resolved);
         }
-
         this.workspace = resolved;
-
         return this.workspace;
     }
-
     getWorkspace() {
         if (!this.workspace) {
             throw new Error("Workspace has not been configured");
         }
-
         return this.workspace;
     }
-
     resolvePath(filePath) {
         const workspace = this.getWorkspace();
-
         if (!filePath || typeof filePath !== "string") {
             throw new Error("Path is required");
         }
-
         if (path.isAbsolute(filePath)) {
             throw new Error("Absolute paths are not allowed");
         }
-
         const fullPath = path.resolve(workspace, filePath);
         const workspacePrefix = workspace.endsWith(path.sep) ? workspace : workspace + path.sep;
-
         if (fullPath !== workspace && !fullPath.startsWith(workspacePrefix)) {
             throw new Error("Path escapes workspace");
         }
-
         return fullPath;
     }
-
     read(node) {
         const filePath = node?.["@_path"];
-
         if (!filePath) {
             throw new Error("read requires path");
         }
-
         const fullPath = this.resolvePath(filePath);
-
         if (!fs.existsSync(fullPath)) {
             return {
                 ok: false,
@@ -161,9 +124,7 @@ class Runtime {
                 error: "File or directory does not exist",
             };
         }
-
         const stat = fs.statSync(fullPath);
-
         if (stat.isDirectory()) {
             const entries = fs
                 .readdirSync(fullPath, {
@@ -173,7 +134,6 @@ class Runtime {
                     return entry.name + (entry.isDirectory() ? "/" : "");
                 })
                 .sort();
-
             return {
                 ok: true,
                 action: "read",
@@ -182,7 +142,6 @@ class Runtime {
                 entries,
             };
         }
-
         if (stat.size > MAX_READ_SIZE) {
             return {
                 ok: false,
@@ -191,9 +150,7 @@ class Runtime {
                 error: "File too large to read. Size: " + stat.size + " bytes",
             };
         }
-
         const content = fs.readFileSync(fullPath, "utf8");
-
         return {
             ok: true,
             action: "read",
@@ -203,17 +160,13 @@ class Runtime {
             content,
         };
     }
-
     write(node) {
         const filePath = node?.["@_path"];
-
         if (!filePath) {
             throw new Error("write requires path");
         }
-
         const fullPath = this.resolvePath(filePath);
         const content = getText(node);
-
         if (Buffer.byteLength(content, "utf8") > MAX_FILE_SIZE) {
             return {
                 ok: false,
@@ -222,7 +175,6 @@ class Runtime {
                 error: "File too large",
             };
         }
-
         // 内容验证（仅对特定类型）
         try {
             validateContent(filePath, content);
@@ -234,7 +186,6 @@ class Runtime {
                 error: "Content validation failed: " + validationError.message,
             };
         }
-
         // 原子写入：先写入临时文件，再重命名
         const dir = path.dirname(fullPath);
         fs.mkdirSync(dir, { recursive: true });
@@ -249,7 +200,6 @@ class Runtime {
             } catch (_) {}
             throw err;
         }
-
         return {
             ok: true,
             action: "write",
@@ -257,24 +207,129 @@ class Runtime {
             size: Buffer.byteLength(content, "utf8"),
         };
     }
-
+    // 执行单个截图目标。target 既可以是 <target> 节点，也可以是旧的 screenshot 根节点。
+    async captureOneTarget(target) {
+        const workspace = this.getWorkspace();
+        const source = target?.["@_source"] || "screen";
+        const requestedPath = target?.["@_path"];
+        // 若显式指定路径，先做 workspace 越界校验，避免写到工作区之外。
+        if (requestedPath) {
+            this.resolvePath(requestedPath);
+        }
+        const result = await takeScreenshot({
+            workspace: workspace,
+            path: requestedPath,
+            source: source,
+            url: target?.["@_url"],
+            selector: target?.["@_selector"],
+            fullPage: target?.["@_fullPage"] === "true",
+            windowTitle: target?.["@_windowTitle"] || target?.["@_title"],
+        });
+        if (!result.ok) {
+            return {
+                ok: false,
+                source: source,
+                path: requestedPath || null,
+                windowTitle: target?.["@_windowTitle"] || target?.["@_title"] || null,
+                error: result.error || "screenshot failed",
+            };
+        }
+        return {
+            ok: true,
+            source: result.source,
+            path: result.path,
+            width: result.width,
+            height: result.height,
+            bytes: result.bytes,
+            note: result.note,
+        };
+    }
+    async screenshot(node) {
+        const targets = normalizeScreenshotTargets(node);
+        // 多目标写法：<screenshot><target .../><target .../></screenshot>
+        if (targets.length > 0) {
+            logger.info("Capturing " + targets.length + " screenshot target(s)");
+            const results = [];
+            for (let index = 0; index < targets.length; index += 1) {
+                const target = targets[index];
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const result = await this.captureOneTarget(target);
+                    result.index = index;
+                    results.push(result);
+                } catch (error) {
+                    results.push({
+                        ok: false,
+                        index: index,
+                        source: target?.["@_source"] || "screen",
+                        error: error.message,
+                    });
+                }
+            }
+            const succeeded = results.filter((item) => item.ok);
+            const failed = results.filter((item) => !item.ok);
+            // 全部失败才算整个动作失败；部分成功时把失败项也返回给模型。
+            return {
+                ok: succeeded.length > 0,
+                action: "screenshot",
+                multi: true,
+                count: results.length,
+                succeeded: succeeded.length,
+                failed: failed.length,
+                results: results,
+                paths: succeeded.map((item) => item.path),
+            };
+        }
+        // 旧写法：单个 screenshot 目标
+        const source = node?.["@_source"] || "screen";
+        const requestedPath = node?.["@_path"];
+        // 越界路径属于调用方的编程错误，直接在 try 之外抛出，
+        // 与 read/write 的越界行为保持一致（而不是伪装成"截图失败"）。
+        if (requestedPath) {
+            this.resolvePath(requestedPath);
+        }
+        logger.info("Capturing screenshot:", source, requestedPath || "(default)");
+        try {
+            const result = await this.captureOneTarget(node);
+            if (!result.ok) {
+                return {
+                    ok: false,
+                    action: "screenshot",
+                    source: source,
+                    error: result.error || "screenshot failed",
+                };
+            }
+            return {
+                ok: true,
+                action: "screenshot",
+                source: result.source,
+                path: result.path,
+                width: result.width,
+                height: result.height,
+                bytes: result.bytes,
+                note: result.note,
+            };
+        } catch (error) {
+            logger.error("Screenshot failed:", error.message);
+            return {
+                ok: false,
+                action: "screenshot",
+                source: source,
+                error: error.message,
+            };
+        }
+    }
     async execute(node) {
         const workspace = this.getWorkspace();
         const command = node?.["@_command"];
-
         if (!command) {
             throw new Error("exec requires command");
         }
-
         logger.info("Executing command:", command);
-
         const isBackground = command.includes(" --background");
-
         if (isBackground) {
             const cleanCommand = command.replace(/ --background/g, "");
-
             logger.info("Running as background process: " + cleanCommand);
-
             try {
                 const child = spawn(cleanCommand, {
                     cwd: workspace,
@@ -284,11 +339,8 @@ class Runtime {
                     stdio: "ignore",
                     windowsHide: true,
                 });
-
                 child.unref();
-
                 logger.info("Background process started with PID: " + child.pid);
-
                 return {
                     ok: true,
                     action: "exec",
@@ -307,7 +359,6 @@ class Runtime {
                 };
             }
         }
-
         // 异步执行：不阻塞事件循环，避免 Electron 主进程卡死
         const result = await execCommand(command, {
             cwd: workspace,
@@ -316,10 +367,8 @@ class Runtime {
             maxBuffer: MAX_EXEC_OUTPUT_SIZE,
             windowsHide: true,
         });
-
         if (result.ok) {
             const limitedOutput = limitExecOutput(result.stdout);
-
             return {
                 ok: true,
                 action: "exec",
@@ -328,13 +377,10 @@ class Runtime {
                 outputTruncated: limitedOutput.truncated,
             };
         }
-
         const error = result.error || {};
         const stdout = limitExecOutput(result.stdout);
         const stderr = limitExecOutput(result.stderr);
-
         logger.error("Command failed:", command, "exitCode:", error.code);
-
         return {
             ok: false,
             action: "exec",
@@ -347,84 +393,66 @@ class Runtime {
             error: error.message,
         };
     }
-
     answer(node) {
         const content = getText(node);
-
         if (!content.trim()) {
             throw new Error("answer content cannot be empty");
         }
-
         return {
             ok: true,
             action: "answer",
             content,
         };
     }
-
     done() {
         return {
             ok: true,
             action: "done",
         };
     }
-
     async run(action) {
         if (!action || typeof action !== "object") {
             throw new Error("Action is required");
         }
-
         this.getWorkspace();
-
         const actionName = action.action;
         const node = action.node;
-
         if (!actionName || typeof actionName !== "string") {
             throw new Error("Action name is required");
         }
-
         logger.debug("Runtime Action:", actionName);
-
         const handler = this.actionHandlers[actionName];
-
         if (!handler) {
             throw new Error("Unknown action: " + actionName);
         }
-
         // 兼容同步/异步 handler：read/write/answer/done 仍是同步的，
-        // 只有 exec 是异步的。await 一个非 Promise 值不会有任何副作用。
+        // 只有 exec / screenshot 是异步的。await 一个非 Promise 值不会有任何副作用。
         return await handler(node);
     }
-
     get actionHandlers() {
         return {
             read: this.read.bind(this),
             write: this.write.bind(this),
             exec: this.execute.bind(this),
+            screenshot: this.screenshot.bind(this),
             answer: this.answer.bind(this),
             done: this.done.bind(this),
         };
     }
 }
-
 function createRuntime(workspace) {
     return new Runtime(workspace);
 }
-
 const legacyRuntime = createRuntime();
-
 function setWorkspace(workspace) {
     return legacyRuntime.setWorkspace(workspace);
 }
-
 function getWorkspace() {
     return legacyRuntime.getWorkspace();
 }
-
 function run(action) {
     return legacyRuntime.run(action);
 }
-
 module.exports = {
     Runtime,
     createRuntime,

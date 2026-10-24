@@ -13,7 +13,9 @@ var RE_CODE_PUNCT = new RegExp("[;{}()[]" + BS + "<>]=?");
 var RE_INDENT = new RegExp(NL + BS + "s+" + BS + "S");
 var RE_LEAD_WS = new RegExp("^" + BS + "s+");
 var RE_TRAIL_WS = new RegExp(BS + "s+$");
-var RE_ACTION = new RegExp("<(read|write|exec|answer|done)(?:" + BS + "s[^>]*)?>");
+// 注意：这里必须与 parse/xml-parse.js 的 validateAction 支持的 action 名称保持一致，
+// 否则大模型回复里只包含 screenshot 时会被当成“没有 XML Action”而丢弃。
+var RE_ACTION = new RegExp("<(read|write|exec|screenshot|answer|done)(?:" + BS + "s[^>]*)?/?>");
 function balanceMarkdownFences(value) {
     if (value == null) {
         return "";

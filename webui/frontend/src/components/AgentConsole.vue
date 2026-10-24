@@ -48,14 +48,18 @@
                         <div class="event-content">
                             <div class="event-meta">
                                 <span class="event-type">{{ getLabel(item) }}</span>
-                                <span v-if="getActionTag(item)" class="event-tag">{{
-                                    getActionTag(item)
-                                }}</span>
+                                <span
+                                    v-if="getActionTag(item)"
+                                    class="event-tag"
+                                    >{{\n                                    getActionTag(item)\n                                }}</span
+                                >
                                 <time v-if="item.timestamp">{{ formatTime(item.timestamp) }}</time>
                             </div>
-                            <pre v-if="isStructured(item)" class="event-text">{{
-                                getBody(item)
-                            }}</pre>
+                            <pre
+                                v-if="isStructured(item)"
+                                class="event-text"
+                                >{{\n                                getBody(item)\n                            }}</pre
+                            >
                             <div v-else class="event-text">{{ getBody(item) }}</div>
                         </div>
                     </article>
@@ -73,9 +77,11 @@
                     <div class="event-content">
                         <div class="event-meta">
                             <span class="event-type">{{ getLabel(item) }}</span>
-                            <span v-if="getActionTag(item)" class="event-tag">{{
-                                getActionTag(item)
-                            }}</span>
+                            <span
+                                v-if="getActionTag(item)"
+                                class="event-tag"
+                                >{{\n                                getActionTag(item)\n                            }}</span
+                            >
                             <span
                                 v-if="isCollapsible(item) && !isAnswerItem(item)"
                                 class="event-lines"
@@ -131,7 +137,7 @@
 </template>
 <script setup>
     import { computed, nextTick, ref, watch } from "vue";
-    import { marked } from "marked";
+    import { renderMarkdown } from "../services/markdown.mjs";
     const props = defineProps({
         output: { type: Array, default: () => [] },
         session: { type: Object, default: null },
@@ -145,73 +151,6 @@
     const showAllRuns = ref(false);
     const PREVIEW_MAX_CHARS = 220;
     const PREVIEW_MAX_LINES = 4;
-    marked.setOptions({ gfm: true, breaks: false });
-    function lineLooksLikeMarkdown(line) {
-        const trimmed = line.trim();
-        if (!trimmed) {
-            return false;
-        }
-        if (trimmed.indexOf("# ") === 0 || trimmed.indexOf("## ") === 0) {
-            return true;
-        }
-        if (trimmed.indexOf("### ") === 0 || trimmed.indexOf("#### ") === 0) {
-            return true;
-        }
-        if (trimmed.indexOf("- ") === 0 || trimmed.indexOf("* ") === 0) {
-            return true;
-        }
-        if (trimmed.indexOf("+ ") === 0) {
-            return true;
-        }
-        if (trimmed.indexOf("> ") === 0) {
-            return true;
-        }
-        if (/^\d+.\s/.test(trimmed)) {
-            return true;
-        }
-        if (trimmed.indexOf("|") === 0 && trimmed.lastIndexOf("|") > 0) {
-            return true;
-        }
-        return false;
-    }
-    function looksLikeMarkdown(text) {
-        if (typeof text !== "string" || !text.trim()) {
-            return false;
-        }
-        if (text.indexOf("```") !== -1) {
-            return true;
-        }
-        if (text.indexOf("**") !== -1) {
-            return true;
-        }
-        if (text.indexOf("](") !== -1) {
-            return true;
-        }
-        if (text.indexOf("---") !== -1) {
-            return true;
-        }
-        const lines = text.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-            if (lineLooksLikeMarkdown(lines[i])) {
-                return true;
-            }
-        }
-        return false;
-    }
-    function renderMarkdown(text) {
-        if (typeof text !== "string" || !text.trim()) {
-            return "";
-        }
-        if (!looksLikeMarkdown(text)) {
-            return "";
-        }
-        try {
-            const html = marked.parse(text);
-            return typeof html === "string" ? html : "";
-        } catch (error) {
-            return "";
-        }
-    }
     function baseFilter(items) {
         return items.filter((item) => {
             const event = item.event;
@@ -298,6 +237,8 @@
         if (!content) {
             return { content: "", html: "" };
         }
+        // 统一使用 renderMarkdown：breaks:true 保留单换行，protectInlineSpaces 保留连续空格。
+        // 纯文本（无 markdown 特征）时返回空字符串，回退到 pre-wrap 纯文本显示。
         return { content, html: renderMarkdown(content) };
     });
     watch(
@@ -339,6 +280,7 @@
         if (tag === "read") return "R";
         if (tag === "write") return "W";
         if (tag === "exec") return ">";
+        if (tag === "screenshot") return "P";
         if (tag === "done") return "=";
         return ">";
     }
@@ -427,7 +369,9 @@
         const truncatedByChar = head.length > PREVIEW_MAX_CHARS;
         const shown = truncatedByChar ? head.slice(0, PREVIEW_MAX_CHARS) : head;
         if (truncatedByLine || truncatedByChar) {
-            return shown.replace(/\s+/, "") + " ...";
+            // 修正：原实现 /\\s+/ 只替换第一个空白，导致预览文字粘连。
+            // 这里改为 /\\s+/g，仅折叠空白用于单行预览；完整内容仍通过展开查看。
+            return shown.replace(/\s+/g, " ") + " ...";
         }
         return shown;
     }

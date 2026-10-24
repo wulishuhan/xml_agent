@@ -1,3 +1,4 @@
+const path = require("path");
 const { createProvider } = require("./providers");
 const {
     getFirstPrompt,
@@ -114,6 +115,80 @@ class Agent extends EventEmitter {
         }
         return agentConfig.browser.cdpUrl;
     }
+    /**
+- 收集截图结果里所有可上传的图片路径（相对 workspace）。
+- 兼容单图（result.path）与多图（result.paths / result.results）。
+*/
+    collectScreenshotPaths(result) {
+        const relativePaths = [];
+        if (Array.isArray(result.paths)) {
+            for (const item of result.paths) {
+                if (item && relativePaths.indexOf(item) === -1) {
+                    relativePaths.push(item);
+                }
+            }
+        }
+        if (relativePaths.length === 0 && Array.isArray(result.results)) {
+            for (const item of result.results) {
+                if (item && item.ok && item.path && relativePaths.indexOf(item.path) === -1) {
+                    relativePaths.push(item.path);
+                }
+            }
+        }
+        if (relativePaths.length === 0 && result.path) {
+            relativePaths.push(result.path);
+        }
+        return relativePaths;
+    }
+
+    /**
+- 截图成功后，把图片上传到当前对话，让大模型能在下一轮"看到"截图内容。
+- 支持一次上传多张（多目标 screenshot 会返回多张成功图片）。
+- 只对支持 uploadImages 的 provider 生效；失败不影响主流程，仅记录在结果里。
+*/
+    async attachScreenshotToProvider(result) {
+        if (!result || result.action !== "screenshot" || !result.ok) {
+            return result;
+        }
+        const relativePaths = this.collectScreenshotPaths(result);
+        if (relativePaths.length === 0) {
+            result.uploaded = false;
+            return result;
+        }
+        if (!this.provider || typeof this.provider.uploadImages !== "function") {
+            result.uploaded = false;
+            return result;
+        }
+        const absolutePaths = relativePaths.map((relativePath) =>
+            path.isAbsolute(relativePath)
+                ? relativePath
+                : path.resolve(this.workspace, relativePath)
+        );
+        try {
+            const upload = await this.provider.uploadImages(absolutePaths);
+            result.uploaded = upload && upload.ok !== false;
+            result.uploadCount = upload && upload.count ? upload.count : 0;
+            result.uploadedPaths = relativePaths;
+            this.emitEvent("screenshot.uploaded", {
+                step: this.step,
+                path: relativePaths[0],
+                paths: relativePaths,
+                uploaded: result.uploaded,
+                uploadCount: result.uploadCount,
+            });
+        } catch (error) {
+            result.uploaded = false;
+            result.uploadError = error.message;
+            this.emitEvent("screenshot.upload_error", {
+                step: this.step,
+                path: relativePaths[0],
+                paths: relativePaths,
+                error: error.message,
+            });
+        }
+        return result;
+    }
+
     async run() {
         if (this.status !== "created") {
             throw new Error("Agent can only be run once");
@@ -287,6 +362,8 @@ class Agent extends EventEmitter {
                 error: error.message,
             };
         }
+        // 截图成功后把图片上传到当前对话，让大模型能在下一轮看到截图内容。
+        result = await this.attachScreenshotToProvider(result);
         this.history.push(createHistoryRecord(this.step, action, result));
         this.emitEvent("runtime.result", {
             step: this.step,
