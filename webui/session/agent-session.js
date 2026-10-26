@@ -1,3 +1,4 @@
+
 const crypto = require("crypto");
 const { EventEmitter } = require("events");
 const { Agent } = require("../../agent-core");
@@ -63,7 +64,7 @@ class AgentSession extends EventEmitter {
             this.exitCode = data.exitCode;
         }
         if (typeof data.error !== "undefined") {
-            this.error = error;
+            this.error = data.error;
         }
         if (typeof data.createdAt === "number") {
             this.createdAt = data.createdAt;
