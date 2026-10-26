@@ -68,8 +68,9 @@ function execCommand(command, options) {
     });
 }
 class Runtime {
-    constructor(workspace = null) {
+    constructor(workspace = null, execScope = "workspace") {
         this.workspace = null;
+        this.execScope = execScope || "workspace";
         if (workspace) {
             this.setWorkspace(workspace);
         }
@@ -100,8 +101,19 @@ class Runtime {
         if (!filePath || typeof filePath !== "string") {
             throw new Error("Path is required");
         }
+        // 如果 execScope 为 all，允许绝对路径（但需做基本安全检查）
+        if (this.execScope === "all") {
+            if (path.isAbsolute(filePath)) {
+                // 简单的安全检查：不允许包含 .. 跳转到根目录之外
+                const normalized = path.normalize(filePath);
+                if (normalized.startsWith("..")) {
+                    throw new Error("Unsafe absolute path");
+                }
+                return filePath;
+            }
+        }
         if (path.isAbsolute(filePath)) {
-            throw new Error("Absolute paths are not allowed");
+            throw new Error("Absolute paths are not allowed in workspace mode");
         }
         const fullPath = path.resolve(workspace, filePath);
         const workspacePrefix = workspace.endsWith(path.sep) ? workspace : workspace + path.sep;
@@ -440,8 +452,8 @@ class Runtime {
         };
     }
 }
-function createRuntime(workspace) {
-    return new Runtime(workspace);
+function createRuntime(workspace, execScope) {
+    return new Runtime(workspace, execScope);
 }
 const legacyRuntime = createRuntime();
 function setWorkspace(workspace) {

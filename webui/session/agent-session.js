@@ -2,7 +2,14 @@ const crypto = require("crypto");
 const { EventEmitter } = require("events");
 const { Agent } = require("../../agent-core");
 class AgentSession extends EventEmitter {
-    constructor({ workspace, provider = "chatgpt", task, conversationId = null, images = [] }) {
+    constructor({
+        workspace,
+        provider = "chatgpt",
+        task,
+        conversationId = null,
+        images = [],
+        execScope = "workspace",
+    }) {
         super();
         if (!workspace) {
             throw new Error("Workspace is required");
@@ -18,6 +25,8 @@ class AgentSession extends EventEmitter {
         // 用户随任务附带的图片（相对 workspace 或绝对路径）。
         // 进程重启后不会重新上传，因此仅作为运行时状态保留在内存。
         this.images = Array.isArray(images) ? images.slice() : [];
+        // exec 权限控制：workspace 限制在当前工作区，all 无限制
+        this.execScope = execScope || "workspace";
         this.agent = null;
         this.output = [];
         this.status = "created";
@@ -70,6 +79,9 @@ class AgentSession extends EventEmitter {
         }
         if (typeof data.task === "string") {
             this.task = data.task;
+        }
+        if (typeof data.execScope === "string") {
+            this.execScope = data.execScope;
         }
         // 进程重启后，之前处于 running 的会话实际上已经中断
         if (this.status === "running") {
@@ -196,6 +208,7 @@ class AgentSession extends EventEmitter {
             task: this.task,
             conversationId: this.conversationId,
             images: this.images,
+            execScope: this.execScope,
         });
         this.agent.on("event", (event) => {
             this.handleAgentEvent(event);
@@ -287,6 +300,7 @@ class AgentSession extends EventEmitter {
             provider: this.provider,
             task: this.task,
             images: this.images.slice(),
+            execScope: this.execScope,
             status: this.status,
             running: this.isRunning(),
             pid: null,

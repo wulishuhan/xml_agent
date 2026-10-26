@@ -61,6 +61,8 @@ class Agent extends EventEmitter {
         // 可选：用户随任务附带的图片（相对 workspace 或绝对路径）。
         // 这些图片会在 provider 启动后、发送第一条 prompt 之前上传给模型。
         this.images = normalizePresetImages(options.images);
+        // exec 权限控制：workspace 限制在当前工作区，all 无限制
+        this.execScope = options.execScope || "workspace";
         this.maxSteps = options.maxSteps ?? agentConfig.agent.maxSteps;
         this.maxProviderErrors = options.maxProviderErrors ?? agentConfig.agent.maxProviderErrors;
         this.focusCdpPage =
@@ -74,7 +76,8 @@ class Agent extends EventEmitter {
                 : agentConfig.browser.browserType
         );
         this.history = createHistory();
-        this.runtime = createRuntime(this.workspace);
+        // 传递 execScope 给 Runtime
+        this.runtime = createRuntime(this.workspace, this.execScope);
         this.provider = null;
         this.step = 0;
         this.status = "created";
@@ -289,6 +292,7 @@ class Agent extends EventEmitter {
                 task: this.task,
                 conversationId: this.conversationId,
                 images: this.images,
+                execScope: this.execScope,
             });
             const cdpUrl = this.resolveCdpUrl();
             this.provider = createProvider(this.providerName, {
@@ -532,6 +536,7 @@ class Agent extends EventEmitter {
             browserType: this.browserType,
             task: this.task,
             images: this.images,
+            execScope: this.execScope,
             step: this.step,
             answer: this.answer,
             conversationId: this.currentConversationId,

@@ -123,37 +123,11 @@
                         >
                     </div>
                     <div class="composer-shell" :style="composerStyle">
-                        <div
-                            class="workspace-input-row"
-                            :class="{ 'workspace-input-row--required': !workspace.trim() }"
-                        >
-                            <div class="workspace-input">
-                                <span class="workspace-input-label">Workspace</span>
-                                <input
-                                    ref="workspaceInput"
-                                    v-model="workspace"
-                                    :disabled="false"
-                                    type="text"
-                                    placeholder="Enter an absolute path, for example D:/projects/my-app"
-                                    @keydown.enter="focusTask"
-                                />
-                                <button
-                                    type="button"
-                                    class="btn workspace-browse-button"
-                                    :disabled="false"
-                                    @click="openWorkspacePicker"
-                                >
-                                    Browse
-                                </button>
-                            </div>
-                            <span v-if="!workspace.trim()" class="workspace-required-hint">
-                                Required - this path is different on each computer
-                            </span>
-                        </div>
                         <TaskComposer
                             v-model:task="task"
                             v-model:conversationId="conversationId"
                             v-model:images="images"
+                            v-model:execScope="execScope"
                             :provider="provider"
                             :running="running"
                             :workspace="workspace"
@@ -222,6 +196,8 @@
     const task = ref("");
     // 用户随任务附带的图片：桌面端为本地绝对路径，Web 端为 workspace 下相对路径。
     const images = ref([]);
+    // exec 权限控制：workspace 限制在当前工作区，all 无限制
+    const execScope = ref("workspace");
     const storage = ref(null);
     const theme = ref(resolveInitialTheme());
     function toggleTheme() {
@@ -230,7 +206,6 @@
         persistTheme(theme.value);
     }
     const conversationId = ref("");
-    const workspaceInput = ref(null);
     const showWorkspacePicker = ref(false);
     const showSettings = ref(false);
     const showHistory = ref(false);
@@ -504,9 +479,8 @@
             return;
         }
         if (!workspace.value.trim()) {
-            errorMessage.value = "Please enter a workspace path before running the agent.";
-            await nextTick();
-            workspaceInput.value?.focus();
+            errorMessage.value =
+                "Please select a workspace from the sidebar before running the agent.";
             return;
         }
         if (!task.value.trim()) {
@@ -528,6 +502,10 @@
             // 只提交图片路径；真正的上传由 Agent 在 provider 启动后执行。
             if (images.value.length) {
                 payload.images = images.value.slice();
+            }
+            // 传递 execScope 权限控制
+            if (execScope.value) {
+                payload.execScope = execScope.value;
             }
             const result = await apiRunAgent(payload);
             activeSessionId.value = result.sessionId;
@@ -608,6 +586,7 @@
         workspace.value = "";
         conversationId.value = "";
         images.value = [];
+        execScope.value = "workspace";
         provider.value = "chatgpt";
     }
     function clearConsole() {
@@ -676,16 +655,6 @@
     onBeforeUnmount(stopResize);
 </script>
 <style scoped>
-    .workspace-browse-button {
-        flex: 0 0 auto;
-        white-space: nowrap;
-    }
-    .workspace-input {
-        width: 100%;
-    }
-    .workspace-input input {
-        width: 100%;
-    }
     .theme-toggle {
         display: inline-flex;
         align-items: center;

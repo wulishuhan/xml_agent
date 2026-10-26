@@ -92,6 +92,50 @@
                     :disabled="running || uploading"
                     @change="onFilesSelected"
                 />
+                <!-- 权限控制下拉按钮 -->
+                <div class="composer-permission-dropdown">
+                    <button
+                        type="button"
+                        class="composer-permission-btn"
+                        :class="{
+                            'permission-workspace': execScope === 'workspace',
+                            'permission-all': execScope === 'all',
+                        }"
+                        :disabled="running"
+                        :title="
+                            execScope === 'workspace'
+                                ? 'Exec restricted to workspace (safe)'
+                                : 'Exec allowed everywhere (unsafe)'
+                        "
+                        @click="togglePermissionMenu"
+                    >
+                        <span class="permission-icon">🔒</span>
+                        <span class="permission-text">{{ permissionLabel }}</span>
+                        <span
+                            class="composer-permission-arrow"
+                            :class="{ open: showPermissionMenu }"
+                            >▼</span
+                        >
+                    </button>
+                    <div v-if="showPermissionMenu" class="composer-permission-menu">
+                        <button
+                            type="button"
+                            class="composer-permission-option"
+                            :class="{ active: execScope === 'workspace' }"
+                            @click="setExecScope('workspace')"
+                        >
+                            <span class="option-icon">🔒</span> WORKSPACE (Safe)
+                        </button>
+                        <button
+                            type="button"
+                            class="composer-permission-option"
+                            :class="{ active: execScope === 'all' }"
+                            @click="setExecScope('all')"
+                        >
+                            <span class="option-icon">⚠️</span> ALL (Unsafe)
+                        </button>
+                    </div>
+                </div>
                 <button
                     v-if="running"
                     class="btn btn-danger composer-run-button"
@@ -128,11 +172,13 @@
         workspace: { type: String, default: "" },
         images: { type: Array, default: () => [] },
         sessionId: { type: String, default: null },
+        execScope: { type: String, default: "workspace" },
     });
     const emit = defineEmits([
         "update:task",
         "update:conversationId",
         "update:images",
+        "update:execScope",
         "run",
         "stop",
     ]);
@@ -140,6 +186,7 @@
     const fileInput = ref(null);
     const uploading = ref(false);
     const imageError = ref("");
+    const showPermissionMenu = ref(false);
     const isElectron = computed(() => {
         return (
             typeof window !== "undefined" &&
@@ -149,6 +196,9 @@
     });
     const canRun = computed(() => {
         return props.task.trim().length > 0;
+    });
+    const permissionLabel = computed(() => {
+        return props.execScope === "workspace" ? "WORKSPACE" : "ALL";
     });
     // 用户可能粘贴完整会话 URL 或纯 conversation id；这里只做轻量提示，
     // 真正的 URL -> id 解析由 provider 端在 Agent 内部负责。
@@ -260,6 +310,19 @@
             uploading.value = false;
         }
     }
+    function togglePermissionMenu() {
+        if (props.running) {
+            return;
+        }
+        showPermissionMenu.value = !showPermissionMenu.value;
+    }
+    function setExecScope(scope) {
+        if (props.running) {
+            return;
+        }
+        emit("update:execScope", scope);
+        showPermissionMenu.value = false;
+    }
     defineExpose({ focus });
 </script>
 <style scoped>
@@ -327,6 +390,7 @@
     }
     /* 让"Attach images"与"Run Agent"按钮在高度与对齐上保持一致。 */
     .composer-attach,
+    .composer-permission-btn,
     .composer-run-button {
         display: inline-flex;
         min-height: 32px;
@@ -355,6 +419,97 @@
     .composer-attach:disabled {
         opacity: 0.55;
         cursor: not-allowed;
+    }
+    /* 权限控制按钮样式 */
+    .composer-permission-dropdown {
+        position: relative;
+    }
+    .composer-permission-btn {
+        border: 1px solid var(--c-border-strong);
+        background: var(--c-btn-bg);
+        color: var(--c-text-muted);
+        transition:
+            color 0.14s ease,
+            border-color 0.14s ease,
+            background 0.14s ease;
+        gap: 6px;
+        font-weight: 500;
+    }
+    .composer-permission-btn.permission-workspace {
+        border-color: #10b981;
+        color: #10b981;
+        background: rgba(16, 185, 129, 0.1);
+    }
+    .composer-permission-btn.permission-workspace:hover:not(:disabled) {
+        background: rgba(16, 185, 129, 0.2);
+        border-color: #059669;
+        color: #059669;
+    }
+    .composer-permission-btn.permission-all {
+        border-color: #f59e0b;
+        color: #f59e0b;
+        background: rgba(245, 158, 11, 0.1);
+    }
+    .composer-permission-btn.permission-all:hover:not(:disabled) {
+        background: rgba(245, 158, 11, 0.2);
+        border-color: #d97706;
+        color: #d97706;
+    }
+    .composer-permission-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+    .permission-icon {
+        font-size: 14px;
+        margin-right: 4px;
+    }
+    .permission-text {
+        font-weight: 600;
+    }
+    .composer-permission-arrow {
+        font-size: 8px;
+        transition: transform 0.15s ease;
+        margin-left: 4px;
+    }
+    .composer-permission-arrow.open {
+        transform: rotate(180deg);
+    }
+    .composer-permission-menu {
+        position: absolute;
+        bottom: 100%;
+        right: 0;
+        margin-bottom: 4px;
+        min-width: 160px;
+        border: 1px solid var(--c-border-strong);
+        border-radius: 6px;
+        background: var(--c-elevated-bg);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        overflow: hidden;
+        z-index: 100;
+    }
+    .composer-permission-option {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        padding: 8px 12px;
+        border: 0;
+        background: transparent;
+        color: var(--c-text-body);
+        font-size: 12px;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.14s ease;
+        gap: 8px;
+    }
+    .composer-permission-option:hover {
+        background: var(--c-btn-hover);
+    }
+    .composer-permission-option.active {
+        background: #64748b;
+        color: #fff;
+    }
+    .option-icon {
+        font-size: 14px;
     }
     .composer-run-button:disabled {
         opacity: 0.55;
