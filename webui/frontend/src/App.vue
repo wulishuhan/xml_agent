@@ -1,13 +1,14 @@
-
 <template>
     <div class="app-shell">
         <SessionSidebar
-            :sessions="sessions"
+            :workspaces="workspaces"
             :active-id="activeSessionId"
             :storage="storage"
             @select="selectSession"
-            @new-session="createNewSession"
+            @new-session="createSessionInWorkspace"
             @delete="deleteSessionById"
+            @new-workspace="openWorkspacePicker"
+            @toggle-workspace="toggleWorkspace"
         />
         <main class="workspace-view">
             <header class="workspace-header">
@@ -18,7 +19,7 @@
                             {{ workspaceTitle }}
                         </div>
                         <div class="workspace-path" :title="workspace">
-                            {{ workspace || "Please set a workspace to begin" }}
+                            {{ workspace || "Please select a workspace to begin" }}
                         </div>
                     </div>
                 </div>
@@ -59,7 +60,9 @@
                         @click="toggleTheme"
                     >
                         <span class="theme-toggle-icon">{{ theme === "dark" ? "☾" : "☀" }}</span>
-                        <span class="theme-toggle-label">{{ theme === "dark" ? "Dark" : "Light" }}</span>
+                        <span class="theme-toggle-label">{{
+                            theme === "dark" ? "Dark" : "Light"
+                        }}</span>
                     </button>
                     <button
                         type="button"
@@ -87,7 +90,9 @@
                     </div>
                     <div v-if="activeConversationId" class="context-item">
                         <span class="context-label">Conversation</span>
-                        <code :title="activeConversationId">{{ shortId(activeConversationId) }}</code>
+                        <code :title="activeConversationId">{{
+                            shortId(activeConversationId)
+                        }}</code>
                     </div>
                     <div v-if="isElectron" class="context-item">
                         <span class="context-label">Port</span> <code>{{ electronPort }}</code>
@@ -197,14 +202,14 @@
         getEventSourceUrl,
         getSession,
         getSessionOutput,
-        getSessions,
+        getWorkspaces,
         getStorage,
         runAgent as apiRunAgent,
         stopSession,
     } from "./services/agent-api.js";
     import { applyTheme, persistTheme, resolveInitialTheme } from "./services/theme.js";
     import { notifyTaskCompleted } from "./services/desktop-notify.js";
-    const sessions = ref([]);
+    const workspaces = ref([]);
     const activeSessionId = ref(null);
     const activeSession = ref(null);
     const output = ref([]);
@@ -343,24 +348,28 @@
             storage.value = await getStorage();
         } catch (error) {}
     }
-    async function loadSessions() {
+    async function loadWorkspaces() {
         try {
-            const result = await getSessions();
-            sessions.value = result.sessions || [];
+            const result = await getWorkspaces();
+            // 恢复每个工作区的展开状态
+            const expandedSet = new Set(
+                workspaces.value.filter((ws) => ws.expanded).map((ws) => ws.path)
+            );
+            workspaces.value = (result.workspaces || []).map((ws) => ({
+                ...ws,
+                expanded: expandedSet.has(ws.path),
+            }));
             if (result.storage) {
                 storage.value = result.storage;
             }
+            // 如果有活跃会话，确保其所在工作区被展开
             if (activeSessionId.value) {
-                const existing = sessions.value.find(
-                    (session) => session.id === activeSessionId.value
+                const activeWs = workspaces.value.find((ws) =>
+                    ws.sessions.some((s) => s.id === activeSessionId.value)
                 );
-                if (existing) {
-                    await selectSession(existing.id);
-                    return;
+                if (activeWs) {
+                    activeWs.expanded = true;
                 }
-            }
-            if (sessions.value.length) {
-                await selectSession(sessions.value[0].id);
             }
         } catch (error) {
             errorMessage.value = error.message;
@@ -434,7 +443,6 @@
                         activeSession.value = Object.assign({}, activeSession.value, {
                             conversationId: info.conversationId,
                         });
-                        updateSessionList(activeSession.value);
                     }
                     conversationId.value = info.conversationId;
                 }
@@ -447,7 +455,6 @@
             try {
                 finishedInfo = JSON.parse(event.data);
                 activeSession.value = finishedInfo;
-                updateSessionList(activeSession.value);
             } catch (error) {
                 errorMessage.value = error.message;
             }
@@ -456,6 +463,7 @@
                 task.value = "";
             }
             refreshStorage();
+            loadWorkspaces();
             // 仅在本次订阅期间确实处于过 running 状态、且最终状态为 completed 时通知。
             if (sawRunning && finishedInfo) {
                 notifyTaskCompleted(finishedInfo);
@@ -518,7 +526,7 @@
             activeSessionId.value = result.sessionId;
             // 启动后图片已交给本次运行，清空避免下次重复上传。
             images.value = [];
-            await loadSessions();
+            await loadWorkspaces();
             await selectSession(result.sessionId);
         } catch (error) {
             errorMessage.value = error.message;
@@ -534,7 +542,7 @@
         try {
             await stopSession(activeSessionId.value);
             await selectSession(activeSessionId.value);
-            await loadSessions();
+            await loadWorkspaces();
         } catch (error) {
             errorMessage.value = error.message;
         }
@@ -554,19 +562,23 @@
             return;
         }
         const wasActive = activeSessionId.value === sessionId;
-        sessions.value = sessions.value.filter((session) => session.id !== sessionId);
         if (!wasActive) {
+            await loadWorkspaces();
             return;
         }
         closeEventSource();
         activeSessionId.value = null;
         activeSession.value = null;
         output.value = [];
-        if (sessions.value.length) {
-            await selectSession(sessions.value[0].id);
-            return;
-        }
-        createNewSession();
+        await loadWorkspaces();
+        // 如果删除的是当前会话，不自动创建新会话，让用户选择
+    }
+    // 点击工作区旁的"+"时，直接设置工作区并聚焦任务输入框，不再弹出选择器
+    function createSessionInWorkspace(workspacePath) {
+        workspace.value = workspacePath;
+        nextTick(() => {
+            focusTask();
+        });
     }
     function createNewSession() {
         closeEventSource();
@@ -581,14 +593,6 @@
     }
     function clearConsole() {
         output.value = [];
-    }
-    function updateSessionList(session) {
-        const index = sessions.value.findIndex((item) => item.id === session.id);
-        if (index === -1) {
-            sessions.value.unshift(session);
-            return;
-        }
-        sessions.value[index] = session;
     }
     function closeEventSource() {
         if (!eventSource.value) {
@@ -631,13 +635,16 @@
         showWorkspacePicker.value = false;
         errorMessage.value = "";
     }
+    function toggleWorkspace(ws) {
+        ws.expanded = !ws.expanded;
+    }
     function onSettingsSaved() {
         errorMessage.value = "";
     }
     onMounted(() => {
         applyTheme(theme.value);
         loadRatio();
-        loadSessions();
+        loadWorkspaces();
         refreshStorage();
     });
     onUnmounted(closeEventSource);

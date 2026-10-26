@@ -1,4 +1,3 @@
-
 <template>
     <section class="agent-stream">
         <div class="stream-header">
@@ -54,8 +53,9 @@
                                 </span>
                                 <time v-if="item.timestamp">{{ formatTime(item.timestamp) }}</time>
                             </div>
-                            <pre v-if="isStructured(item)" class="event-text">
-{{ getBody(item) }}</pre>
+                            <pre v-if="isStructured(item)" class="event-text">{{
+                                getBody(item)
+                            }}</pre>
                             <div v-else class="event-text">{{ getBody(item) }}</div>
                         </div>
                     </article>

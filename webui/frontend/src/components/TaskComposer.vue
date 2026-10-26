@@ -1,4 +1,3 @@
-
 <template>
     <section class="composer">
         <div class="composer-header">
@@ -116,7 +115,11 @@
 </template>
 <script setup>
     import { computed, ref } from "vue";
-    import { extractConversationId, pickImages, uploadWorkspaceImages } from "../services/agent-api.js";
+    import {
+        extractConversationId,
+        pickImages,
+        uploadWorkspaceImages,
+    } from "../services/agent-api.js";
     const props = defineProps({
         task: { type: String, default: "" },
         provider: { type: String, default: "chatgpt" },
@@ -151,111 +154,112 @@
     const conversationIdHint = computed(() => {
         if (!props.conversationId || !props.conversationId.trim()) {
             return "";
-        }const parsed = extractConversationId(props.provider, props.conversationId.trim());
-if (parsed) {
-return "Will continue conversation: " + parsed;
-}
-return "Will continue conversation: " + props.conversationId.trim();
-});
-function submit() {
-if (props.running || !canRun.value) {
-return;
-}
-emit("run");
-}
-function focus() {
-input.value?.focus();
-}
-function shortName(value) {
-if (typeof value !== "string") {
-return "";
-}
-const normalized = value.split(String.fromCharCode(92)).join("/");
-const parts = normalized.split("/");
-return parts[parts.length - 1] || value;
-}
-function mergeImages(list) {
-const next = Array.isArray(props.images) ? props.images.slice() : [];
-for (const item of list || []) {
-if (typeof item === "string" && item.trim() && next.indexOf(item) === -1) {
-next.push(item);
-}
-if (next.length >= 8) {
-break;
-}
-}
-emit("update:images", next);
-}
-function removeImage(index) {
-if (props.running) {
-return;
-}
-const next = (props.images || []).slice();
-next.splice(index, 1);
-imageError.value = "";
-emit("update:images", next);
-}
-function openFilePicker() {
-if (fileInput.value) {
-fileInput.value.click();
-}
-}
-async function attachImages() {
-if (props.running || uploading.value) {
-return;
-}
-imageError.value = "";
-// 桌面端：优先用原生对话框拿绝对路径。
-// 若当前 Electron 版本没有 dialog.pickImages（旧版 exe），
-// pickImages() 会返回 null，此时降级到 file input + 上传接口，
-// 避免"点了按钮什么都没发生"。
-if (isElectron.value) {
-let picked = null;
-try {
-picked = await pickImages();
-} catch (error) {
-imageError.value = error.message;
-return;
-}
-if (picked === null) {
-// 原生对话框不可用：降级到 Web 上传方式。
-openFilePicker();
-return;
-}
-if (picked.length) {
-mergeImages(picked);
-}
-return;
-}
-openFilePicker();
-}
-async function onFilesSelected(event) {
-const files = event.target && event.target.files ? event.target.files : null;
-// 允许用户连续选择同一文件：处理完立即清空 value。
-if (event.target) {
-event.target.value = "";
-}
-if (!files || !files.length) {
-return;
-}
-if (!props.workspace || !props.workspace.trim()) {
-imageError.value = "Please set a workspace before uploading images.";
-return;
-}
-uploading.value = true;
-imageError.value = "";
-try {
-const paths = await uploadWorkspaceImages(props.workspace, files);
-if (paths && paths.length) {
-mergeImages(paths);
-}
-} catch (error) {
-imageError.value = error.message;
-} finally {
-uploading.value = false;
-}
-}
-defineExpose({ focus });
+        }
+        const parsed = extractConversationId(props.provider, props.conversationId.trim());
+        if (parsed) {
+            return "Will continue conversation: " + parsed;
+        }
+        return "Will continue conversation: " + props.conversationId.trim();
+    });
+    function submit() {
+        if (props.running || !canRun.value) {
+            return;
+        }
+        emit("run");
+    }
+    function focus() {
+        input.value?.focus();
+    }
+    function shortName(value) {
+        if (typeof value !== "string") {
+            return "";
+        }
+        const normalized = value.split(String.fromCharCode(92)).join("/");
+        const parts = normalized.split("/");
+        return parts[parts.length - 1] || value;
+    }
+    function mergeImages(list) {
+        const next = Array.isArray(props.images) ? props.images.slice() : [];
+        for (const item of list || []) {
+            if (typeof item === "string" && item.trim() && next.indexOf(item) === -1) {
+                next.push(item);
+            }
+            if (next.length >= 8) {
+                break;
+            }
+        }
+        emit("update:images", next);
+    }
+    function removeImage(index) {
+        if (props.running) {
+            return;
+        }
+        const next = (props.images || []).slice();
+        next.splice(index, 1);
+        imageError.value = "";
+        emit("update:images", next);
+    }
+    function openFilePicker() {
+        if (fileInput.value) {
+            fileInput.value.click();
+        }
+    }
+    async function attachImages() {
+        if (props.running || uploading.value) {
+            return;
+        }
+        imageError.value = "";
+        // 桌面端：优先用原生对话框拿绝对路径。
+        // 若当前 Electron 版本没有 dialog.pickImages（旧版 exe），
+        // pickImages() 会返回 null，此时降级到 file input + 上传接口，
+        // 避免"点了按钮什么都没发生"。
+        if (isElectron.value) {
+            let picked = null;
+            try {
+                picked = await pickImages();
+            } catch (error) {
+                imageError.value = error.message;
+                return;
+            }
+            if (picked === null) {
+                // 原生对话框不可用：降级到 Web 上传方式。
+                openFilePicker();
+                return;
+            }
+            if (picked.length) {
+                mergeImages(picked);
+            }
+            return;
+        }
+        openFilePicker();
+    }
+    async function onFilesSelected(event) {
+        const files = event.target && event.target.files ? event.target.files : null;
+        // 允许用户连续选择同一文件：处理完立即清空 value。
+        if (event.target) {
+            event.target.value = "";
+        }
+        if (!files || !files.length) {
+            return;
+        }
+        if (!props.workspace || !props.workspace.trim()) {
+            imageError.value = "Please set a workspace before uploading images.";
+            return;
+        }
+        uploading.value = true;
+        imageError.value = "";
+        try {
+            const paths = await uploadWorkspaceImages(props.workspace, files);
+            if (paths && paths.length) {
+                mergeImages(paths);
+            }
+        } catch (error) {
+            imageError.value = error.message;
+        } finally {
+            uploading.value = false;
+        }
+    }
+    defineExpose({ focus });
 </script>
 <style scoped>
     .composer-conversation-row {
