@@ -1,7 +1,7 @@
 # XML Agent
 
 一个基于 Node.js 实现的工程型 AI Agent Framework。
-当前版本：**1.0.5**
+当前版本：**1.0.7**
 核心设计理念：
 LLM 负责理解任务和规划
 Runtime 负责安全执行
@@ -532,16 +532,20 @@ node test/test-edge-settings-io.js
 
 # 更新日志
 
-详见：
-RELEASE_NOTES_1.0.1.md
+详见 docs/ 目录：
+docs/RELEASE_NOTES_1.0.1.md
 
-RELEASE_NOTES_1.0.2.md
+docs/RELEASE_NOTES_1.0.2.md
 
-RELEASE_NOTES_1.0.3.md
+docs/RELEASE_NOTES_1.0.3.md
 
-RELEASE_NOTES_1.0.4.md
+docs/RELEASE_NOTES_1.0.4.md
 
-RELEASE_NOTES_1.0.5.md
+docs/RELEASE_NOTES_1.0.5.md
+
+docs/RELEASE_NOTES_1.0.6.md
+
+docs/RELEASE_NOTES_1.0.7.md
 
 # 总结
 

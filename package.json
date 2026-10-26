@@ -1,8 +1,9 @@
+
 {
     "name": "xml_agent",
     "author": "shuhan",
     "license": "ISC",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "agent for xml parsing using web browser",
     "private": true,
     "main": "electron/main.js",
