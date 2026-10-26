@@ -84,7 +84,7 @@ const agentConfig = {
             deepseek: "https://chat.deepseek.com",
             qwen: "https://chat.qwen.ai",
             chatgpt: "https://chatgpt.com",
-            glm: "https://chat.z.ai",
+            glm: "https://zchat.z.ai",
         },
     },
 };
