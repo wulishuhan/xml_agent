@@ -127,6 +127,7 @@
         conversationId: { type: String, default: "" },
         workspace: { type: String, default: "" },
         images: { type: Array, default: () => [] },
+        sessionId: { type: String, default: null },
     });
     const emit = defineEmits([
         "update:task",

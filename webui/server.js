@@ -287,8 +287,50 @@ app.post("/api/browser/switch", async (req, res) => {
         return res.status(500).json({ error: error.message });
     }
 });
+// 新增：创建占位会话（New Session），不立即启动 Agent
+app.post("/api/sessions/new", (req, res) => {
+    const { workspace, provider = "chatgpt" } = req.body;
+    if (!workspace) {
+        return res.status(400).json({
+            error: "Workspace is required",
+        });
+    }
+    if (!fs.existsSync(workspace)) {
+        return res.status(400).json({
+            error: "Workspace does not exist: " + workspace,
+        });
+    }
+    const capacity = sessionManager.checkCapacity();
+    if (!capacity.ok) {
+        return res.status(429).json({
+            error: capacity.message,
+            code: capacity.code,
+            stats: capacity.stats,
+        });
+    }
+    try {
+        // 创建不带 task 的占位会话
+        const session = sessionManager.create({
+            workspace,
+            provider,
+            task: "", // 空任务，表示占位会话
+            conversationId: null,
+            images: [],
+        });
+        console.log("[WebUI] Placeholder session created: " + session.id);
+        return res.json({
+            message: "Placeholder session created",
+            sessionId: session.id,
+        });
+    } catch (error) {
+        console.error("[WebUI] Failed to create placeholder session:", error);
+        return res.status(500).json({
+            error: error.message,
+        });
+    }
+});
 app.post("/api/run", (req, res) => {
-    const { workspace, provider, task, conversationId, images } = req.body;
+    const { workspace, provider, task, conversationId, images, sessionId } = req.body;
     if (!workspace || !task) {
         return res.status(400).json({
             error: "Workspace and task are required",
@@ -302,6 +344,33 @@ app.post("/api/run", (req, res) => {
     const providerName = provider || "chatgpt";
     const cid = normalizeConversationId(providerName, conversationId);
     const imagePaths = normalizeImages(images);
+    // 如果传入了 sessionId，尝试复用该占位会话
+    let session = sessionId ? sessionManager.get(sessionId) : null;
+    if (session) {
+        // 更新占位会话的信息并启动
+        session.workspace = workspace;
+        session.provider = providerName;
+        session.task = task;
+        session.conversationId = cid;
+        session.images = imagePaths;
+        sessionManager.persist(session);
+        try {
+            session.start();
+            console.log("[WebUI] Placeholder session started: " + session.id);
+            return res.json({
+                message: "Agent started in placeholder session",
+                sessionId: session.id,
+                conversationId: session.conversationId || null,
+                reused: true,
+            });
+        } catch (startError) {
+            console.error("[WebUI] Failed to start placeholder session:", startError);
+            return res.status(500).json({
+                error: startError.message,
+            });
+        }
+    }
+    // 如果没有 sessionId 或找不到对应会话，走原有逻辑创建新会话
     // 如果指定了 conversationId：
     // - 同一 provider + conversation 已有正在运行的 session：直接复用它。
     // - 已有已结束的 session：在同一个 session 内"继续一次新的运行"（resume），
@@ -353,7 +422,6 @@ app.post("/api/run", (req, res) => {
             stats: capacity.stats,
         });
     }
-    let session;
     try {
         session = sessionManager.create({
             workspace,

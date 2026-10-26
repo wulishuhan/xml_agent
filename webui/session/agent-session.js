@@ -7,14 +7,11 @@ class AgentSession extends EventEmitter {
         if (!workspace) {
             throw new Error("Workspace is required");
         }
-        if (!task) {
-            throw new Error("Task is required");
-        }
-        // 程序内部 id，用于 WebUI 内部定位；与 provider 页面的会话 id 无关
+        // 允许 task 为空，用于创建"New Session"占位会话
         this.id = crypto.randomUUID();
         this.workspace = workspace;
         this.provider = provider;
-        this.task = task;
+        this.task = task || "";
         // provider 页面的会话 id（DeepSeek/ChatGPT/Qwen URL 中的 id）
         // 有值表示"继续已有会话"，无值表示"新会话"
         this.conversationId = conversationId || null;
@@ -57,7 +54,7 @@ class AgentSession extends EventEmitter {
             this.exitCode = data.exitCode;
         }
         if (typeof data.error !== "undefined") {
-            this.error = data.error;
+            this.error = error;
         }
         if (typeof data.createdAt === "number") {
             this.createdAt = data.createdAt;
@@ -70,6 +67,9 @@ class AgentSession extends EventEmitter {
         }
         if (typeof data.runCount === "number") {
             this.runCount = data.runCount;
+        }
+        if (typeof data.task === "string") {
+            this.task = data.task;
         }
         // 进程重启后，之前处于 running 的会话实际上已经中断
         if (this.status === "running") {
@@ -180,6 +180,9 @@ class AgentSession extends EventEmitter {
     start() {
         if (this.agent || this.status === "running") {
             throw new Error("Agent session is already running");
+        }
+        if (!this.task || !this.task.trim()) {
+            throw new Error("Task is required before starting agent");
         }
         this.status = "running";
         this.startedAt = Date.now();

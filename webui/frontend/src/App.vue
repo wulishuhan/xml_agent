@@ -5,7 +5,7 @@
             :active-id="activeSessionId"
             :storage="storage"
             @select="selectSession"
-            @new-session="createSessionInWorkspace"
+            @new-session="createPlaceholderSessionInWorkspace"
             @delete="deleteSessionById"
             @new-workspace="openWorkspacePicker"
             @toggle-workspace="toggleWorkspace"
@@ -132,7 +132,7 @@
                                 <input
                                     ref="workspaceInput"
                                     v-model="workspace"
-                                    :disabled="running"
+                                    :disabled="false"
                                     type="text"
                                     placeholder="Enter an absolute path, for example D:/projects/my-app"
                                     @keydown.enter="focusTask"
@@ -140,7 +140,7 @@
                                 <button
                                     type="button"
                                     class="btn workspace-browse-button"
-                                    :disabled="running"
+                                    :disabled="false"
                                     @click="openWorkspacePicker"
                                 >
                                     Browse
@@ -157,6 +157,7 @@
                             :provider="provider"
                             :running="running"
                             :workspace="workspace"
+                            :session-id="activeSessionId"
                             @run="runAgent"
                             @stop="stopAgent"
                         />
@@ -166,7 +167,7 @@
         </main>
         <WorkspacePicker
             v-if="showWorkspacePicker"
-            @select="selectWorkspace"
+            @select="handleWorkspaceSelected"
             @close="closeWorkspacePicker"
         />
         <DesktopSettings
@@ -197,6 +198,7 @@
     import AnswerHistory from "./components/AnswerHistory.vue";
     import AgentTrace from "./components/AgentTrace.vue";
     import {
+        createPlaceholderSession,
         deleteSession,
         extractConversationId,
         getEventSourceUrl,
@@ -330,7 +332,11 @@
         return activeSession.value?.running === true;
     });
     const workspaceTitle = computed(() => {
-        return activeSession.value ? sessionTitle(activeSession.value) : "New Agent Session";
+        if (!activeSession.value) {
+            return "New Agent Session";
+        }
+        const taskValue = (activeSession.value.task || "").trim();
+        return taskValue ? sessionTitle(activeSession.value) : "New Session";
     });
     const statusText = computed(() => {
         const labels = {
@@ -513,6 +519,7 @@
                 workspace: workspace.value.trim(),
                 provider: provider.value,
                 task: task.value.trim(),
+                sessionId: activeSessionId.value, // 传入当前占位会话 ID
             };
             const cid = normalizeConversationId();
             if (cid) {
@@ -573,12 +580,23 @@
         await loadWorkspaces();
         // 如果删除的是当前会话，不自动创建新会话，让用户选择
     }
-    // 点击工作区旁的"+"时，直接设置工作区并聚焦任务输入框，不再弹出选择器
-    function createSessionInWorkspace(workspacePath) {
-        workspace.value = workspacePath;
-        nextTick(() => {
-            focusTask();
-        });
+    // 点击工作区旁的"+"时，创建占位会话并切换到该会话
+    async function createPlaceholderSessionInWorkspace(workspacePath) {
+        try {
+            const result = await createPlaceholderSession(workspacePath, provider.value);
+            // 设置工作区路径
+            workspace.value = workspacePath;
+            // 切换到新创建的占位会话
+            await selectSession(result.sessionId);
+            nextTick(() => {
+                focusTask();
+            });
+        } catch (error) {
+            errorMessage.value = error.message;
+            if (error.code === "MAX_SESSIONS" || error.code === "MAX_DISK") {
+                refreshStorage();
+            }
+        }
     }
     function createNewSession() {
         closeEventSource();
@@ -590,6 +608,7 @@
         workspace.value = "";
         conversationId.value = "";
         images.value = [];
+        provider.value = "chatgpt";
     }
     function clearConsole() {
         output.value = [];
@@ -612,28 +631,34 @@
         return id ? id.slice(0, 8) : "-";
     }
     function focusTask() {
-        if (running.value) {
-            return;
-        }
         const textarea = document.querySelector(".composer textarea");
         textarea?.focus();
     }
     function openWorkspacePicker() {
-        if (running.value) {
-            return;
-        }
         showWorkspacePicker.value = true;
     }
     function closeWorkspacePicker() {
         showWorkspacePicker.value = false;
     }
-    function selectWorkspace(selectedPath) {
-        if (!selectedPath) {
-            return;
+    // 处理 WorkspacePicker 选择后的逻辑：立即创建占位会话
+    async function handleWorkspaceSelected(selectedPath) {
+        closeWorkspacePicker();
+        try {
+            // 立即创建占位会话
+            const result = await createPlaceholderSession(selectedPath, provider.value);
+            // 设置工作区路径
+            workspace.value = selectedPath;
+            // 切换到新创建的占位会话
+            await selectSession(result.sessionId);
+            nextTick(() => {
+                focusTask();
+            });
+        } catch (error) {
+            errorMessage.value = error.message;
+            if (error.code === "MAX_SESSIONS" || error.code === "MAX_DISK") {
+                refreshStorage();
+            }
         }
-        workspace.value = selectedPath;
-        showWorkspacePicker.value = false;
-        errorMessage.value = "";
     }
     function toggleWorkspace(ws) {
         ws.expanded = !ws.expanded;

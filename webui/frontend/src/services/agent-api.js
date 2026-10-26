@@ -26,6 +26,24 @@ export async function runAgent(data) {
     }
     return result;
 }
+// 新增：创建占位会话（New Session）
+export async function createPlaceholderSession(workspace, provider = "chatgpt") {
+    const response = await fetch(api("/api/sessions/new"), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ workspace, provider }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        const error = new Error(result.error || "Failed to create placeholder session");
+        error.code = result.code || null;
+        error.stats = result.stats || null;
+        throw error;
+    }
+    return result;
+}
 export async function browseWorkspace(targetPath) {
     const query = targetPath ? "?path=" + encodeURIComponent(targetPath) : "";
     const response = await fetch(api("/api/workspace/browse" + query));
