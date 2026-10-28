@@ -1,3 +1,4 @@
+
 /**
 Agent Configuration
 支持环境变量覆盖：
@@ -60,9 +61,9 @@ const agentConfig = {
         retryInterval: 1000,
         // CDP 服务器 URL
         cdpUrl: "http://127.0.0.1:9222",
-        // 浏览器类型：chrome（默认）| edge
+        // 浏览器类型：chrome | edge（默认）
         // Edge 基于 Chromium，同样实现了 CDP 协议，可直接复用。
-        browserType: "chrome",
+        browserType: "edge",
         // Chrome / Edge 可执行文件路径。
         // 留空时由 BrowserAgent 按 browserType 自动探测常见安装路径。
         // chromePath: "C:/Program Files/Google/Chrome/Application/chrome.exe",
