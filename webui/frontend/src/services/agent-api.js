@@ -282,3 +282,24 @@ export async function switchBrowser(browserType) {
     }
     return result;
 }
+// ---- Agent 配置管理（Web 版，通过 HTTP API）----
+export async function getAgentConfig() {
+    const response = await fetch(api("/api/agent/config"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read agent config");
+    }
+    return result;
+}
+export async function saveAgentConfig(config) {
+    const response = await fetch(api("/api/agent/config"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config || {}),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to save agent config");
+    }
+    return result;
+}

@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const { SessionManager } = require("./session/session-manager");
 const browserSettings = require("./browser-settings");
+const agentConfigApi = require("./agent-config-api");
 const { registerScreenshotRoutes } = require("./screenshot-api");
 const { registerUploadRoutes } = require("./upload-api");
 const app = express();
@@ -27,6 +28,13 @@ try {
     browserSettings.applyToRuntime(browserSettings.readSettings());
 } catch (error) {
     console.warn("[WebUI] Failed to apply browser settings to runtime:", error.message);
+}
+// 启动时把已保存的 Agent 配置同步到运行环境
+try {
+    const savedAgentConfig = agentConfigApi.readAgentConfig();
+    agentConfigApi.applyToRuntime(savedAgentConfig);
+} catch (error) {
+    console.warn("[WebUI] Failed to apply agent config to runtime:", error.message);
 }
 const frontendDistPath = path.join(__dirname, "frontend", "dist");
 const BACKSLASH = String.fromCharCode(92);
@@ -285,6 +293,20 @@ app.post("/api/browser/switch", async (req, res) => {
         return res.json(result);
     } catch (error) {
         return res.status(500).json({ error: error.message });
+    }
+});
+// ---- Agent 配置管理 ----
+// 读取 Agent 配置
+app.get("/api/agent/config", (req, res) => {
+    res.json(agentConfigApi.readAgentConfig());
+});
+// 写入 Agent 配置
+app.post("/api/agent/config", (req, res) => {
+    try {
+        const saved = agentConfigApi.writeAgentConfig(req.body || {});
+        return res.json(saved);
+    } catch (error) {
+        return res.status(400).json({ error: error.message });
     }
 });
 // 新增：创建占位会话（New Session），不立即启动 Agent

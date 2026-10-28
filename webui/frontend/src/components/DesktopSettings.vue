@@ -46,122 +46,251 @@
                 </div>
             </header>
             <div v-if="loading" class="settings-loading">{{ t("loading") }}</div>
-            <div v-else class="settings-body">
-                <div class="settings-field">
-                    <label>{{ t("browser") }}</label>
-                    <div class="settings-segmented" role="radiogroup" :aria-label="t('browser')">
-                        <button
-                            type="button"
-                            class="segmented-option"
-                            :class="{ active: browserType === 'chrome' }"
-                            role="radio"
-                            :aria-checked="browserType === 'chrome'"
-                            @click="selectBrowserType('chrome')"
-                        >
-                            <span class="segmented-title">Google Chrome</span>
-                            <span class="segmented-sub">
-                                {{ chromeAvailable ? t("detected") : t("notFound") }}
-                            </span>
-                        </button>
-                        <button
-                            type="button"
-                            class="segmented-option"
-                            :class="{ active: browserType === 'edge' }"
-                            role="radio"
-                            :aria-checked="browserType === 'edge'"
-                            @click="selectBrowserType('edge')"
-                        >
-                            <span class="segmented-title">Microsoft Edge</span>
-                            <span class="segmented-sub">
-                                {{ edgeAvailable ? t("detected") : t("notFound") }}
-                            </span>
-                        </button>
+            <div v-else class="settings-layout">
+                <!-- 左侧菜单栏 -->
+                <nav class="settings-sidebar">
+                    <button
+                        v-for="item in menuItems"
+                        :key="item.key"
+                        type="button"
+                        class="sidebar-item"
+                        :class="{ active: activeTab === item.key }"
+                        @click="activeTab = item.key"
+                    >
+                        <span class="sidebar-icon">{{ item.icon }}</span>
+                        <span class="sidebar-label">{{ t(item.labelKey) }}</span>
+                    </button>
+                </nav>
+                <!-- 右侧配置内容 -->
+                <div class="settings-content">
+                    <!-- 浏览器配置 -->
+                    <div v-if="activeTab === 'browser'" class="tab-panel">
+                        <div class="settings-field">
+                            <label>{{ t("browser") }}</label>
+                            <div
+                                class="settings-segmented"
+                                role="radiogroup"
+                                :aria-label="t('browser')"
+                            >
+                                <button
+                                    type="button"
+                                    class="segmented-option"
+                                    :class="{ active: browserType === 'chrome' }"
+                                    role="radio"
+                                    :aria-checked="browserType === 'chrome'"
+                                    @click="selectBrowserType('chrome')"
+                                >
+                                    <span class="segmented-title">Google Chrome</span>
+                                    <span class="segmented-sub">
+                                        {{ chromeAvailable ? t("detected") : t("notFound") }}
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="segmented-option"
+                                    :class="{ active: browserType === 'edge' }"
+                                    role="radio"
+                                    :aria-checked="browserType === 'edge'"
+                                    @click="selectBrowserType('edge')"
+                                >
+                                    <span class="segmented-title">Microsoft Edge</span>
+                                    <span class="segmented-sub">
+                                        {{ edgeAvailable ? t("detected") : t("notFound") }}
+                                    </span>
+                                </button>
+                            </div>
+                            <div class="settings-hint">{{ t("browserHint") }}</div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ browserLabel }} {{ t("executablePath") }}</label>
+                            <div class="settings-row">
+                                <input
+                                    v-model="chromePath"
+                                    type="text"
+                                    :placeholder="t('pathPlaceholder') + ' ' + browserLabel"
+                                />
+                                <button
+                                    v-if="isElectron"
+                                    type="button"
+                                    class="btn"
+                                    @click="pickBrowser"
+                                >
+                                    {{ t("browse") }}
+                                </button>
+                            </div>
+                            <div class="settings-hint">
+                                <span v-if="chromePath">
+                                    {{ t("usingCustomPath") }} <code>{{ chromePath }}</code>
+                                </span>
+                                <span v-else-if="detectedBrowser">
+                                    {{ t("autoDetected") }} <code>{{ detectedBrowser }}</code>
+                                </span>
+                                <span v-else>{{ t("notFoundManually") }}</span>
+                            </div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ browserLabel }} {{ t("cdpUrl") }}</label>
+                            <input
+                                v-model="currentCdpUrl"
+                                type="text"
+                                :placeholder="cdpPlaceholder"
+                            />
+                            <div class="settings-hint">{{ browserLabel }} {{ t("cdpHint") }}</div>
+                        </div>
+                        <div class="settings-field settings-field-inline">
+                            <label>
+                                <input v-model="autoStartChrome" type="checkbox" />
+                                {{ t("autoStart") }}
+                            </label>
+                        </div>
+                        <div class="settings-field settings-field-inline">
+                            <label>
+                                <input v-model="headless" type="checkbox" />
+                                {{ t("headless") }}
+                            </label>
+                            <div class="settings-hint">{{ t("headlessHint") }}</div>
+                        </div>
+                        <div v-if="isElectron" class="settings-field settings-field-inline">
+                            <label>
+                                <input v-model="focusCdpPage" type="checkbox" />
+                                {{ t("focusCdp") }}
+                            </label>
+                            <div class="settings-hint">{{ t("focusCdpHint") }}</div>
+                        </div>
+                        <div class="settings-status">
+                            <div>
+                                <strong>{{ t("selectedBrowser") }}</strong> {{ browserLabel }}
+                            </div>
+                            <div>
+                                <strong>{{ t("cdpRunning") }}</strong>
+                                {{ cdpRunning ? t("yes") : t("no") }}
+                            </div>
+                            <div>
+                                <strong>{{ t("connectedBrowser") }}</strong>
+                                {{ connectedBrowser || (cdpRunning ? t("unknown") : t("none")) }}
+                                <span
+                                    v-if="cdpRunning && typeMatches === false"
+                                    class="settings-warn"
+                                >
+                                    {{ t("differentFromSelected") }}
+                                </span>
+                            </div>
+                            <div>
+                                <strong>{{ browserLabel }} {{ t("path") }}</strong>
+                                {{ chromePath || detectedBrowser || t("auto") }}
+                            </div>
+                            <div v-if="settingsPath">
+                                <strong>{{ t("settingsFile") }}</strong>
+                                <code>{{ settingsPath }}</code>
+                            </div>
+                        </div>
                     </div>
-                    <div class="settings-hint">{{ t("browserHint") }}</div>
+                    <!-- Agent配置 -->
+                    <div v-if="activeTab === 'agent'" class="tab-panel">
+                        <h3 class="tab-section-title">{{ t("agentConfig") }}</h3>
+                        <div class="settings-field">
+                            <label>{{ t("maxSteps") }}</label>
+                            <input v-model.number="agentMaxSteps" type="number" min="1" />
+                            <div class="settings-hint">{{ t("maxStepsHint") }}</div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ t("maxProviderErrors") }}</label>
+                            <input v-model.number="agentMaxProviderErrors" type="number" min="1" />
+                            <div class="settings-hint">{{ t("maxProviderErrorsHint") }}</div>
+                        </div>
+                        <h3 class="tab-section-title">{{ t("runtimeConfig") }}</h3>
+                        <div class="settings-field">
+                            <label>{{ t("maxFileSize") }}</label>
+                            <input v-model.number="runtimeMaxFileSize" type="number" min="1" />
+                            <div class="settings-hint">
+                                {{ formatBytes(runtimeMaxFileSize) }} - {{ t("maxFileSizeHint") }}
+                            </div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ t("maxReadSize") }}</label>
+                            <input v-model.number="runtimeMaxReadSize" type="number" min="1" />
+                            <div class="settings-hint">
+                                {{ formatBytes(runtimeMaxReadSize) }} - {{ t("maxReadSizeHint") }}
+                            </div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ t("maxExecTimeout") }}</label>
+                            <input
+                                v-model.number="runtimeMaxExecTimeout"
+                                type="number"
+                                min="1000"
+                                step="1000"
+                            />
+                            <div class="settings-hint">
+                                {{ (runtimeMaxExecTimeout / 1000).toFixed(0) }}s -
+                                {{ t("maxExecTimeoutHint") }}
+                            </div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ t("maxExecOutputSize") }}</label>
+                            <input
+                                v-model.number="runtimeMaxExecOutputSize"
+                                type="number"
+                                min="1"
+                            />
+                            <div class="settings-hint">
+                                {{ formatBytes(runtimeMaxExecOutputSize) }} -
+                                {{ t("maxExecOutputSizeHint") }}
+                            </div>
+                        </div>
+                        <h3 class="tab-section-title">{{ t("sessionConfig") }}</h3>
+                        <div class="settings-field">
+                            <label>{{ t("maxSessions") }}</label>
+                            <input v-model.number="sessionMaxSessions" type="number" min="1" />
+                            <div class="settings-hint">{{ t("maxSessionsHint") }}</div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ t("maxDiskBytes") }}</label>
+                            <input v-model.number="sessionMaxDiskBytes" type="number" min="1" />
+                            <div class="settings-hint">
+                                {{ formatBytes(sessionMaxDiskBytes) }} - {{ t("maxDiskBytesHint") }}
+                            </div>
+                        </div>
+                        <div class="settings-field">
+                            <label>{{ t("warnThreshold") }}</label>
+                            <input
+                                v-model.number="sessionWarnThreshold"
+                                type="number"
+                                min="0.1"
+                                max="1"
+                                step="0.1"
+                            />
+                            <div class="settings-hint">
+                                {{ (sessionWarnThreshold * 100).toFixed(0) }}% -
+                                {{ t("warnThresholdHint") }}
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="settings-field">
-                    <label>{{ browserLabel }} {{ t("executablePath") }}</label>
-                    <div class="settings-row">
-                        <input
-                            v-model="chromePath"
-                            type="text"
-                            :placeholder="t('pathPlaceholder') + ' ' + browserLabel"
-                        />
-                        <button v-if="isElectron" type="button" class="btn" @click="pickBrowser">
-                            {{ t("browse") }}
-                        </button>
-                    </div>
-                    <div class="settings-hint">
-                        <span v-if="chromePath">
-                            {{ t("usingCustomPath") }} <code>{{ chromePath }}</code>
-                        </span>
-                        <span v-else-if="detectedBrowser">
-                            {{ t("autoDetected") }} <code>{{ detectedBrowser }}</code>
-                        </span>
-                        <span v-else>{{ t("notFoundManually") }}</span>
-                    </div>
-                </div>
-                <div class="settings-field">
-                    <label>{{ browserLabel }} {{ t("cdpUrl") }}</label>
-                    <input v-model="currentCdpUrl" type="text" :placeholder="cdpPlaceholder" />
-                    <div class="settings-hint">{{ browserLabel }} {{ t("cdpHint") }}</div>
-                </div>
-                <div class="settings-field settings-field-inline">
-                    <label>
-                        <input v-model="autoStartChrome" type="checkbox" />
-                        {{ t("autoStart") }}
-                    </label>
-                </div>
-                <div class="settings-field settings-field-inline">
-                    <label>
-                        <input v-model="headless" type="checkbox" />
-                        {{ t("headless") }}
-                    </label>
-                    <div class="settings-hint">{{ t("headlessHint") }}</div>
-                </div>
-                <div v-if="isElectron" class="settings-field settings-field-inline">
-                    <label>
-                        <input v-model="focusCdpPage" type="checkbox" />
-                        {{ t("focusCdp") }}
-                    </label>
-                    <div class="settings-hint">{{ t("focusCdpHint") }}</div>
-                </div>
-                <div class="settings-status">
-                    <div>
-                        <strong>{{ t("selectedBrowser") }}</strong> {{ browserLabel }}
-                    </div>
-                    <div>
-                        <strong>{{ t("cdpRunning") }}</strong>
-                        {{ cdpRunning ? t("yes") : t("no") }}
-                    </div>
-                    <div>
-                        <strong>{{ t("connectedBrowser") }}</strong>
-                        {{ connectedBrowser || (cdpRunning ? t("unknown") : t("none")) }}
-                        <span v-if="cdpRunning && typeMatches === false" class="settings-warn">
-                            {{ t("differentFromSelected") }}
-                        </span>
-                    </div>
-                    <div>
-                        <strong>{{ browserLabel }} {{ t("path") }}</strong>
-                        {{ chromePath || detectedBrowser || t("auto") }}
-                    </div>
-                    <div v-if="settingsPath">
-                        <strong>{{ t("settingsFile") }}</strong> <code>{{ settingsPath }}</code>
-                    </div>
-                </div>
-                <div v-if="message" class="settings-message">{{ message }}</div>
             </div>
             <footer class="settings-footer">
-                <button type="button" class="btn" @click="refreshStatus">
+                <button
+                    v-if="activeTab === 'browser'"
+                    type="button"
+                    class="btn"
+                    @click="refreshStatus"
+                >
                     {{ t("refreshStatus") }}
                 </button>
-                <button type="button" class="btn" :disabled="switching" @click="switchBrowserNow">
+                <button
+                    v-if="activeTab === 'browser'"
+                    type="button"
+                    class="btn"
+                    :disabled="switching"
+                    @click="switchBrowserNow"
+                >
                     {{ switching ? t("switching") : t("switchNow") + " " + browserLabel }}
                 </button>
                 <button type="button" class="btn btn-primary" :disabled="saving" @click="save">
                     {{ saving ? t("saving") : t("save") }}
                 </button>
             </footer>
+            <div v-if="message" class="settings-message">{{ message }}</div>
         </section>
     </div>
 </template>
@@ -173,6 +302,8 @@
         detectBrowser,
         getBrowserStatus,
         switchBrowser as apiSwitchBrowser,
+        getAgentConfig,
+        saveAgentConfig,
     } from "../services/agent-api.js";
     const emit = defineEmits(["close", "saved"]);
     const desktop = typeof window !== "undefined" ? window.xmlAgentDesktop : null;
@@ -181,13 +312,13 @@
         chrome: "http://127.0.0.1:9222",
         edge: "http://127.0.0.1:9223",
     };
-    // ---------- 国际化（中英双语） ----------
+    // ---------- 国际化（中英双语）----------
     const LANG_STORAGE_KEY = "xml-agent:settings-lang";
     const MESSAGES = {
         zh: {
             titleDesktop: "桌面设置",
             titleBrowser: "浏览器设置",
-            subtitle: "选择 Agent 通过 CDP 驱动的浏览器",
+            subtitle: "配置浏览器和Agent参数",
             language: "语言",
             close: "关闭",
             loading: "加载中…",
@@ -229,17 +360,40 @@
             statusRefreshed: "状态已刷新。",
             savedNewSessions: "已保存。新会话将使用 {browser}。",
             savedSwitchHint:
-                "已保存。当前运行的 CDP 浏览器仍为 {current}。要使用 {target}，请点击“立即切换到 {target}”。",
+                "已保存。当前运行的 CDP 浏览器仍为 {current}。要使用 {target}，请点击\u201c立即切换到 {target}\u201d。",
             selectedNeedSwitch:
-                "已选择 {target}。请点击“立即切换到 {target}”以关闭当前浏览器并启动所选浏览器。",
+                "已选择 {target}。请点击\u201c立即切换到 {target}\u201d以关闭当前浏览器并启动所选浏览器。",
             selected: "已选择 {browser}。",
             switchNotSupported: "当前构建不支持浏览器切换。",
             switched: "已切换。",
+            menuBrowser: "浏览器配置",
+            menuAgent: "Agent配置",
+            agentConfig: "Agent 配置",
+            runtimeConfig: "运行时配置",
+            sessionConfig: "会话存储配置",
+            maxSteps: "最大步骤数",
+            maxStepsHint: "Agent 单次任务允许执行的最大步骤数",
+            maxProviderErrors: "最大 Provider 错误次数",
+            maxProviderErrorsHint: "连续失败多少次后停止重试",
+            maxFileSize: "最大文件大小",
+            maxFileSizeHint: "单个文件读取的最大大小限制",
+            maxReadSize: "最大读取大小",
+            maxReadSizeHint: "单次读取操作的最大数据量",
+            maxExecTimeout: "执行超时时间",
+            maxExecTimeoutHint: "命令执行的最大等待时间（毫秒）",
+            maxExecOutputSize: "执行输出大小限制",
+            maxExecOutputSizeHint: "命令输出的最大捕获大小",
+            maxSessions: "最大会话数",
+            maxSessionsHint: "允许保存的最大会话数量",
+            maxDiskBytes: "最大磁盘占用",
+            maxDiskBytesHint: "会话存储目录允许占用的最大磁盘空间",
+            warnThreshold: "告警阈值",
+            warnThresholdHint: "达到该比例时提示用户清理（0-1）",
         },
         en: {
             titleDesktop: "Desktop Settings",
             titleBrowser: "Browser Settings",
-            subtitle: "Choose which browser the agent drives via CDP",
+            subtitle: "Configure browser and agent parameters",
             language: "Language",
             close: "Close",
             loading: "Loading...",
@@ -289,6 +443,29 @@
             selected: "Selected {browser}.",
             switchNotSupported: "Browser switching is not supported in this build.",
             switched: "Switched.",
+            menuBrowser: "Browser",
+            menuAgent: "Agent",
+            agentConfig: "Agent Configuration",
+            runtimeConfig: "Runtime Configuration",
+            sessionConfig: "Session Storage",
+            maxSteps: "Max Steps",
+            maxStepsHint: "Maximum number of steps per agent task",
+            maxProviderErrors: "Max Provider Errors",
+            maxProviderErrorsHint: "Stop retrying after this many consecutive failures",
+            maxFileSize: "Max File Size",
+            maxFileSizeHint: "Maximum size for reading a single file",
+            maxReadSize: "Max Read Size",
+            maxReadSizeHint: "Maximum data size per read operation",
+            maxExecTimeout: "Execution Timeout",
+            maxExecTimeoutHint: "Maximum wait time for command execution (ms)",
+            maxExecOutputSize: "Max Exec Output Size",
+            maxExecOutputSizeHint: "Maximum captured output size for commands",
+            maxSessions: "Max Sessions",
+            maxSessionsHint: "Maximum number of saved sessions",
+            maxDiskBytes: "Max Disk Usage",
+            maxDiskBytesHint: "Maximum disk space for session storage",
+            warnThreshold: "Warning Threshold",
+            warnThresholdHint: "Alert user when usage reaches this ratio (0-1)",
         },
     };
     function detectInitialLang() {
@@ -329,6 +506,12 @@
         }
         return params ? format(text, params) : text;
     }
+    // ---------- 菜单配置 ----------
+    const menuItems = [
+        { key: "browser", icon: "\uD83C\uDF10", labelKey: "menuBrowser" },
+        { key: "agent", icon: "\uD83E\uDD16", labelKey: "menuAgent" },
+    ];
+    const activeTab = ref("browser");
     // ---------- 状态 ----------
     const loading = ref(true);
     const saving = ref(false);
@@ -350,6 +533,16 @@
     const typeMatches = ref(null);
     const settingsPath = ref("");
     const message = ref("");
+    // Agent配置状态
+    const agentMaxSteps = ref(100);
+    const agentMaxProviderErrors = ref(3);
+    const runtimeMaxFileSize = ref(5 * 1024 * 1024);
+    const runtimeMaxReadSize = ref(2 * 1024 * 1024);
+    const runtimeMaxExecTimeout = ref(300000);
+    const runtimeMaxExecOutputSize = ref(1024 * 1024);
+    const sessionMaxSessions = ref(100);
+    const sessionMaxDiskBytes = ref(200 * 1024 * 1024);
+    const sessionWarnThreshold = ref(0.8);
     const browserLabel = computed(() => (browserType.value === "edge" ? "Edge" : "Chrome"));
     const cdpPlaceholder = computed(() => DEFAULT_CDP_URLS[browserType.value]);
     const currentCdpUrl = computed({
@@ -367,6 +560,12 @@
             .trim()
             .toLowerCase();
         return text === "edge" ? "edge" : "chrome";
+    }
+    function formatBytes(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + " KB";
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + " MB";
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
     }
     // ---- 统一后端适配：Electron 用 IPC，Web 用 HTTP ----
     const backend = {
@@ -425,6 +624,28 @@
             // 忽略探测失败，仅影响界面提示
         }
     }
+    async function loadAgentConfig() {
+        try {
+            const config = await getAgentConfig();
+            if (config.agent) {
+                agentMaxSteps.value = config.agent.maxSteps || 100;
+                agentMaxProviderErrors.value = config.agent.maxProviderErrors || 3;
+            }
+            if (config.runtime) {
+                runtimeMaxFileSize.value = config.runtime.maxFileSize || 5 * 1024 * 1024;
+                runtimeMaxReadSize.value = config.runtime.maxReadSize || 2 * 1024 * 1024;
+                runtimeMaxExecTimeout.value = config.runtime.maxExecTimeout || 300000;
+                runtimeMaxExecOutputSize.value = config.runtime.maxExecOutputSize || 1024 * 1024;
+            }
+            if (config.session) {
+                sessionMaxSessions.value = config.session.maxSessions || 100;
+                sessionMaxDiskBytes.value = config.session.maxDiskBytes || 200 * 1024 * 1024;
+                sessionWarnThreshold.value = config.session.warnThreshold || 0.8;
+            }
+        } catch (error) {
+            console.warn("Failed to load agent config:", error.message);
+        }
+    }
     async function load() {
         try {
             const settings = await backend.readSettings();
@@ -454,6 +675,7 @@
             } catch (error) {
                 // 状态获取失败不影响设置读取
             }
+            await loadAgentConfig();
         } catch (error) {
             message.value = error.message;
         } finally {
@@ -485,6 +707,25 @@
             autoStartChrome: autoStartChrome.value === true,
             headless: headless.value === true,
             focusCdpPage: focusCdpPage.value === true,
+        };
+    }
+    function buildAgentConfigPayload() {
+        return {
+            agent: {
+                maxSteps: agentMaxSteps.value,
+                maxProviderErrors: agentMaxProviderErrors.value,
+            },
+            runtime: {
+                maxFileSize: runtimeMaxFileSize.value,
+                maxReadSize: runtimeMaxReadSize.value,
+                maxExecTimeout: runtimeMaxExecTimeout.value,
+                maxExecOutputSize: runtimeMaxExecOutputSize.value,
+            },
+            session: {
+                maxSessions: sessionMaxSessions.value,
+                maxDiskBytes: sessionMaxDiskBytes.value,
+                warnThreshold: sessionWarnThreshold.value,
+            },
         };
     }
     async function selectBrowserType(nextType) {
@@ -553,17 +794,25 @@
         saving.value = true;
         message.value = "";
         try {
-            const previous = await backend.readSettings();
-            const previousType = normalizeBrowserType(previous.browserType);
-            await backend.writeSettings(buildSettingsPayload());
-            const nextType = browserType.value;
-            if (cdpRunning.value && previousType !== nextType) {
-                message.value = t("savedSwitchHint", {
-                    current: connectedBrowser.value || "Chrome",
-                    target: browserLabel.value,
-                });
-            } else {
-                message.value = t("savedNewSessions", { browser: browserLabel.value });
+            // 保存浏览器配置
+            if (activeTab.value === "browser") {
+                const previous = await backend.readSettings();
+                const previousType = normalizeBrowserType(previous.browserType);
+                await backend.writeSettings(buildSettingsPayload());
+                const nextType = browserType.value;
+                if (cdpRunning.value && previousType !== nextType) {
+                    message.value = t("savedSwitchHint", {
+                        current: connectedBrowser.value || "Chrome",
+                        target: browserLabel.value,
+                    });
+                } else {
+                    message.value = t("savedNewSessions", { browser: browserLabel.value });
+                }
+            }
+            // 保存Agent配置
+            if (activeTab.value === "agent") {
+                await saveAgentConfig(buildAgentConfigPayload());
+                message.value = t("savedNewSessions", { browser: "Agent" });
             }
             emit("saved");
         } catch (error) {
@@ -588,7 +837,7 @@
     }
     .settings-panel {
         display: flex;
-        width: min(680px, 100%);
+        width: min(900px, 100%);
         max-height: min(760px, calc(100vh - 48px));
         flex-direction: column;
         overflow: hidden;
@@ -664,10 +913,78 @@
         color: var(--c-text-strong);
         font-weight: 650;
     }
-    .settings-body {
+    .settings-layout {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+    }
+    .settings-sidebar {
+        display: flex;
+        flex-direction: column;
+        width: 180px;
+        flex-shrink: 0;
+        border-right: 1px solid var(--c-border);
+        background: var(--c-panel-bg);
+        padding: 12px 0;
+    }
+    .sidebar-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 10px 16px;
+        border: 0;
+        background: transparent;
+        color: var(--c-text-muted);
+        text-align: left;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+    .sidebar-item:hover {
+        background: var(--c-hover-bg);
+        color: var(--c-text-body);
+    }
+    .sidebar-item.active {
+        background: var(--c-elevated-bg);
+        color: var(--c-text-strong);
+        font-weight: 600;
+        border-right: 3px solid var(--c-accent-2);
+    }
+    .sidebar-icon {
+        font-size: 16px;
+        line-height: 1;
+    }
+    .sidebar-label {
+        font-size: 13px;
+    }
+    .settings-content {
         flex: 1;
         overflow-y: auto;
         padding: 16px 18px 8px;
+    }
+    .tab-panel {
+        animation: fadeIn 0.2s ease;
+    }
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(4px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    .tab-section-title {
+        margin: 20px 0 12px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--c-border-soft);
+        color: var(--c-text-strong);
+        font-size: 14px;
+        font-weight: 650;
+    }
+    .tab-section-title:first-child {
+        margin-top: 0;
     }
     .settings-loading {
         padding: 24px;
@@ -684,7 +1001,8 @@
         font-size: 12px;
         font-weight: 600;
     }
-    .settings-field input[type="text"] {
+    .settings-field input[type="text"],
+    .settings-field input[type="number"] {
         width: 100%;
         padding: 9px 11px;
         border: 1px solid var(--c-border-input);
@@ -695,7 +1013,8 @@
         font-size: 12px;
         outline: none;
     }
-    .settings-field input[type="text"]:focus {
+    .settings-field input[type="text"]:focus,
+    .settings-field input[type="number"]:focus {
         border-color: var(--c-accent-2);
     }
     .settings-segmented {
@@ -779,7 +1098,7 @@
         font-weight: 600;
     }
     .settings-message {
-        margin-top: 10px;
+        margin: 8px 18px 12px;
         padding: 8px 10px;
         border: 1px solid var(--c-border-strong);
         border-radius: 8px;
