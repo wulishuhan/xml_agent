@@ -416,4 +416,13 @@ ChatGPT 输入框会在页面更新时动态切换：
 }
 module.exports = {
     ChatGPTProvider,
+    // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
+    meta: {
+        id: "chatgpt",
+        label: "ChatGPT",
+        defaultTargetUrl: "https://chatgpt.com",
+        conversationIdPattern: CHATGPT_CONVERSATION_PATTERN,
+        supportsImages: true,
+        create: (options) => new ChatGPTProvider(options),
+    },
 };

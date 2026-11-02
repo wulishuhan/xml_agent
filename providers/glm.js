@@ -911,4 +911,14 @@ module.exports = {
     GlmProvider,
     balanceMarkdownFences,
     extractXmlFromCandidate,
+    // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
+    // 注意 GLM 的会话 URL 同时存在 /c/<id> 与 /s/<id> 两种写法。
+    meta: {
+        id: "glm",
+        label: "GLM",
+        defaultTargetUrl: "https://zchat.z.ai",
+        conversationIdPattern: GLM_CONVERSATION_PATTERN,
+        supportsImages: true,
+        create: (options) => new GlmProvider(options),
+    },
 };

@@ -24,14 +24,21 @@ function check(name, fn) {
     }
 }
 try {
-    // 1. 首次读取返回默认值（browserType=chrome）
+    // 1. 首次读取返回默认值（browserType=edge，chrome 可选用）
     check("readSettings returns defaults when file missing", () => {
         const settings = settingsModule.readSettings(fakeApp);
-        assert.strictEqual(settings.browserType, "chrome");
+        assert.strictEqual(settings.browserType, "edge");
         assert.strictEqual(settings.chromePath, "");
-        assert.strictEqual(settings.cdpUrl, "http://127.0.0.1:9222");
+        assert.strictEqual(settings.cdpUrl, "http://127.0.0.1:9223");
         // 两浏览器使用独立默认端口
         assert.strictEqual(settings.cdpUrls.edge, "http://127.0.0.1:9223");
+        assert.strictEqual(settings.cdpUrls.chrome, "http://127.0.0.1:9222");
+    });
+    // 1b. 显式选择 chrome 时仍可用
+    check("writeSettings honors browserType=chrome", () => {
+        const saved = settingsModule.writeSettings(fakeApp, { browserType: "chrome" });
+        assert.strictEqual(saved.browserType, "chrome");
+        assert.strictEqual(saved.cdpUrl, "http://127.0.0.1:9222");
     });
     // 2. 写入 edge 设置并读回
     check("writeSettings persists browserType=edge", () => {

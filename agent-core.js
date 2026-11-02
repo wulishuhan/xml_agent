@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { createProvider } = require("./providers");
+const { createProvider, getProviderMeta, resolveTargetUrl } = require("./providers");
 const {
     getFirstPrompt,
     getXmlErrorPrompt,
@@ -10,6 +10,8 @@ const {
     getSendErrorPrompt,
 } = require("./prompts/index");
 const { createRuntime } = require("./runtime");
+const { getBuiltinAction } = require("./actions");
+const { getRegistrySafe } = require("./plugins/registry");
 const { buildWorkspaceManifest } = require("./workspace/manifest");
 const { createHistory, createHistoryRecord } = require("./workspace/history");
 const { extractXML } = require("./parse/xml-parse");
@@ -78,6 +80,8 @@ class Agent extends EventEmitter {
         this.history = createHistory();
         // 传递 execScope 给 Runtime
         this.runtime = createRuntime(this.workspace, this.execScope);
+        // 插件注册表：所有 Agent 事件都会转发给插件钩子（只观察，不影响主流程）。
+        this.plugins = getRegistrySafe();
         this.provider = null;
         this.step = 0;
         this.status = "created";
@@ -93,6 +97,15 @@ class Agent extends EventEmitter {
         };
         this.emit("event", event);
         this.emit(type, event);
+        // 插件钩子（hook 类插件的主要入口）。registry 内部已逐 handler 隔离异常，
+        // 这里再兜一层：插件系统出的任何问题都不允许打断 Agent。
+        if (this.plugins && typeof this.plugins.emitHook === "function") {
+            try {
+                this.plugins.emitHook(type, event);
+            } catch (error) {
+                // ignore
+            }
+        }
         return event;
     }
     syncConversationId() {
@@ -147,29 +160,40 @@ class Agent extends EventEmitter {
         return agentConfig.browser.cdpUrl;
     }
     /**
-- 收集截图结果里所有可上传的图片路径（相对 workspace）。
-- 兼容单图（result.path）与多图（result.paths / result.results）。
+- 收集动作产出的、需要上传给模型看的图片路径（相对 workspace）。
+- 由动作定义上的 meta.collectImages 决定，编排器不再按 action 名特判：
+- 内置 screenshot 与（将来的）插件动作走的是同一条通道。
 */
-    collectScreenshotPaths(result) {
-        const relativePaths = [];
-        if (Array.isArray(result.paths)) {
-            for (const item of result.paths) {
-                if (item && relativePaths.indexOf(item) === -1) {
-                    relativePaths.push(item);
-                }
-            }
+    collectArtifactPaths(result) {
+        const definition = this.resolveActionDefinition(result.action);
+        const collect = definition && definition.meta ? definition.meta.collectImages : null;
+        if (typeof collect !== "function") {
+            return [];
         }
-        if (relativePaths.length === 0 && Array.isArray(result.results)) {
-            for (const item of result.results) {
-                if (item && item.ok && item.path && relativePaths.indexOf(item.path) === -1) {
-                    relativePaths.push(item.path);
-                }
-            }
+        try {
+            const paths = collect(result);
+            return Array.isArray(paths) ? paths : [];
+        } catch (error) {
+            return [];
         }
-        if (relativePaths.length === 0 && result.path) {
-            relativePaths.push(result.path);
+    }
+
+    /**
+- 动作定义解析：内置动作表优先，其次是插件注册表。
+- 用于读取终止语义（meta.terminal）与产物声明（meta.collectImages）。
+*/
+    resolveActionDefinition(actionName) {
+        if (!actionName) {
+            return null;
         }
-        return relativePaths;
+        const builtin = getBuiltinAction(actionName);
+        if (builtin) {
+            return builtin;
+        }
+        if (this.plugins && typeof this.plugins.getActionDefinition === "function") {
+            return this.plugins.getActionDefinition(actionName);
+        }
+        return null;
     }
 
     toAbsolutePath(relativeOrAbsolute) {
@@ -179,15 +203,17 @@ class Agent extends EventEmitter {
         return path.resolve(this.workspace, relativeOrAbsolute);
     }
     /**
-- 截图成功后，把图片上传到当前对话，让大模型能在下一轮"看到"截图内容。
-- 支持一次上传多张（多目标 screenshot 会返回多张成功图片）。
-- 只对支持 uploadImages 的 provider 生效；失败不影响主流程，仅记录在结果里。
+- 动作成功后，把它产出的图片上传到当前对话，让大模型能在下一轮"看到"内容。
+- 是否上传由动作声明的 meta.collectImages 决定（当前是 screenshot）。
+- 支持一次上传多张；只对支持 uploadImages 的 provider 生效，
+- 失败不影响主流程，仅记录在结果里。
+- 方法名保留 attachScreenshotToProvider 以兼容既有调用方与测试。
 */
     async attachScreenshotToProvider(result) {
-        if (!result || result.action !== "screenshot" || !result.ok) {
+        if (!result || !result.ok) {
             return result;
         }
-        const relativePaths = this.collectScreenshotPaths(result);
+        const relativePaths = this.collectArtifactPaths(result);
         if (relativePaths.length === 0) {
             result.uploaded = false;
             return result;
@@ -206,6 +232,7 @@ class Agent extends EventEmitter {
             result.uploadedPaths = relativePaths;
             this.emitEvent("screenshot.uploaded", {
                 step: this.step,
+                action: result.action,
                 path: relativePaths[0],
                 paths: relativePaths,
                 uploaded: result.uploaded,
@@ -216,6 +243,7 @@ class Agent extends EventEmitter {
             result.uploadError = error.message;
             this.emitEvent("screenshot.upload_error", {
                 step: this.step,
+                action: result.action,
                 path: relativePaths[0],
                 paths: relativePaths,
                 error: error.message,
@@ -295,6 +323,9 @@ class Agent extends EventEmitter {
                 execScope: this.execScope,
             });
             const cdpUrl = this.resolveCdpUrl();
+            // 访问地址：用户配置（browser.targetUrls）覆盖 > provider 自己声明的默认地址。
+            // 新增 provider（含插件 provider）因此不需要改配置或前端。
+            const providerMeta = getProviderMeta(this.providerName);
             this.provider = createProvider(this.providerName, {
                 autoStart: agentConfig.browser.autoStart,
                 startTimeout: agentConfig.browser.startTimeout,
@@ -303,7 +334,8 @@ class Agent extends EventEmitter {
                 // 保持旧字段 chromePath 兼容，同时显式传入 browserType。
                 chromePath: this.resolveBrowserPath(),
                 browserType: this.browserType,
-                targetUrl: agentConfig.browser.targetUrls[this.providerName],
+                targetUrl: resolveTargetUrl(this.providerName, agentConfig.browser.targetUrls),
+                supportsImages: providerMeta ? providerMeta.supportsImages : true,
                 reuseExistingPage: agentConfig.browser.reuseExistingPage,
                 focusCdpPage: this.focusCdpPage,
                 conversationId: this.conversationId,
@@ -326,7 +358,9 @@ class Agent extends EventEmitter {
             if (this.stopRequested || this.status !== "running") {
                 return this.getResult();
             }
-            let prompt = getFirstPrompt(currentWorkspace, manifest, this.task);
+            let prompt = getFirstPrompt(currentWorkspace, manifest, this.task, {
+                registry: this.plugins,
+            });
             const providerErrorState = {
                 count: 0,
                 max: this.maxProviderErrors,
@@ -454,7 +488,7 @@ class Agent extends EventEmitter {
                 error: error.message,
             };
         }
-        // 截图成功后把图片上传到当前对话，让大模型能在下一轮看到截图内容。
+        // 动作产出的图片（当前是 screenshot）自动上传给模型，由 meta.collectImages 驱动。
         result = await this.attachScreenshotToProvider(result);
         this.history.push(createHistoryRecord(this.step, action, result));
         this.emitEvent("runtime.result", {
@@ -462,7 +496,10 @@ class Agent extends EventEmitter {
             action: result.action,
             result,
         });
-        if (result.action === "answer" && result.ok) {
+        const definition = this.resolveActionDefinition(result.action);
+        // 终止语义由动作定义的 meta.terminal 决定，编排器不再认识具体动作名。
+        const terminal = definition ? definition.meta.terminal : null;
+        if (terminal === "answer" && result.ok) {
             this.answer = result.content;
             this.emitEvent("answer", {
                 step: this.step,
@@ -473,7 +510,7 @@ class Agent extends EventEmitter {
                 prompt: getDonePrompt(),
             };
         }
-        if (result.action === "done") {
+        if (terminal === "end") {
             return {
                 stop: true,
                 prompt: null,

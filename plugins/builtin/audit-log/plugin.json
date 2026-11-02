@@ -1,0 +1,18 @@
+{
+    "name": "audit-log",
+    "version": "1.0.0",
+    "kind": "hook",
+    "apiVersion": 1,
+    "engines": { "xmlAgent": ">=1.1.0" },
+    "author": "xml-agent",
+    "description": "把动作执行、权限拒绝、任务结束写成分文件的 JSONL 审计日志（默认按天切分）",
+    "permissions": [],
+    "activation": "always",
+    "configSchema": {
+        "keepDays": {
+            "type": "integer",
+            "default": 14,
+            "description": "保留天数（仅记录，不自动删除；需要清理请用 storage 目录）"
+        }
+    }
+}

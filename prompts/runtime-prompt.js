@@ -1,8 +1,17 @@
+// 回给模型的结果视图：插件动作可能返回很大的结果（例如 HTTP 响应体），
+// registry 会提供 promptView 精简视图，完整结果只留在 Trace / 报告里。
+function promptView(result) {
+    if (result && typeof result === "object" && result.promptView) {
+        return result.promptView;
+    }
+    return result;
+}
+
 function getRuntimeOkPrompt(result) {
     return `
 上一轮 Runtime 已经执行完成。
 Runtime 返回：
-${JSON.stringify(result, null, 2)}
+${JSON.stringify(promptView(result), null, 2)}
 请根据这个真实结果继续完成用户任务。
 如果还需要读取文件：
 使用 <read>
@@ -41,7 +50,7 @@ function getRuntimeErrorPrompt(result) {
     return `
 Runtime 执行失败。
 下面是 Runtime 的真实返回结果：
-${JSON.stringify(result, null, 2)}
+${JSON.stringify(promptView(result), null, 2)}
 请分析这个错误。
 如果可以修复：
 - 修复问题

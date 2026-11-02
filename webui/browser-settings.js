@@ -29,10 +29,9 @@ const {
     checkCdpServer,
     getCdpVersionInfo,
 } = require("../electron/chrome-launcher");
-const DEFAULT_CDP_URLS = {
-    chrome: "http://127.0.0.1:9222",
-    edge: "http://127.0.0.1:9223",
-};
+// 默认端口 / 归一化逻辑与桌面版共用同一份实现（config/schema.js）
+const schema = require("../config/schema");
+const DEFAULT_CDP_URLS = schema.DEFAULT_CDP_URLS;
 function getStoreDir() {
     return path.join(os.homedir(), ".xml-agent");
 }
@@ -40,69 +39,17 @@ function getSettingsPath() {
     return path.join(getStoreDir(), "webui-browser.json");
 }
 function getProfileDir(browserType) {
-    const type = normalizeBrowserType(browserType);
-    return path.join(
-        getStoreDir(),
-        type === "edge" ? "edge-agent-profile" : "chrome-agent-profile"
-    );
+    return path.join(getStoreDir(), schema.getProfileDirName(browserType));
 }
-function normalizeCdpUrl(value, fallback) {
-    if (typeof value !== "string" || !value.trim()) {
-        return fallback;
-    }
-    const trimmed = value.trim();
-    try {
-        const parsed = new URL(trimmed);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-            return fallback;
-        }
-        return trimmed;
-    } catch (error) {
-        return fallback;
-    }
-}
-function normalizeBoolean(value, defaultValue) {
-    if (value === undefined || value === null) {
-        return defaultValue;
-    }
-    if (typeof value === "boolean") {
-        return value;
-    }
-    const text = String(value).trim().toLowerCase();
-    if (text === "true" || text === "1") return true;
-    if (text === "false" || text === "0") return false;
-    return defaultValue;
-}
-function buildCdpUrls(raw, browserType) {
-    const source = raw && typeof raw === "object" ? raw : {};
-    const provided = source.cdpUrls && typeof source.cdpUrls === "object" ? source.cdpUrls : null;
-    const urls = {
-        chrome: DEFAULT_CDP_URLS.chrome,
-        edge: DEFAULT_CDP_URLS.edge,
-    };
-    if (provided) {
-        urls.chrome = normalizeCdpUrl(provided.chrome, DEFAULT_CDP_URLS.chrome);
-        urls.edge = normalizeCdpUrl(provided.edge, DEFAULT_CDP_URLS.edge);
-        return urls;
-    }
-    const legacy = normalizeCdpUrl(source.cdpUrl, "");
-    if (legacy) {
-        urls[browserType] = legacy;
-    }
-    return urls;
-}
+const normalizeCdpUrl = schema.normalizeCdpUrl;
+const normalizeBoolean = schema.normalizeBoolean;
+const buildCdpUrls = schema.buildCdpUrls;
+/**
+归一化浏览器配置：实现与 electron/settings.js 共用 schema.normalizeBrowserSettings，
+两边不会再各自漂移。
+*/
 function normalizeSettings(raw) {
-    const source = raw && typeof raw === "object" ? raw : {};
-    const browserType = normalizeBrowserType(source.browserType);
-    const cdpUrls = buildCdpUrls(source, browserType);
-    return {
-        browserType,
-        chromePath: typeof source.chromePath === "string" ? source.chromePath : "",
-        cdpUrls,
-        cdpUrl: cdpUrls[browserType],
-        autoStartChrome: normalizeBoolean(source.autoStartChrome, true),
-        headless: normalizeBoolean(source.headless, false),
-    };
+    return schema.normalizeBrowserSettings(raw);
 }
 function readSettings() {
     try {
@@ -127,9 +74,7 @@ function writeSettings(next) {
     return merged;
 }
 function resolveCdpUrl(settings, browserType) {
-    const type = normalizeBrowserType(browserType);
-    const urls = settings && settings.cdpUrls ? settings.cdpUrls : {};
-    return normalizeCdpUrl(urls[type], DEFAULT_CDP_URLS[type]);
+    return schema.resolveCdpUrl(settings, browserType);
 }
 function resolveBrowser(settings) {
     const browserType = normalizeBrowserType(settings.browserType);
@@ -407,6 +352,7 @@ module.exports = {
     getSettingsPath,
     readSettings,
     writeSettings,
+    normalizeSettings,
     resolveCdpUrl,
     applyToRuntime,
     detect,

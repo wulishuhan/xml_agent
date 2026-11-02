@@ -107,16 +107,10 @@ function getPlatformCandidates(browserType) {
 }
 /**
 规范化浏览器类型，仅允许 chrome / edge。
+实现只有一份（config/schema.js），这里转发，
+避免 CLI / 桌面版 / Web 版三处各自判断出现分歧。
 */
-function normalizeBrowserType(value) {
-    const text = String(value || "")
-        .trim()
-        .toLowerCase();
-    if (text === "edge" || text === "msedge" || text === "microsoft-edge") {
-        return "edge";
-    }
-    return "chrome";
-}
+const { normalizeBrowserType } = require("../config/schema");
 /**
 根据可执行文件名/路径推断浏览器类型。
 */

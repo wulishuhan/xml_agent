@@ -85,7 +85,8 @@ check("settings normalizeBrowserType", () => {
     assert.strictEqual(settingsModule.normalizeBrowserType("chrome"), "chrome");
 });
 check("settings default browserType", () => {
-    assert.strictEqual(settingsModule.DEFAULT_SETTINGS.browserType, "chrome");
+    // 默认浏览器为 edge；用户可在设置里切成 chrome
+    assert.strictEqual(settingsModule.DEFAULT_SETTINGS.browserType, "edge");
 });
 // 6. BrowserAgent 构造函数读取 browserType
 check("BrowserAgent respects options.browserType=edge", () => {

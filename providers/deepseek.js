@@ -844,4 +844,13 @@ module.exports = {
     balanceMarkdownFences,
     extractXmlFromCandidate,
     stripCodeToolbarLabels,
+    // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
+    meta: {
+        id: "deepseek",
+        label: "DeepSeek",
+        defaultTargetUrl: "https://chat.deepseek.com",
+        conversationIdPattern: DEEPSEEK_CONVERSATION_PATTERN,
+        supportsImages: true,
+        create: (options) => new DeepSeekProvider(options),
+    },
 };

@@ -1,0 +1,11 @@
+{
+    "name": "screenshot",
+    "version": "1.0.0",
+    "kind": "action",
+    "apiVersion": 1,
+    "engines": { "xmlAgent": ">=1.1.0" },
+    "author": "xml-agent",
+    "description": "截取桌面 / 指定窗口 / CDP 浏览器页面（一次最多 8 个目标），并把成功的图片自动上传给模型",
+    "permissions": ["system:screen", "system:window"],
+    "activation": "manual"
+}

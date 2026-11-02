@@ -1,19 +1,102 @@
+/**
+XML Action 协议解析层
+
+职责收敛为"协议"本身：
+- 清洗模型回复（去掉 markdown 围栏）；
+- 交给快速解析器或通用 XML 解析器；
+- 校验委托给动作表（内置动作 → actions/，插件动作 → plugins/registry）。
+
+动作的具体校验规则不再写在本文件里。为了保持 1.1.0 的公开面，
+tryExtractWriteManually / tryExtractScreenshotManually / normalizeScreenshotTargets / ACTION_NAMES
+仍然从这里导出，但实现已上提到各自的动作定义（meta.fastPath）。
+*/
+
 const { XMLParser } = require("fast-xml-parser");
+const { getText } = require("./xml-text");
+const { FENCE } = require("./xml-chars");
+
 const parser = new XMLParser({
     ignoreAttributes: false,
     attributeNamePrefix: "@_",
     trimValues: false,
 });
-const CHAR_LT = String.fromCharCode(60);
-const CHAR_GT = String.fromCharCode(62);
-const CHAR_SLASH = String.fromCharCode(47);
-const CHAR_BANG = String.fromCharCode(33);
-const CHAR_LBRACK = String.fromCharCode(91);
-const CHAR_RBRACK = String.fromCharCode(93);
-const CHAR_DQUOTE = String.fromCharCode(34);
-const CHAR_TICK = String.fromCharCode(96);
-const FENCE = CHAR_TICK + CHAR_TICK + CHAR_TICK;
-const ACTION_NAMES = ["read", "write", "exec", "answer", "done", "screenshot"];
+
+// ------------------------------------------------------------
+// 惰性依赖：actions / plugins 都不能在模块加载期 require，
+// 否则 actions → parse/xml-parse → actions 会形成循环依赖。
+// ------------------------------------------------------------
+
+let builtinActionsModule = null;
+
+function getBuiltinActionsApi() {
+    if (builtinActionsModule === null) {
+        try {
+            // eslint-disable-next-line global-require
+            builtinActionsModule = require("../actions");
+        } catch (error) {
+            builtinActionsModule = false;
+        }
+    }
+    return builtinActionsModule || null;
+}
+
+function getBuiltinActionDefinition(name) {
+    const api = getBuiltinActionsApi();
+    return api ? api.getBuiltinAction(name) : null;
+}
+
+function getBuiltinFastPaths() {
+    const api = getBuiltinActionsApi();
+    return api ? api.getBuiltinFastPaths() : [];
+}
+
+function getBuiltinActionNames() {
+    const api = getBuiltinActionsApi();
+    return api ? api.getBuiltinActionNames() : [];
+}
+
+let pluginRegistryResolver = null;
+
+function getPluginRegistry() {
+    if (pluginRegistryResolver === null) {
+        try {
+            // eslint-disable-next-line global-require
+            pluginRegistryResolver = require("../plugins/registry").getRegistrySafe;
+        } catch (error) {
+            pluginRegistryResolver = false;
+        }
+    }
+    if (!pluginRegistryResolver) {
+        return null;
+    }
+    try {
+        return pluginRegistryResolver();
+    } catch (error) {
+        return null;
+    }
+}
+
+/**
+插件动作的校验入口。返回 null 表示这不是一个已注册的插件动作（交给内置动作表）。
+*/
+function getPluginEntry(actionName) {
+    const registry = getPluginRegistry();
+    if (!registry || typeof registry.hasAction !== "function" || !registry.hasAction(actionName)) {
+        return null;
+    }
+    return {
+        action: actionName,
+        plugin: registry.getActionPluginName(actionName),
+        validate(node) {
+            return registry.validateAction(actionName, node);
+        },
+    };
+}
+
+// ------------------------------------------------------------
+// 清洗
+// ------------------------------------------------------------
+
 function cleanXML(response) {
     if (!response || typeof response !== "string") {
         throw new Error("returned empty response");
@@ -29,110 +112,51 @@ function cleanXML(response) {
     }
     return text.trim();
 }
+
+// ------------------------------------------------------------
+// 兼容导出：实现已上提到动作定义
+// ------------------------------------------------------------
+
 function tryExtractWriteManually(text) {
-    if (!text || typeof text !== "string") return null;
-    const trimmed = text.trim();
-    const WRITE_OPEN_PREFIX = CHAR_LT + "write";
-    const WRITE_CLOSE_TAG = CHAR_LT + CHAR_SLASH + "write" + CHAR_GT;
-    if (trimmed.indexOf(WRITE_OPEN_PREFIX) !== 0) return null;
-    if (!trimmed.endsWith(WRITE_CLOSE_TAG)) return null;
-    const firstGt = trimmed.indexOf(CHAR_GT);
-    if (firstGt === -1) return null;
-    const openTag = trimmed.substring(0, firstGt + 1);
-    const pathMarker = "path=" + CHAR_DQUOTE;
-    const pathStart = openTag.indexOf(pathMarker);
-    if (pathStart === -1) return null;
-    const pathValueStart = pathStart + pathMarker.length;
-    const pathValueEnd = openTag.indexOf(CHAR_DQUOTE, pathValueStart);
-    if (pathValueEnd === -1) return null;
-    const path = openTag.substring(pathValueStart, pathValueEnd);
-    if (!path) return null;
-    let content = trimmed.substring(firstGt + 1, trimmed.length - WRITE_CLOSE_TAG.length);
-    content = content.trim();
-    const CDATA_START = CHAR_LT + CHAR_BANG + CHAR_LBRACK + "CDATA" + CHAR_LBRACK;
-    if (content.indexOf(CDATA_START) === 0) {
-        content = content.substring(CDATA_START.length);
+    const definition = getBuiltinActionDefinition("write");
+    if (!definition || typeof definition.meta.fastPath !== "function") {
+        return null;
     }
-    const CDATA_END = CHAR_RBRACK + CHAR_RBRACK + CHAR_GT;
-    if (content.endsWith(CDATA_END)) {
-        content = content.substring(0, content.length - CDATA_END.length);
-    }
-    if (!content.trim()) return null;
-    return {
-        action: "write",
-        node: {
-            "@_path": path,
-            "#text": content,
-        },
-    };
+    return definition.meta.fastPath(text);
 }
-// 手动解析自闭合的 screenshot 动作：<screenshot source="screen" path="a.png"/>
-// 仅处理“无子节点”的旧写法；带 <target> 子节点的多目标写法交给完整 XML 解析器。
+
+/**
+动作定义解析：内置动作表优先，其次是插件注册表。
+screenshot 自 v1.1.0 起是内置插件，因此这里必须两个来源都能查到。
+*/
+function getAnyActionDefinition(name) {
+    const builtin = getBuiltinActionDefinition(name);
+    if (builtin) {
+        return builtin;
+    }
+    const registry = getPluginRegistry();
+    if (!registry || typeof registry.getActionDefinition !== "function") {
+        return null;
+    }
+    try {
+        return registry.getActionDefinition(name) || null;
+    } catch (error) {
+        return null;
+    }
+}
+
 function tryExtractScreenshotManually(text) {
-    if (!text || typeof text !== "string") return null;
-    const trimmed = text.trim();
-    const OPEN = CHAR_LT + "screenshot";
-    const GT = CHAR_GT;
-    const SELF_CLOSE = CHAR_SLASH + GT;
-    if (trimmed.indexOf(OPEN) !== 0) return null;
-    if (
-        !trimmed.endsWith(SELF_CLOSE) &&
-        !trimmed.endsWith(CHAR_LT + CHAR_SLASH + "screenshot" + GT)
-    ) {
+    const definition = getAnyActionDefinition("screenshot");
+    if (!definition || typeof definition.meta.fastPath !== "function") {
         return null;
     }
-    const firstGt = trimmed.indexOf(GT);
-    if (firstGt === -1) return null;
-    // 存在子节点（如 <target .../>）时不在手动解析里处理。
-    const inner = trimmed.substring(firstGt + 1);
-    if (inner && inner.trim() && inner.trim().indexOf(CHAR_LT) === 0) {
-        return null;
-    }
-    let attrText = trimmed.substring(OPEN.length, firstGt);
-    if (attrText.endsWith(CHAR_SLASH)) {
-        attrText = attrText.substring(0, attrText.length - 1);
-    }
-    const node = {};
-    const attrPattern = /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*"([^"]*)"/g;
-    let match;
-    while ((match = attrPattern.exec(attrText)) !== null) {
-        node["@_" + match[1]] = match[2];
-    }
-    return {
-        action: "screenshot",
-        node: node,
-    };
+    return definition.meta.fastPath(text);
 }
-function getText(node) {
-    if (node === undefined || node === null) return "";
-    if (typeof node === "string") return node;
-    if (typeof node === "number" || typeof node === "boolean") {
-        return String(node);
-    }
-    if (typeof node === "object" && node["#text"] !== undefined) {
-        return String(node["#text"]);
-    }
-    return "";
-}
-function validateScreenshotTarget(target, index) {
-    const label = "screenshot target[" + index + "]";
-    if (!target || typeof target !== "object") {
-        throw new Error(label + " is invalid");
-    }
-    const source = target["@_source"];
-    if (!source) {
-        throw new Error(label + " requires source (browser_page | screen | window)");
-    }
-    if (source !== "browser_page" && source !== "screen" && source !== "window") {
-        throw new Error(label + " source must be one of: browser_page, screen, window");
-    }
-    if (source === "window" && !target["@_windowTitle"] && !target["@_title"]) {
-        throw new Error(label + " source=window requires windowTitle");
-    }
-}
+
 // 归一化 screenshot 子目标：可能是单个对象、对象数组，或为空（旧写法）。
+// 这是协议层的节点归一化，与具体执行者（内置插件）无关，因此留在 parse 层。
 function normalizeScreenshotTargets(node) {
-    const raw = node["target"];
+    const raw = node && node["target"];
     if (raw === undefined || raw === null) {
         return [];
     }
@@ -141,89 +165,98 @@ function normalizeScreenshotTargets(node) {
     }
     return [raw];
 }
-function validateScreenshot(node) {
-    if (!node || typeof node !== "object") {
-        throw new Error("screenshot action is invalid");
-    }
-    const targets = normalizeScreenshotTargets(node);
-    // 多目标写法：<screenshot><target .../><target .../></screenshot>
-    if (targets.length > 0) {
-        targets.forEach(function (target, index) {
-            validateScreenshotTarget(target, index);
-        });
-        if (targets.length > 8) {
-            throw new Error(
-                "screenshot supports at most 8 targets per action, got " + targets.length
-            );
-        }
-        return;
-    }
-    // 旧写法：<screenshot source="..." path="..."/>
-    const source = node["@_source"];
-    if (!source) {
-        throw new Error("screenshot requires source (browser_page | screen | window)");
-    }
-    if (source !== "browser_page" && source !== "screen" && source !== "window") {
-        throw new Error("screenshot source must be one of: browser_page, screen, window");
-    }
-    if (source === "window" && !node["@_windowTitle"] && !node["@_title"]) {
-        throw new Error("screenshot source=window requires windowTitle");
-    }
-}
+
+// ------------------------------------------------------------
+// 校验
+// ------------------------------------------------------------
+
+/**
+内置动作校验。找不到动作时抛 "Unknown XML Action: xxx"。
+具体规则（含错误文案）在 actions/*.js 的 validate 里。
+*/
 function validateAction(action, node) {
-    switch (action) {
-        case "read":
-            if (!node || typeof node !== "object") {
-                throw new Error("read action is invalid");
-            }
-            if (!node["@_path"]) {
-                throw new Error("read requires path");
-            }
-            return;
-        case "write":
-            if (!node || typeof node !== "object") {
-                throw new Error("write action is invalid");
-            }
-            if (!node["@_path"]) {
-                throw new Error("write requires path");
-            }
-            if (!getText(node)) {
-                throw new Error("write content cannot be empty");
-            }
-            return;
-        case "exec":
-            if (!node || typeof node !== "object") {
-                throw new Error("exec action is invalid");
-            }
-            if (!node["@_command"]) {
-                throw new Error("exec requires command");
-            }
-            return;
-        case "screenshot":
-            validateScreenshot(node);
-            return;
-        case "answer":
-            if (!getText(node).trim()) {
-                throw new Error("answer content cannot be empty");
-            }
-            return;
-        case "done":
-            return;
-        default:
-            throw new Error("Unknown XML Action: " + action);
+    const api = getBuiltinActionsApi();
+    if (!api) {
+        throw new Error("Unknown XML Action: " + action);
     }
+    api.validateBuiltinAction(action, node);
 }
+
+// ------------------------------------------------------------
+// 快速解析器
+// ------------------------------------------------------------
+
+/**
+内置动作的手写快速解析器（write / screenshot）。
+命中后仍然走统一校验，与迁移前的行为一致。
+*/
+function tryBuiltinFastPaths(text) {
+    for (const item of getBuiltinFastPaths()) {
+        let parsed = null;
+        try {
+            parsed = item.parse(text);
+        } catch (error) {
+            continue;
+        }
+        if (!parsed || typeof parsed !== "object") {
+            continue;
+        }
+        const actionName = parsed.action || item.action;
+        validateAction(actionName, parsed.node);
+        return { action: actionName, node: parsed.node };
+    }
+    return null;
+}
+
+// 插件的自定义快速解析器（可选）：用于 CDATA 嵌套或浏览器会破坏的写法。
+function tryPluginFastPaths(text) {
+    const registry = getPluginRegistry();
+    if (!registry || typeof registry.getFastPaths !== "function") {
+        return null;
+    }
+    let fastPaths = [];
+    try {
+        fastPaths = registry.getFastPaths();
+    } catch (error) {
+        return null;
+    }
+    for (const item of fastPaths) {
+        let parsed = null;
+        try {
+            parsed = item.parse(text);
+        } catch (error) {
+            continue;
+        }
+        if (!parsed || typeof parsed !== "object") {
+            continue;
+        }
+        const actionName = parsed.action || item.action;
+        const entry = getPluginEntry(actionName);
+        if (!entry) {
+            continue;
+        }
+        const checked = entry.validate(parsed.node);
+        if (!checked.ok) {
+            throw new Error(checked.error || "Invalid " + actionName + " action");
+        }
+        return { action: actionName, node: parsed.node, plugin: entry.plugin };
+    }
+    return null;
+}
+
+// ------------------------------------------------------------
+// 主入口
+// ------------------------------------------------------------
+
 function extractXML(response) {
     const text = cleanXML(response);
-    const manualWrite = tryExtractWriteManually(text);
-    if (manualWrite) {
-        validateAction(manualWrite.action, manualWrite.node);
-        return manualWrite;
+    const builtinFastPath = tryBuiltinFastPaths(text);
+    if (builtinFastPath) {
+        return builtinFastPath;
     }
-    const manualScreenshot = tryExtractScreenshotManually(text);
-    if (manualScreenshot) {
-        validateAction(manualScreenshot.action, manualScreenshot.node);
-        return manualScreenshot;
+    const pluginFastPath = tryPluginFastPaths(text);
+    if (pluginFastPath) {
+        return pluginFastPath;
     }
     let parsed;
     try {
@@ -254,17 +287,39 @@ function extractXML(response) {
                 "), only one XML Action is allowed per response"
         );
     }
+    const pluginEntry = getPluginEntry(action);
+    if (pluginEntry) {
+        const checked = pluginEntry.validate(node);
+        if (!checked.ok) {
+            throw new Error(checked.error || "Invalid " + action + " action");
+        }
+        return {
+            action,
+            node,
+            plugin: pluginEntry.plugin,
+        };
+    }
     validateAction(action, node);
     return {
         action,
         node,
     };
 }
-module.exports = {
+
+const api = {
     extractXML,
     getText,
     tryExtractWriteManually,
     tryExtractScreenshotManually,
     normalizeScreenshotTargets,
-    ACTION_NAMES,
 };
+
+// ACTION_NAMES 由内置动作表派生（保持"数组"这一公开面，但不再是手写副本）。
+Object.defineProperty(api, "ACTION_NAMES", {
+    enumerable: true,
+    get() {
+        return getBuiltinActionNames();
+    },
+});
+
+module.exports = api;

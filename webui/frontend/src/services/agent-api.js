@@ -206,23 +206,72 @@ export async function uploadWorkspaceImages(workspace, files) {
 /**
 从 provider 页面 URL 中提取 conversationId。
 前端不直接依赖 provider 逻辑，只做一点轻量解析，用于提示用户。
-@param {string} provider "chatgpt" | "deepseek" | "qwen"
+
+正则优先取自 `/api/providers` 返回的 provider 元数据（与 server 端同一份声明），
+接口不可用时回落到下面的内置表，因此页面在接口异常时行为不变。
+@param {string} provider "chatgpt" | "deepseek" | "qwen" | "glm" | 插件 provider
 @param {string} url
 @returns {string|null}
 */
+const FALLBACK_PROVIDER_PATTERNS = {
+    deepseek: "/a/chat/s/([0-9a-fA-F-]+)",
+    chatgpt: "/c/([0-9a-zA-Z-]+)",
+    qwen: "/c/([0-9a-zA-Z-]+)",
+    glm: "/(?:c|s)/([0-9a-zA-Z-]+)",
+};
+let providerPatternCache = null;
+let providersPromise = null;
+export async function getProviders() {
+    const response = await fetch(api("/api/providers"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read providers");
+    }
+    return result;
+}
+/**
+加载并缓存 provider 列表与其会话 id 正则（幂等；失败时静默回落内置表）。
+*/
+export function loadProviders() {
+    if (!providersPromise) {
+        providersPromise = getProviders()
+            .then((data) => {
+                const providers = Array.isArray(data.providers) ? data.providers : [];
+                const cache = {};
+                for (const item of providers) {
+                    if (!item || !item.id || !item.conversationIdPattern) {
+                        continue;
+                    }
+                    try {
+                        cache[item.id] = new RegExp(item.conversationIdPattern);
+                    } catch (error) {
+                        // 非法正则忽略，回落内置表
+                    }
+                }
+                providerPatternCache = cache;
+                return providers;
+            })
+            .catch(() => {
+                providerPatternCache = {};
+                return [];
+            });
+    }
+    return providersPromise;
+}
 export function extractConversationId(provider, url) {
     if (!url || typeof url !== "string") {
         return null;
     }
-    if (provider === "deepseek") {
-        const match = url.match(new RegExp("/a/chat/s/([0-9a-fA-F-]+)"));
-        return match ? match[1] : null;
+    let pattern = providerPatternCache ? providerPatternCache[provider] : null;
+    if (!pattern) {
+        const source = FALLBACK_PROVIDER_PATTERNS[provider];
+        pattern = source ? new RegExp(source) : null;
     }
-    if (provider === "chatgpt" || provider === "qwen") {
-        const match = url.match(new RegExp("/c/([0-9a-zA-Z-]+)"));
-        return match ? match[1] : null;
+    if (!pattern) {
+        return null;
     }
-    return null;
+    const match = url.match(pattern);
+    return match ? match[1] : null;
 }
 // ---- 浏览器设置与切换（Web 版，通过 HTTP API）----
 export async function getBrowserSettings() {
@@ -300,6 +349,111 @@ export async function saveAgentConfig(config) {
     const result = await response.json();
     if (!response.ok) {
         throw new Error(result.error || "Failed to save agent config");
+    }
+    return result;
+}
+// ---- 插件管理（Web 版与桌面版共用同一套本地后端接口）----
+function pluginPath(name, suffix) {
+    return api("/api/plugins/" + encodeURIComponent(name) + (suffix || ""));
+}
+export async function getPlugins() {
+    const response = await fetch(api("/api/plugins"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read plugins");
+    }
+    return result;
+}
+export async function reloadPlugins() {
+    const response = await fetch(api("/api/plugins/reload"), { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to reload plugins");
+    }
+    return result;
+}
+export async function setPluginEnabled(name, enabled) {
+    const response = await fetch(pluginPath(name, "/enabled"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled !== false }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to update plugin state");
+    }
+    return result;
+}
+export async function getPluginConfig(name) {
+    const response = await fetch(pluginPath(name, "/config"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read plugin config");
+    }
+    return result;
+}
+export async function savePluginConfig(name, config) {
+    const response = await fetch(pluginPath(name, "/config"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: config || {} }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to save plugin config");
+    }
+    return result;
+}
+export async function getPermissionPolicy() {
+    const response = await fetch(api("/api/permissions"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read permissions");
+    }
+    return result;
+}
+// ---- 插件声明式 UI（宿主渲染，插件不提供任何可执行 JS）----
+export async function getPluginUi() {
+    const response = await fetch(api("/api/plugins/ui"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read plugin UI manifest");
+    }
+    return result;
+}
+/**
+调用某个插件注册的接口。pluginPath 是面板里声明的相对路径（如 "/summary"）。
+*/
+export async function callPluginApi(name, pluginPath, method = "GET", body) {
+    const suffix =
+        pluginPath && pluginPath.charAt(0) === "/" ? pluginPath : "/" + (pluginPath || "");
+    const url = api("/api/plugins/" + encodeURIComponent(name) + "/api" + suffix);
+    const options = { method };
+    if (method !== "GET" && body !== undefined && body !== null) {
+        options.headers = { "Content-Type": "application/json" };
+        options.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, options);
+    let result = null;
+    try {
+        result = await response.json();
+    } catch (error) {
+        result = null;
+    }
+    if (!response.ok) {
+        throw new Error((result && result.error) || "Plugin API failed (" + response.status + ")");
+    }
+    return result || {};
+}
+export async function grantPermission(scope, policy) {
+    const response = await fetch(api("/api/permissions/grant"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, policy }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to update permission");
     }
     return result;
 }

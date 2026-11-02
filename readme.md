@@ -1,7 +1,7 @@
 # XML Agent
 
 一个基于 Node.js 实现的工程型 AI Agent Framework。
-当前版本：**1.0.7**
+当前版本：**1.1.0**
 核心设计理念：
 LLM 负责理解任务和规划
 Runtime 负责安全执行
@@ -27,12 +27,13 @@ npm install
 
 ### 配置浏览器路径
 
-编辑 `config/agent-config.js`：
+默认使用 **Edge**（独立 CDP 端口 9223），可在设置里切换为 Chrome（端口 9222）。
+默认值统一由 `config/schema.js` 的 `DEFAULT_BROWSER_TYPE` 控制：
 
 ```
 browser: {
-  // 浏览器类型：chrome（默认）| edge
-  browserType: "chrome",
+  // 浏览器类型：edge（默认）| chrome
+  browserType: "edge",
   // 留空表示按 browserType 自动探测常见安装路径
   chromePath: "",
   // Edge 专用路径（browserType 为 edge 时优先使用）
@@ -40,7 +41,7 @@ browser: {
 }
 ```
 
-也可以完全留空，Agent 会按 `browserType` 自动探测本机已安装的 Chrome / Edge。
+也可以完全留空，Agent 会按 `browserType` 自动探测本机已安装的 Edge / Chrome。
 **桌面版（Electron）与 Web 版都可以在界面里配置**：点击右上角 Settings（Web 版显示为 Browser Settings），即可选择 Chrome / Edge、查看探测结果、设置各自 CDP 端口、保存并一键切换。Web 版的配置保存在 `~/.xml-agent/webui-browser.json`，保存后会立即同步到运行环境，新任务即使用所选浏览器。
 
 ### 启动服务
@@ -173,7 +174,7 @@ Edge 与 Chrome 同属 Chromium 内核，完整实现了 CDP 协议，因此可�
 
 `config/agent-config.js` 的 `browser` 块：
 
-字段默认值说明browserType`chrome`浏览器类型，可选 `chrome` / `edge`edgePath`""`Edge 可执行文件路径，留空自动探测
+字段默认值说明browserType`edge`浏览器类型，默认 Edge，可选 `chrome`edgePath`""`Edge 可执行文件路径，留空自动探测
 桌面版配置持久化在用户数据目录的 `settings.json`，支持 `cdpUrls: { chrome, edge }` 分别保存两种浏览器的端口。
 可通过环境变量覆盖：
 `BROWSER_TYPE=edge`
@@ -250,7 +251,7 @@ Web 版 API：
 
 ## 同一会话多次运行（resume）
 
-同一 conversation 再次运行任务时，**复用同一个 session**（sessionId 不变），不会在侧边栏新增会话条目。`webui/server.js` 的 `/api/run` 对同一 provider + conversation：
+同一 conversation 再次运行任务时，**复用同一个 session**（sessionId 不变），不会在侧边栏新增会话条目。`webui/routes/sessions.js` 的 `/api/run` 对同一 provider + conversation：
 若已有运行中的 session，直接复用；
 
 若已结束，调用 `existing.resume(task)` 在同一 session 内继续一次新运行（`AgentSession.resume` 会重置运行状态、更新 task、追加输出，`runCount` +1）；
@@ -291,6 +292,24 @@ Agent started / completed / stopped / error（记录在 Run 级别）
 可展开 "Details" 查看事件完整 JSON，支持 Expand all / Collapse all、Refresh。
 
 # 项目架构
+
+## 目录结构（v1.1.0）
+
+```
+actions/            内置动作定义（read/write/exec/answer/done）
+plugins/            插件系统（registry / sdk / capabilities / builtin）
+providers/          模型后端（含 registry.js：元数据 + 契约校验）
+config/             schema.js（配置单一来源）+ agent-config.js（投影）
+parse/              XML 协议解析（校验委托动作表）
+prompts/            系统提示与插件提示词构建
+webui/
+  server.js         装配 + 生命周期（161 行）
+  routes/           sessions / workspace / storage / browser / agent-config / plugins / providers
+  session/          AgentSession / SessionManager / 持久化
+  request-input.js  入参归一化（会话 id、附图路径）
+  frontend/         Vue 3 SPA（含 PluginsPanel / PluginPanels）
+electron/           桌面端主进程
+```
 
 整体流程：
 
@@ -350,8 +369,12 @@ Agent Continue
 
 ## Runtime
 
-文件：`runtime.js`
+文件：`runtime.js`（Workspace 沙箱 + 动作分发）
+动作实现：`actions/`（read / write / exec / answer / done，从 v1.1.0 起由动作定义对象承载）
+截图动作：`plugins/builtin/screenshot`（v1.1.0 起是内置插件，不是内置动作）
+
 Runtime 是系统的执行核心，LLM 不直接操作电脑，所有操作必须通过 XML Action。
+内置动作与插件动作走同一条分发链路（内置表 → 插件表），因此新增能力不再需要改 `runtime.js`。
 支持的 Action：
 
 ### read
@@ -381,6 +404,24 @@ console.log("hello");
 <exec command="npm test"/>
 ```
 
+### screenshot（内置插件提供）
+
+截取桌面 / 指定窗口 / CDP 浏览器页面，一次最多 8 个目标；成功后自动上传给模型：
+
+```
+<screenshot source="screen" path="screenshots/desktop.png"/>
+<screenshot>
+  <target source="window" windowTitle="Visual Studio Code" path="screenshots/vscode.png"/>
+  <target source="screen" path="screenshots/desktop.png"/>
+</screenshot>
+```
+
+自 v1.1.0 起它由内置插件 `plugins/builtin/screenshot` 提供（不再是 `actions/` 里的内置动作），因此：
+
+- 可在 Plugins 面板里单独停用，或用权限面板 deny `system:screen` / `system:window` 关闭；
+- 结果会带上 `plugin` 与 `durationMs`，审计日志可区分；
+- `XML_AGENT_PLUGINS=0` 关闭整个插件系统时，截图能力也随之不可用。
+
 ### answer
 
 返回最终答案：
@@ -401,15 +442,39 @@ console.log("hello");
 
 ## Provider
 
-目录：`providers/`
+目录：`providers/`（注册表在 `providers/registry.js`）
 统一接口：
 
 ```
 const provider = createProvider("chatgpt");
 ```
 
-当前支持：ChatGPT、DeepSeek、Qwen、GLM。
-BrowserAgent 内置页面自愈机制（ensurePageAlive），浏览器崩溃或标签页关闭时会自动重连恢复会话。浏览器类型可通过 `browserType` 选项或 `BROWSER_TYPE` 环境变量指定为 `chrome` 或 `edge`；CDP URL 优先使用主进程按浏览器类型解析后写入的环境变量（`BROWSER_CDP_URL` / `XML_AGENT_CDP_URL`）。
+当前支持：ChatGPT、DeepSeek、Qwen、GLM。BrowserAgent 内置页面自愈机制（ensurePageAlive），浏览器崩溃或标签页关闭时会自动重连恢复会话。浏览器类型可通过 `browserType` 选项或 `BROWSER_TYPE` 环境变量指定为 `chrome` 或 `edge`；CDP URL 优先使用主进程按浏览器类型解析后写入的环境变量（`BROWSER_CDP_URL` / `XML_AGENT_CDP_URL`）。
+
+### 新增一个 provider（v1.1.0 起不需要改 server / 前端）
+
+每个 provider 模块导出自己的元数据，注册表据此创建实例、解析访问地址与会话 id：
+
+```
+meta: {
+  id: "glm",
+  label: "GLM",
+  defaultTargetUrl: "https://zchat.z.ai",
+  conversationIdPattern: GLM_CONVERSATION_PATTERN,
+  supportsImages: true,
+  create: (options) => new GlmProvider(options),
+}
+```
+
+- 实例契约：必需 `start` / `send` / `close`，可选 `uploadImages` / `getConversationIdFromUrl` /
+  `ensurePageAlive`；创建时会校验，缺方法直接报错。
+- 访问地址：`config.browser.targetUrls[name]`（覆盖表）优先，未配置则用 provider 的 `defaultTargetUrl`。
+- 会话 id：统一由 `normalizeConversationId` 用该 provider 声明的正则解析
+  （因此 GLM 的 `/s/<id>` 与 `/c/<id>` 都能识别）。
+- 前端 provider 下拉框读 `GET /api/providers`，插件注册的 provider 会自动出现。
+
+插件也可以用 `ctx.providers.register(name, factory, meta)` 贡献 provider，详见
+`docs/PLUGIN_API.md` §5.1。回归测试：`node test/test-provider-registry.js`。
 
 ## Prompt 系统
 
@@ -434,6 +499,30 @@ Agent 操作的目标目录，所有路径必须是相对路径，禁止绝对�
 工作区产物迁移至 `~/.xml-agent/workspaces/<hash>/`，不再污染代码仓库
 
 任务完成后自动生成执行报告
+
+# 配置（单一来源）
+
+从 v1.1.0 起，所有运行参数的**默认值、环境变量名、校验规则**都只在 `config/schema.js` 里声明一次：
+
+- `config/agent-config.js` 只是它的投影（默认值 + 环境变量覆盖 + 校验）；
+- 设置面板的默认值（`webui/agent-config-api.js`）从同一处派生，改默认值不用改两遍；
+- 桌面版 `electron/settings.js` 与 Web 版 `webui/browser-settings.js` 的浏览器默认端口、
+  `cdpUrls` 归一化、`browserType` 归一化共用同一份实现；
+- 「保存即生效」的 `applyToRuntime` 也按 schema 里的 env 名回写环境变量，不再手抄映射；
+
+```js
+// config/schema.js 中的一个字段声明
+{
+    path: "agent.maxSteps",
+    default: 100,
+    type: "int",
+    min: 1,
+    env: ["AGENT_MAX_STEPS"],
+    message: "agent.maxSteps must be a positive integer",
+}
+```
+
+回归测试：`node test/test-config-schema.js`（75 项，含"四处默认值必须同源"的漂移守卫）。
 
 # 会话与存储管理（v1.0.2）
 
@@ -530,9 +619,101 @@ node test/test-edge-settings-io.js
 
 ✅ Prettier 代码风格统一
 
+✅ 插件系统（action / hook / provider / ui 四类插件，权限声明 + 审计）
+
+✅ Plugins 管理面板（启停 / 权限策略 / 配置表单 / Reload，Web 版与桌面版一致）
+
+# 插件系统（v1.1.0）
+
+从 1.1.0 起，**新增一个 XML 动作不再需要修改核心文件**——写一个插件目录即可。
+
+```
+plugins/                     内置插件（随包分发）
+    sdk.js                   插件契约层（清单/动作定义/schema/版本区间/自检）
+    registry.js              发现 / 校验 / 加载 / 隔离 / 权限 / 执行 / 钩子
+    capabilities.js          作用域门面（workspace fs、受控 http、storage、secrets）
+    builtin/
+        fetch/               示例：action 插件（HTTP 请求，域名白名单）
+        audit-log/           示例：hook 插件（JSONL 审计日志）
+
+~/.xml-agent/plugins/<name>/ 用户插件
+    plugin.json
+    index.js
+```
+
+## 使用
+
+- 插件默认启用。`XML_AGENT_PLUGINS=0` 可一键回到"仅内置动作"。
+- 内置 `fetch` 动作：`<fetch url="http://127.0.0.1:3000/api" method="GET"/>`，
+  只允许访问插件配置 `allowHosts` 白名单内的主机（默认 `127.0.0.1` / `localhost`）。
+- 内置 `audit-log` 插件把动作执行、权限拒绝、会话结束写成 JSONL，落在
+  `~/.xml-agent/plugins/audit-log/data/audit-YYYYMMDD.jsonl`。
+
+## 界面：Plugins 面板
+
+Web 版与桌面版顶部都有 **Plugins** 按钮（History / Trace 旁边），打开后可以：
+
+- 查看每个插件的状态（`loaded` / `disabled` / `error`）、来源（`builtin` / `user`）、动作与错误原因；
+- 一键启用 / 禁用插件（写 `~/.xml-agent/plugins-state.json`）；
+- 逐个 scope 调整权限策略：`allow` / `ask` / `deny`（写 `~/.xml-agent/permissions.json`）；
+- 按 `configSchema` 渲染配置表单并保存（写 `~/.xml-agent/plugins-config.json`，服务端按类型校验）；
+- Reload 重新扫描插件目录（改完插件代码不用重启服务）；
+- **查看插件声明的面板**（`Plugin panels` 区块）：插件用纯 JSON 声明 `note` / `status` /
+  `table` / `action` 四种 block，宿主前端渲染并调用插件自己的只读接口
+  （`/api/plugins/<name>/api/*`）——插件不向浏览器下发任何 JS。
+
+> 前端面板只是调用下面这些接口，没有额外权限；REST 接口仍然可以单独使用（例如 CI 或脚本）。
+
+## 管理接口
+
+```
+GET  /api/plugins                 插件列表（状态 / 动作 / 有效权限 / 配置 / 错误）
+POST /api/plugins/reload          重新扫描并加载
+POST /api/plugins/:name/enabled   启用 / 禁用（{ enabled }）
+GET  /api/plugins/:name/config    读取配置
+POST /api/plugins/:name/config    写入配置（按 configSchema 校验）
+GET  /api/plugins/ui              声明式 UI 贡献（面板 / 设置 / 按钮）
+GET  /api/permissions             权限 scope 与当前策略
+POST /api/permissions/grant       授权某个 scope（{ scope, policy }）
+GET  /api/providers               可用模型后端（内置 + 插件），供前端下拉使用
+
+# 插件自定义接口（由插件用 ctx.api.* 注册，路径固定在其命名空间下）
+GET  /api/plugins/<name>/api/<path>
+POST /api/plugins/<name>/api/<path>
+```
+
+## 权限模型
+
+插件在 `plugin.json` 里声明需要的 scope（`network:http`、`workspace:write`、`shell:exec` …），
+动作的 `meta.permission` 必须是它的子集，否则**加载期直接拒绝**。
+
+- 内置插件声明的 scope 默认 `allow`；
+- 用户插件默认 `ask`，v1 中等同于"未授权即拒绝"，拒绝原因会回给模型；
+- 所有插件动作的调用都会带 `plugin` / `durationMs` 写入 Trace，便于审计。
+
+## 文档
+
+插件开发契约（清单字段、动作定义、schema、ctx 能力、钩子、错误码、安全声明）见：
+
+docs/PLUGIN_API.md
+
+设计与演进计划（现状诊断、P0 前置重构、四类插件、权限模型、路线图）见：
+
+docs/PLUGIN_DESIGN.md
+
+回归测试：`npm run test:plugins`（离线，不需要浏览器与大模型）。
+
+# 设计文档
+
+插件化与架构优化的完整设计（现状诊断、P0 前置重构、插件系统 API、权限模型、分阶段路线、测试与验收判据）见：
+
+docs/PLUGIN_DESIGN.md
+
 # 更新日志
 
 详见 docs/ 目录：
+docs/RELEASE_NOTES_1.1.0.md
+
 docs/RELEASE_NOTES_1.0.1.md
 
 docs/RELEASE_NOTES_1.0.2.md

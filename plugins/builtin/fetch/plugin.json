@@ -1,0 +1,28 @@
+{
+    "name": "fetch",
+    "version": "1.0.0",
+    "kind": "action",
+    "apiVersion": 1,
+    "engines": { "xmlAgent": ">=1.1.0" },
+    "author": "xml-agent",
+    "description": "HTTP 请求动作：域名白名单 + 超时 + 响应体积上限，不跟随重定向（防 SSRF 借道跳转）",
+    "permissions": ["network:http"],
+    "activation": "always",
+    "configSchema": {
+        "allowHosts": {
+            "type": "array",
+            "default": ["127.0.0.1", "localhost"],
+            "description": "允许访问的主机白名单，支持 * 与 *.example.com；默认只放行本机"
+        },
+        "httpTimeoutMs": {
+            "type": "integer",
+            "default": 30000,
+            "description": "默认请求超时（毫秒）"
+        },
+        "httpMaxBytes": {
+            "type": "integer",
+            "default": 1048576,
+            "description": "单次响应允许读取的最大字节数"
+        }
+    }
+}

@@ -25,10 +25,9 @@
                 </div>
                 <div class="workspace-actions">
                     <select v-model="provider" :disabled="running">
-                        <option value="chatgpt">ChatGPT</option>
-                        <option value="qwen">Qwen</option>
-                        <option value="deepseek">DeepSeek</option>
-                        <option value="glm">GLM</option>
+                        <option v-for="item in providerOptions" :key="item.id" :value="item.id">
+                            {{ item.label }}
+                        </option>
                     </select>
                     <span class="status-badge" :class="'status-' + sessionStatus">
                         {{ statusText }}
@@ -49,6 +48,14 @@
                         @click="showHistory = true"
                     >
                         History
+                    </button>
+                    <button
+                        type="button"
+                        class="btn"
+                        title="Manage plugins, permissions and plugin configuration"
+                        @click="showPlugins = true"
+                    >
+                        Plugins
                     </button>
                     <button
                         type="button"
@@ -160,6 +167,7 @@
             :live-output="output"
             @close="showTrace = false"
         />
+        <PluginsPanel v-if="showPlugins" @close="showPlugins = false" />
     </div>
 </template>
 <script setup>
@@ -171,6 +179,7 @@
     import DesktopSettings from "./components/DesktopSettings.vue";
     import AnswerHistory from "./components/AnswerHistory.vue";
     import AgentTrace from "./components/AgentTrace.vue";
+    import PluginsPanel from "./components/PluginsPanel.vue";
     import {
         createPlaceholderSession,
         deleteSession,
@@ -180,6 +189,7 @@
         getSessionOutput,
         getWorkspaces,
         getStorage,
+        loadProviders,
         runAgent as apiRunAgent,
         stopSession,
     } from "./services/agent-api.js";
@@ -193,6 +203,15 @@
     const eventSource = ref(null);
     const workspace = ref("");
     const provider = ref("chatgpt");
+    // provider 列表来自 /api/providers（含插件 provider）；接口异常时用内置表兜底，
+    // 因此新增 provider 不需要再改这个文件。
+    const FALLBACK_PROVIDER_OPTIONS = [
+        { id: "chatgpt", label: "ChatGPT" },
+        { id: "qwen", label: "Qwen" },
+        { id: "deepseek", label: "DeepSeek" },
+        { id: "glm", label: "GLM" },
+    ];
+    const providerOptions = ref(FALLBACK_PROVIDER_OPTIONS.slice());
     const task = ref("");
     // 用户随任务附带的图片：桌面端为本地绝对路径，Web 端为 workspace 下相对路径。
     const images = ref([]);
@@ -210,6 +229,7 @@
     const showSettings = ref(false);
     const showHistory = ref(false);
     const showTrace = ref(false);
+    const showPlugins = ref(false);
     const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
     const MIN_RATIO = 0.2;
     const MAX_RATIO = 0.85;
@@ -587,7 +607,7 @@
         conversationId.value = "";
         images.value = [];
         execScope.value = "workspace";
-        provider.value = "chatgpt";
+        provider.value = providerOptions.value.length ? providerOptions.value[0].id : "chatgpt";
     }
     function clearConsole() {
         output.value = [];
@@ -650,6 +670,20 @@
         loadRatio();
         loadWorkspaces();
         refreshStorage();
+        // provider 列表（含插件 provider）由后端提供，失败时保持内置兜底表
+        loadProviders().then((list) => {
+            if (!Array.isArray(list) || list.length === 0) {
+                return;
+            }
+            providerOptions.value = list.map((item) => ({
+                id: item.id,
+                label: item.label || item.id,
+            }));
+            const known = providerOptions.value.some((item) => item.id === provider.value);
+            if (!known) {
+                provider.value = providerOptions.value[0].id;
+            }
+        });
     });
     onUnmounted(closeEventSource);
     onBeforeUnmount(stopResize);

@@ -675,4 +675,13 @@ module.exports = {
     QwenProvider,
     balanceMarkdownFences,
     extractXmlFromCandidate,
+    // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
+    meta: {
+        id: "qwen",
+        label: "Qwen",
+        defaultTargetUrl: "https://chat.qwen.ai",
+        conversationIdPattern: QWEN_CONVERSATION_PATTERN,
+        supportsImages: true,
+        create: (options) => new QwenProvider(options),
+    },
 };

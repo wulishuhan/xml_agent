@@ -34,7 +34,7 @@ function main() {
         const defaults = settings.readSettings(app);
 
         assert.strictEqual(defaults.chromePath, "", "default chromePath should be empty");
-        assert.strictEqual(defaults.cdpUrl, "http://127.0.0.1:9222", "default cdpUrl");
+        assert.strictEqual(defaults.cdpUrl, "http://127.0.0.1:9223", "default cdpUrl (edge)");
         assert.strictEqual(defaults.autoStartChrome, true, "default autoStartChrome");
 
         const written = settings.writeSettings(app, {

@@ -79,18 +79,22 @@ async function run() {
         }
     }
     // 7. Runtime handler 存在 screenshot
+    //    注：screenshot 自 v1.1.0 起是内置插件，actionHandlers 会把插件动作一并包含进来。
     const { Runtime } = require("../runtime");
     const runtime = new Runtime(tmpWorkspace);
     const handlers = runtime.actionHandlers;
     assert(typeof handlers.screenshot === "function", "runtime should have screenshot handler");
-    // 8. runtime.screenshot 越界应报错
-    threw = false;
+    // 8. 越界路径必须被拒。
+    //    迁移到插件后，插件动作的执行由 registry 兜底，错误以结构化结果返回
+    //    （{ ok:false, error }，且保留 action 名），而不是抛栈；两者都算"被拒"。
+    let rejected = false;
     try {
-        await runtime.screenshot({ "@_source": "screen", "@_path": "../evil.png" });
+        const result = await runtime.screenshot({ "@_source": "screen", "@_path": "../evil.png" });
+        rejected = Boolean(result) && result.ok === false;
     } catch (e) {
-        threw = true;
+        rejected = true;
     }
-    assert(threw, "runtime.screenshot should reject escaping path");
+    assert(rejected, "runtime.screenshot should reject escaping path");
     console.log("ALL SCREENSHOT TESTS PASSED");
 }
 run().catch((error) => {

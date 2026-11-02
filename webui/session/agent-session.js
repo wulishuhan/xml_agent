@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { EventEmitter } = require("events");
 const { Agent } = require("../../agent-core");
+const { getRegistrySafe } = require("../../plugins/registry");
 class AgentSession extends EventEmitter {
     constructor({
         workspace,
@@ -28,6 +29,7 @@ class AgentSession extends EventEmitter {
         // exec 权限控制：workspace 限制在当前工作区，all 无限制
         this.execScope = execScope || "workspace";
         this.agent = null;
+        this.plugins = getRegistrySafe();
         this.output = [];
         this.status = "created";
         this.exitCode = null;
@@ -131,6 +133,46 @@ class AgentSession extends EventEmitter {
         this.emit("agent.event", event);
     }
     formatEvent(event) {
+        const builtin = this.formatBuiltinEvent(event);
+        if (builtin !== null && builtin !== undefined) {
+            return builtin;
+        }
+        // 插件注册的事件格式器（可选）
+        if (this.plugins && typeof this.plugins.formatEvent === "function") {
+            const custom = this.plugins.formatEvent(event.type, event);
+            if (custom) {
+                return custom;
+            }
+        }
+        // 兜底：未知事件也要有一条控制台记录，而不是静默消失。
+        return this.summarizeEvent(event);
+    }
+
+    /**
+    未知事件的通用渲染：类型 + 精简后的 JSON 摘要。
+    插件新增的任何事件都会走这里，因此前端/控制台不会再出现"这一步空白"。
+    */
+    summarizeEvent(event) {
+        const detail = {};
+        for (const key of Object.keys(event)) {
+            if (key === "type" || key === "timestamp") {
+                continue;
+            }
+            detail[key] = event[key];
+        }
+        let text = "";
+        try {
+            text = JSON.stringify(detail);
+        } catch (error) {
+            text = "";
+        }
+        if (text && text.length > 400) {
+            text = text.substring(0, 400) + "...(truncated)";
+        }
+        return event.type + (text && text !== "{}" ? " " + text : "");
+    }
+
+    formatBuiltinEvent(event) {
         switch (event.type) {
             case "agent.started":
                 return "🚀 Agent started";
@@ -271,6 +313,13 @@ class AgentSession extends EventEmitter {
             throw error;
         } finally {
             this.agent = null;
+            if (this.plugins && typeof this.plugins.emitHook === "function") {
+                try {
+                    this.plugins.emitHook("session.finished", this.getInfo());
+                } catch (error) {
+                    // 插件钩子不允许影响会话收尾
+                }
+            }
         }
     }
     async stop() {
