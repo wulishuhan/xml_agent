@@ -21,7 +21,8 @@
 - 失败/成功都带 plugin 与 durationMs，审计日志里能看出它是插件动作。
 */
 
-const { takeScreenshot } = require("../../../webui/screenshot-api");
+// 直接依赖内核能力层，不经 webui —— 插件不应反向依赖 UI 层。
+const { takeScreenshot } = require("../../../capture/take-screenshot");
 const { normalizeScreenshotTargets } = require("../../../parse/xml-parse");
 const { CHAR_LT, CHAR_GT, CHAR_SLASH } = require("../../../parse/xml-chars");
 

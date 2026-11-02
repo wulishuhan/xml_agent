@@ -30,3 +30,4 @@ editor
 *.njsproj
 *.sln
 *.sw?
+.workbuddy
