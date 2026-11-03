@@ -30,3 +30,5 @@ editor
 *.sln
 *.sw?
 .workbuddy
+# 打包输出目录（XML_AGENT_RELEASE_DIR 可覆盖默认的 release）
+release-build*/

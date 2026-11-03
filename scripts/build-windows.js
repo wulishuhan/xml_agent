@@ -162,6 +162,10 @@ function main() {
         // 关键：先结束残留进程，避免 EBUSY
         killRunningAppProcesses();
 
+        // 输出目录可用 XML_AGENT_RELEASE_DIR 覆盖（默认 release）。
+        // 旧的 win-unpacked 被进程占用、无法清理时，换一个输出目录即可重新构建。
+        const releaseDir = process.env.XML_AGENT_RELEASE_DIR || "release";
+
         const hasWinCodeSign = fs.existsSync(path.join(userWinCodeSignDir, "rcedit-x64.exe"));
         const hasNsis = fs.existsSync(path.join(userNsisDir, "makensis.exe"));
 
@@ -186,7 +190,10 @@ function main() {
         // 使用 electron-builder 默认缓存，不覆盖 ELECTRON_BUILDER_CACHE。
         const env = process.env;
 
-        const baseArgs = ["--config.electronDist=" + ELECTRON_DIST_REL];
+        const baseArgs = [
+            "--config.electronDist=" + ELECTRON_DIST_REL,
+            "--config.directories.output=" + releaseDir,
+        ];
 
         // 没有本地 winCodeSign 时跳过 rcedit，避免联网下载
         if (!hasWinCodeSign) {
@@ -211,7 +218,8 @@ function main() {
         if (!installerOk) {
             console.warn(
                 "[build-windows] some targets failed. " +
-                    "Portable build is available at release/win-unpacked/XMLAgent.exe"
+                    "Portable build is available at " +
+                    path.join(releaseDir, "win-unpacked", "XMLAgent.exe")
             );
         }
     } catch (error) {
