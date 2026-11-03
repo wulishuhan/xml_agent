@@ -7,12 +7,12 @@
 
 ### 能力
 
-| 类型       | 贡献                                             | 本版状态                                   |
-| ---------- | ------------------------------------------------ | ------------------------------------------ |
-| `action`   | 新的 XML 动作 + 模型文档 + Trace 摘要 + 权限声明 | ✅ 可用                                    |
-| `hook`     | 只观察不干预：审计日志、通知、指标               | ✅ 可用                                    |
-| `provider` | 新的模型后端                                     | ⏳ 已预留注册位，尚未接入 `createProvider` |
-| `ui`       | 声明式面板 / 设置项 / 按钮                       | ⏳ 已预留 API，前端面板待实现              |
+| 类型       | 贡献                                             | 本版状态                                 |
+| ---------- | ------------------------------------------------ | ---------------------------------------- |
+| `action`   | 新的 XML 动作 + 模型文档 + Trace 摘要 + 权限声明 | ✅ 可用                                  |
+| `hook`     | 只观察不干预：审计日志、通知、指标               | ✅ 可用                                  |
+| `provider` | 新的模型后端（`ctx.providers.register`）         | ✅ 可用（契约校验 + 前端下拉自动出现）   |
+| `ui`       | 声明式面板 / 设置项 / 按钮                       | ✅ 可用（note/status/table/action 面板） |
 
 ### 目录
 
@@ -21,8 +21,9 @@ plugins/
     sdk.js              契约层：清单校验、动作定义、属性 schema、版本区间、契约自检
     registry.js         发现 / 加载隔离 / 权限 / 执行 / 钩子 / 状态持久化
     capabilities.js     作用域门面：workspace fs、受控 http、storage、secrets
-    builtin/fetch/      示例 action 插件（HTTP 请求，域名白名单）
-    builtin/audit-log/  示例 hook 插件（JSONL 审计日志）
+    builtin/fetch/      action 插件（HTTP 请求，域名白名单）
+    builtin/audit-log/  hook 插件（JSONL 审计日志，按 keepDays 自动清理）
+    builtin/screenshot/ action 插件（截屏，平台引擎随插件自带）
 
 ~/.xml-agent/plugins/<name>/plugin.json + index.js     用户插件
 ~/.xml-agent/plugins-state.json                        启停状态
@@ -352,3 +353,45 @@ npm run webui:build      # 前端产物
 - 不需要插件时无需任何操作：没有任何启用的插件动作时，行为与 1.0.7 完全一致。
 - 内置 `fetch` 动作默认只允许访问本机（`127.0.0.1` / `localhost`）；要访问其它域名请修改
   `fetch` 插件配置的 `allowHosts`。
+
+## 十三、发布前加固（tag 前完成）
+
+以下修复在 1.1.0 打 tag 前完成，随本版一起发布。
+
+### 停止会话真的能停下命令（行为修复）
+
+1.0.x 起 `exec --background` 用 `detached + unref` 启动进程且不登记句柄，
+前台命令也不登记，导致"点停止"之后命令仍在系统里跑（后台进程成为孤儿占着端口，
+前台长命令要等满 5 分钟超时）。1.1.0 修复：
+
+- 新增 `processes/registry.js`：登记会话启动的所有子进程（前台 + 后台），
+  停止时按**进程树**结束（Windows `taskkill /T /F`，POSIX 进程组 `SIGTERM` → `SIGKILL`）；
+- `Agent.stop()` 先结束子进程再关浏览器；会话异常结束时同样收摊；
+- 被停止的命令返回 `stopped: true`，不再伪装成"命令执行失败"让模型重试。
+
+**行为变化**：`--background` 启动的进程现在会随会话停止一起结束；如需长期驻留的服务，
+请在 Agent 外自行启动。
+
+### 审计日志保留策略真正生效
+
+`audit-log` 插件的 `keepDays`（默认 14）此前只打印不删除。现在启动与跨天时
+会删除超出保留期的整日日志文件（窗口含今天），`keepDays=0` 表示不清理。
+为此插件 storage 门面新增 `list()` / `remove(name)`（详见 `docs/PLUGIN_API.md`）。
+
+### Provider 层不再静默吞错
+
+补齐了约 10 处会掩盖真实故障的空 catch：输入框诊断逐项收集错误、
+`waitForInput` 超时带上最后一次错误、GLM/DeepSeek 回复定位失败与
+Qwen 合并缺段（可能导致 XML 闭合标签丢失）均留痕。空回复排查不再两眼一抹黑。
+
+### 大模块拆分与能力下沉
+
+- `plugins/registry.js`（1311 行）拆为门面 + `registry/` 下 8 个职责模块；
+- 截图引擎从核心 `capture/` 下沉到 `plugins/builtin/screenshot/engine/`，
+  核心不再持有截图实现，删除插件目录即彻底移除该能力；
+- `agent-core.js` 拆出 `agent/step.js`（单步闭环）与 `agent/inputs.js`。
+
+### 新增回归测试
+
+`test/unit/test-process-registry.js`（12 项）、`test-exec-stop.js`（17 项）、
+`test-audit-retention.js`（11 项）；`test:offline` 全绿。
