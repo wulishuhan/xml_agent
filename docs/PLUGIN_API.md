@@ -278,6 +278,14 @@ const response = await ctx.http.request({
 
 `readJson(name, fallback)` `writeJson(name, value)`（原子写）`appendLine(name, text)` `readText(name)`
 
+清理/枚举用 `list()` `remove(name)`：
+
+- `list()` 返回私有目录里的文件名数组（已排序，不含子目录与隐藏文件）；
+- `remove(name)` 删除一个文件，删掉返回 `true`，本来就不在返回 `false`；
+  其他失败（占用、权限）会抛错——**清理逻辑请显式处理**，不要吞掉，
+  否则"自动清理"会变成一句空话（`audit-log` 的 `keepDays` 曾经就是这样）；
+- `list()` + `remove()` 只在私有目录内生效，插件仍然拿不到宿主的绝对路径。
+
 ### ctx.secrets
 
 从 `~/.xml-agent/secrets.json` 读取，日志与 Trace 中请用 `ctx.redact(text)` 脱敏。

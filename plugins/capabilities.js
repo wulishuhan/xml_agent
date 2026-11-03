@@ -409,6 +409,50 @@ function createStorage(options = {}) {
             }
             return fs.readFileSync(filePath, "utf8");
         },
+        /**
+         * 列出插件私有目录里的文件名（按名称排序）。
+         * 只给文件名，不给路径：插件不该知道也不该拼宿主的目录结构。
+         * 用于"按保留策略清理旧文件"这类需要枚举的场景。
+         */
+        list() {
+            try {
+                return fs
+                    .readdirSync(dir)
+                    .filter((name) => name.indexOf(".") !== 0)
+                    .filter((name) => {
+                        try {
+                            return fs.statSync(path.join(dir, name)).isFile();
+                        } catch (error) {
+                            return false;
+                        }
+                    })
+                    .sort();
+            } catch (error) {
+                // 目录还不存在等同于"没有文件"
+                if (error && error.code === "ENOENT") {
+                    return [];
+                }
+                throw error;
+            }
+        },
+        /**
+         * 删除插件私有目录里的一个文件。存在并删除成功返回 true，
+         * 文件本来就不在返回 false（清理旧文件时这属于正常情况）。
+         * 其他错误照常抛出：删不掉（权限/占用）必须让调用方知道，
+         * 静默失败会让"自动清理"变成一句空话。
+         */
+        remove(name) {
+            const filePath = resolve(name);
+            try {
+                fs.unlinkSync(filePath);
+                return true;
+            } catch (error) {
+                if (error && error.code === "ENOENT") {
+                    return false;
+                }
+                throw error;
+            }
+        },
     };
 }
 

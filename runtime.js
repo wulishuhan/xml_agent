@@ -2,10 +2,11 @@
 Runtime —— 系统的执行核心与安全边界。
 
 LLM 不直接操作电脑：所有操作都必须经过 XML Action，由本模块按动作表执行。
-本模块现在只负责三件事：
+本模块现在只负责四件事：
 1. Workspace 与路径沙箱（resolvePath）；
 2. 查表执行内置动作（actions/ 里的定义对象）与插件动作（plugins/registry）；
-3. 对外保持既有调用面（run / actionHandlers / 各动作同名方法）。
+3. 登记并结束本会话启动的子进程（processes/registry），让"停止"真的能停下命令；
+4. 对外保持既有调用面（run / actionHandlers / 各动作同名方法）。
 
 动作的具体实现（含错误文案）都在 actions/*.js 里，见 actions/index.js 的动作表。
 */
@@ -14,15 +15,44 @@ const fs = require("fs");
 const path = require("path");
 const { getBuiltinAction, getBuiltinActions } = require("./actions");
 const { getRegistrySafe } = require("./plugins/registry");
+const { createProcessRegistry } = require("./processes/registry");
 const logger = require("./logger");
 
 class Runtime {
     constructor(workspace = null, execScope = "workspace") {
         this.workspace = null;
         this.execScope = execScope || "workspace";
+        // 本会话启动的子进程登记表。Agent.stop() 通过 killAllProcesses()
+        // 结束这里登记的所有进程（前台命令 + --background 后台进程）。
+        this.processes = createProcessRegistry();
         if (workspace) {
             this.setWorkspace(workspace);
         }
+    }
+
+    /**
+     * 登记一个由动作启动的子进程。动作把自己的 child 交给这里，
+     * 停止会话时才能按进程树结束它，而不是留下孤儿进程。
+     */
+    trackProcess(child, meta) {
+        return this.processes.track(child, meta);
+    }
+
+    /**
+     * 结束本会话启动的所有子进程。返回结束的数量。
+     * Agent.stop() 会先调它，再关 provider —— 命令不结束，主循环就退不出来。
+     */
+    killAllProcesses(reason) {
+        return this.processes.killAll(reason === undefined ? "stopped" : reason);
+    }
+
+    /** 当前仍存活的子进程快照（供状态展示与排查）。 */
+    listProcesses() {
+        return this.processes.list();
+    }
+
+    get runningProcessCount() {
+        return this.processes.activeCount;
     }
 
     setWorkspace(workspace) {
@@ -211,10 +241,20 @@ function run(action) {
     return legacyRuntime.run(action);
 }
 
+function killAllProcesses(reason) {
+    return legacyRuntime.killAllProcesses(reason);
+}
+
+function listProcesses() {
+    return legacyRuntime.listProcesses();
+}
+
 module.exports = {
     Runtime,
     createRuntime,
     run,
     setWorkspace,
     getWorkspace,
+    killAllProcesses,
+    listProcesses,
 };

@@ -103,7 +103,7 @@ graph TB
 | :--- | :--- | :--- |
 | **Agent Core** | 任务编排、Prompt 构建、循环控制 | `agent-core.js` |
 | **Agent Step** | 单轮闭环：发送 → 解析 → 执行 → 决定下一步 | `agent/step.js`, `agent/artifacts.js` |
-| **Runtime** | 安全沙箱、动作分发、路径校验 | `runtime.js`, `actions/` |
+| **Runtime** | 安全沙箱、动作分发、路径校验、子进程登记与结束 | `runtime.js`, `actions/`, `processes/registry.js` |
 | **Plugins** | 能力扩展、权限管理、审计日志 | `plugins/registry.js`（门面）, `plugins/registry/*.js`（加载/存储/执行/配置）, `plugins/sdk.js` |
 | **Provider** | 模型适配、CDP 连接、会话管理 | `providers/registry.js`, `providers/browser-chat.js`, `providers/browser-agent.js` |
 | **Parser** | XML 语法解析、动作校验 | `parse/xml-parse.js` |
@@ -113,6 +113,14 @@ graph TB
 > 引擎（平台分派 / 窗口枚举 / 子进程）随插件放在 `plugins/builtin/screenshot/engine/`。
 > 核心目录不包含任何截图实现，也没有截图 HTTP 接口——删除整个插件目录即可彻底移除该能力，
 > 此时 `<screenshot>` 会被解析层报为 `Unknown XML Action`。
+
+> **子进程归 Runtime 管**。`exec`（含 `--background`）启动的子进程统一登记到
+> `processes/registry.js`，用户点「停止」时 `Agent.stop()` 先调
+> `runtime.killAllProcesses()` 把整棵进程树结束（Windows `taskkill /T /F`，
+> POSIX 进程组 `SIGTERM` → 2s 后 `SIGKILL`），再关浏览器。
+> 这一步不能省：不登记句柄的话，`--background` 的 detached 进程会脱离父进程成为孤儿，
+> 一直占着端口，下次启动就报 `EADDRINUSE`；而前台长命令会拖到
+> `maxExecTimeout`（默认 5 分钟）才返回，停止按钮看起来完全没反应。
 
 ## 6. 大模块的拆分现状
 

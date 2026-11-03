@@ -110,7 +110,11 @@ class DeepSeekProvider extends BrowserChatProvider {
                     return index;
                 }
             }
-        } catch (error) {}
+        } catch (error) {
+            // -1 会让上层退化成"读最后一条回复"；若因为选择器失效，
+            // 退化的结果可能是另一条消息，因此这里不能静默。
+            console.warn("[DeepSeek] failed to locate assistant message by key: " + error.message);
+        }
         return -1;
     }
 

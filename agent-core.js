@@ -261,11 +261,15 @@ class Agent extends EventEmitter {
             this.error = error;
             if (this.status !== "stopped" && !this.stopRequested) {
                 this.status = "error";
+                // 会话异常结束时同样收摊：后台进程不会因为 Agent 报错就自己退出，
+                // 留下来就是占端口的孤儿进程。
+                await this.killChildProcesses("error");
                 await this.closeProvider();
                 this.emitEvent("agent.error", {
                     error: error.message,
                 });
             } else {
+                await this.killChildProcesses("stopped");
                 await this.closeProvider();
             }
             throw error;
@@ -281,8 +285,34 @@ class Agent extends EventEmitter {
         this.emitEvent("agent.stopped", {
             step: this.step,
         });
+        // 先结束子进程，再关浏览器：命令不结束的话，run() 会一直挂在
+        // await runtime.run(action) 上，前台长命令甚至要等到 maxExecTimeout。
+        // 这一步是"停止真的能停下"的关键，顺序不能反。
+        await this.killChildProcesses("stopped");
         await this.closeProvider();
         return true;
+    }
+
+    /**
+     * 结束本会话启动的所有子进程（前台命令 + --background 后台进程）。
+     * 失败不影响停止流程本身。
+     */
+    async killChildProcesses(reason) {
+        try {
+            const count = await this.runtime.killAllProcesses(reason);
+            if (count) {
+                this.emitEvent("agent.processes_killed", {
+                    count,
+                    reason: reason || "stopped",
+                });
+            }
+            return count;
+        } catch (error) {
+            this.emitEvent("agent.processes_kill_error", {
+                error: error.message,
+            });
+            return 0;
+        }
     }
     async closeProvider() {
         if (!this.provider) {

@@ -134,6 +134,15 @@ async function runStep(agent, { prompt, providerErrorState }) {
         result,
     });
 
+    // 停止请求可能落在动作执行中途（长命令被 killAllProcesses 结束）。
+    // 这时不要再为主循环准备下一轮提示词，直接收敛。
+    if (agent.stopRequested || agent.status !== "running") {
+        return {
+            stop: true,
+            prompt: null,
+        };
+    }
+
     const definition = agent.resolveActionDefinition(result.action);
     // 终止语义由动作定义的 meta.terminal 决定，编排器不再认识具体动作名。
     const terminal = definition ? definition.meta.terminal : null;

@@ -110,6 +110,7 @@ class QwenProvider extends BrowserChatProvider {
 
         const start = Date.now();
         let started = false;
+        let lastPollError = null;
 
         while (Date.now() - start < startTimeout) {
             if (!this.isPageAlive()) {
@@ -129,12 +130,21 @@ class QwenProvider extends BrowserChatProvider {
                     started = true;
                     break;
                 }
-            } catch (error) {}
+            } catch (error) {
+                // 轮询期间读不到是常态（页面还没挂出回复气泡）；
+                // 记下来，超时走兜底时至少能说明"是一直报错还是一直为空"。
+                lastPollError = error;
+            }
 
             await this.sleep(pollInterval);
         }
 
         if (!started) {
+            if (lastPollError) {
+                console.warn(
+                    "[Qwen] no generation start signal, polling errors: " + lastPollError.message
+                );
+            }
             return await stableFallback();
         }
 
@@ -312,6 +322,9 @@ class QwenProvider extends BrowserChatProvider {
 
             const backLimit = Math.min(count, 4);
             const parts = [];
+            // 合并相邻消息是为了拼回被切碎的代码块；某一段读失败会直接
+            // 让合并结果缺一块（XML 闭合标签可能正好缺在那里），必须留痕。
+            const failed = [];
 
             for (let i = count - backLimit; i < count; i++) {
                 if (i === lastIndex) {
@@ -322,7 +335,15 @@ class QwenProvider extends BrowserChatProvider {
                 try {
                     const item = await this.extractOne(i, count);
                     if (item.text) parts.push(item.text);
-                } catch (error) {}
+                } catch (error) {
+                    failed.push(i + ": " + error.message);
+                }
+            }
+
+            if (failed.length) {
+                console.warn(
+                    "[Qwen] merged response is incomplete, failed segments: " + failed.join("; ")
+                );
             }
 
             const merged = parts.join("\n").trim();

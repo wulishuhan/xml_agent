@@ -107,7 +107,11 @@ class GlmProvider extends BrowserChatProvider {
             }
 
             return index;
-        } catch (error) {}
+        } catch (error) {
+            // -1 的语义是"定位不到这条回复"，上层会退化成读最后一条。
+            // 但如果是选择器/页面本身出错，退化会读到别人的回复，所以必须留痕。
+            console.warn("[GLM] failed to locate assistant message by key: " + error.message);
+        }
 
         return -1;
     }

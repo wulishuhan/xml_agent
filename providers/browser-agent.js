@@ -595,6 +595,12 @@ class BrowserAgent {
         }
         return null;
     }
+    /**
+     * 输入框找不到时用的现场快照。
+     * 这里每个字段都单独 try：页面在半切换状态时，一部分 API 会抛而另一部分还能用，
+     * 整段包一个 try 会让"到底哪一项查不到"完全看不出来。
+     * 抛错统一收进 errors，打印时一并输出——诊断信息本身不该再静默失败。
+     */
     async collectDiagnostics() {
         const info = {
             url: "(unknown)",
@@ -603,34 +609,43 @@ class BrowserAgent {
             textareas: 0,
             roleTextboxes: 0,
             buttons: 0,
+            errors: [],
         };
         if (!this.isPageAlive()) {
             return info;
         }
-        try {
-            info.url = this.page.url();
-        } catch (error) {}
-        try {
-            info.title = await this.page.title();
-        } catch (error) {}
-        try {
-            info.contentEditables = await this.page.locator('[contenteditable="true"]').count();
-        } catch (error) {}
-        try {
-            info.textareas = await this.page.locator("textarea").count();
-        } catch (error) {}
-        try {
-            info.roleTextboxes = await this.page.locator("[role='textbox']").count();
-        } catch (error) {}
-        try {
-            info.buttons = await this.page.locator("button").count();
-        } catch (error) {}
+        const probe = async (label, read) => {
+            try {
+                return await read();
+            } catch (error) {
+                info.errors.push(label + ": " + error.message);
+                return undefined;
+            }
+        };
+        const url = await probe("url", () => this.page.url());
+        if (url !== undefined) info.url = url;
+        const title = await probe("title", () => this.page.title());
+        if (title !== undefined) info.title = title;
+        const contentEditables = await probe("contenteditable", () =>
+            this.page.locator('[contenteditable="true"]').count()
+        );
+        if (contentEditables !== undefined) info.contentEditables = contentEditables;
+        const textareas = await probe("textarea", () => this.page.locator("textarea").count());
+        if (textareas !== undefined) info.textareas = textareas;
+        const roleTextboxes = await probe("role=textbox", () =>
+            this.page.locator("[role='textbox']").count()
+        );
+        if (roleTextboxes !== undefined) info.roleTextboxes = roleTextboxes;
+        const buttons = await probe("button", () => this.page.locator("button").count());
+        if (buttons !== undefined) info.buttons = buttons;
         return info;
     }
     async waitForInput(timeout) {
         const effectiveTimeout = timeout || this.inputTimeout;
         const start = Date.now();
         let lastDiagnosticsAt = 0;
+        // 轮询期间抛错是正常的（页面正在切换），但一直找不到时必须能说清最后一次是什么错
+        let lastError = null;
         while (Date.now() - start < effectiveTimeout) {
             if (!this.isPageAlive()) {
                 throw new Error("[" + this.name + "] page was closed while waiting for input");
@@ -640,7 +655,9 @@ class BrowserAgent {
                 if (input) {
                     return input;
                 }
-            } catch (error) {}
+            } catch (error) {
+                lastError = error;
+            }
             const now = Date.now();
             if (this.diagnosticsEnabled && now - lastDiagnosticsAt >= this.diagnosticsIntervalMs) {
                 lastDiagnosticsAt = now;
@@ -663,13 +680,24 @@ class BrowserAgent {
                             " | role=textbox=" +
                             diag.roleTextboxes +
                             " | buttons=" +
-                            diag.buttons
+                            diag.buttons +
+                            (diag.errors.length ? " | probe errors=" + diag.errors.join("; ") : "")
                     );
-                } catch (error) {}
+                } catch (error) {
+                    // 连诊断都跑不动时只提示一次，不做重试——诊断失败不该掩盖主流程的错误
+                    console.warn("[" + this.name + "] diagnostics failed: " + error.message);
+                }
             }
             await this.sleep(500);
         }
-        throw new Error("[" + this.name + "] input not found within " + effectiveTimeout + "ms");
+        throw new Error(
+            "[" +
+                this.name +
+                "] input not found within " +
+                effectiveTimeout +
+                "ms" +
+                (lastError ? " (last error: " + lastError.message + ")" : "")
+        );
     }
     async getInputValue(input) {
         if (!input) return "";
@@ -736,6 +764,10 @@ class BrowserAgent {
             await this.sleep(800);
             return { ok: true, count: paths.length };
         } catch (error) {
+            // 主路径（filechooser）失败后尝试隐藏的 input[type=file]；
+            // 兜底也失败时要把两边的原因都带出去，否则只剩主路径的错误，
+            // 排查时看不出兜底到底试过没有。
+            let fallbackError = null;
             try {
                 const input = this.page.locator('input[type="file"]').last();
                 if ((await input.count()) > 0) {
@@ -744,9 +776,17 @@ class BrowserAgent {
                     return { ok: true, count: paths.length };
                 }
             } catch (innerError) {
-                // ignore
+                fallbackError = innerError;
             }
-            return { ok: false, count: 0, reason: error.message };
+            return {
+                ok: false,
+                count: 0,
+                reason:
+                    error.message +
+                    (fallbackError
+                        ? " (file input fallback failed: " + fallbackError.message + ")"
+                        : ""),
+            };
         }
     }
 
@@ -834,6 +874,8 @@ class BrowserAgent {
     async waitForInputClear(timeout) {
         timeout = timeout || 10 * 1000;
         const start = Date.now();
+        // 返回 false 时调用方只会得到"没清空"这个结论，最后一次错误必须留下痕迹
+        let lastError = null;
         while (Date.now() - start < timeout) {
             if (!this.isPageAlive()) {
                 throw new Error(
@@ -851,8 +893,20 @@ class BrowserAgent {
                     this._cachedInput = null;
                     return true;
                 }
-            } catch (error) {}
+            } catch (error) {
+                lastError = error;
+            }
             await this.sleep(300);
+        }
+        if (lastError) {
+            console.warn(
+                "[" +
+                    this.name +
+                    "] input not cleared within " +
+                    timeout +
+                    "ms: " +
+                    lastError.message
+            );
         }
         return false;
     }
