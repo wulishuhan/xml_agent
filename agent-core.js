@@ -1,50 +1,19 @@
 const path = require("path");
-const fs = require("fs");
-const { createProvider, getProviderMeta, resolveTargetUrl } = require("./providers");
-const {
-    getFirstPrompt,
-    getXmlErrorPrompt,
-    getDonePrompt,
-    getRuntimeErrorPrompt,
-    getRuntimeOkPrompt,
-    getSendErrorPrompt,
-} = require("./prompts/index");
+const { createProvider } = require("./providers");
+// 用命名空间引用，避免 resolveBrowserPath() 这类同名方法在阅读时被误认为递归。
+const providerOptions = require("./providers/options");
+const { getFirstPrompt } = require("./prompts/index");
 const { createRuntime } = require("./runtime");
+const { createArtifactsChannel } = require("./agent/artifacts");
+const { normalizePresetImages } = require("./agent/inputs");
+const { runStep } = require("./agent/step");
 const { getBuiltinAction } = require("./actions");
 const { getRegistrySafe } = require("./plugins/registry");
 const { buildWorkspaceManifest } = require("./workspace/manifest");
-const { createHistory, createHistoryRecord } = require("./workspace/history");
-const { extractXML } = require("./parse/xml-parse");
+const { createHistory } = require("./workspace/history");
 const { EventEmitter } = require("events");
 const agentConfig = require("./config/agent-config");
-const MAX_PRESET_IMAGES = 8;
-// 辅助：延迟函数
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-}
-// 归一化用户预置图片：去重、去空、限制数量，保持顺序。
-function normalizePresetImages(raw) {
-    if (!Array.isArray(raw)) {
-        return [];
-    }
-    const images = [];
-    for (const item of raw) {
-        if (typeof item !== "string") {
-            continue;
-        }
-        const trimmed = item.trim();
-        if (!trimmed) {
-            continue;
-        }
-        if (images.indexOf(trimmed) === -1) {
-            images.push(trimmed);
-        }
-        if (images.length >= MAX_PRESET_IMAGES) {
-            break;
-        }
-    }
-    return images;
-}
+
 class Agent extends EventEmitter {
     constructor(options = {}) {
         super();
@@ -72,7 +41,7 @@ class Agent extends EventEmitter {
                 ? options.focusCdpPage
                 : agentConfig.browser.focusCdpPage;
         // 浏览器类型（chrome/edge），未显式传入时使用配置。
-        this.browserType = normalizeBrowserType(
+        this.browserType = providerOptions.normalizeBrowserType(
             options.browserType !== undefined
                 ? options.browserType
                 : agentConfig.browser.browserType
@@ -80,6 +49,15 @@ class Agent extends EventEmitter {
         this.history = createHistory();
         // 传递 execScope 给 Runtime
         this.runtime = createRuntime(this.workspace, this.execScope);
+        // 产物回传通道：收集动作产物并上传给模型。
+        // 依赖以回调形式注入，避免 artifacts 反向依赖 Agent 本体。
+        this.artifacts = createArtifactsChannel({
+            resolveActionDefinition: (name) => this.resolveActionDefinition(name),
+            getProvider: () => this.provider,
+            toAbsolutePath: (target) => this.toAbsolutePath(target),
+            emit: (type, data) => this.emitEvent(type, data),
+            getStep: () => this.step,
+        });
         // 插件注册表：所有 Agent 事件都会转发给插件钩子（只观察，不影响主流程）。
         this.plugins = getRegistrySafe();
         this.provider = null;
@@ -126,62 +104,33 @@ class Agent extends EventEmitter {
         return cid;
     }
     /**
-解析当前浏览器应使用的可执行文件路径。
-优先使用环境变量中由主进程按当前 browserType 写入的路径，
-其次回退到 agentConfig。
-*/
+     * 当前浏览器应使用的可执行文件路径。
+     * 解析规则（环境变量 > 配置 > 兜底）见 providers/options.js。
+     */
     resolveBrowserPath() {
-        if (this.browserType === "edge") {
-            const envEdge =
-                process.env.BROWSER_EDGE_PATH ||
-                process.env.EDGE_PATH ||
-                process.env.XML_AGENT_EDGE_PATH;
-            if (envEdge) {
-                return envEdge;
-            }
-            return agentConfig.browser.edgePath || agentConfig.browser.chromePath || "";
-        }
-        const envChrome = process.env.BROWSER_CHROME_PATH || process.env.CHROME_PATH;
-        if (envChrome) {
-            return envChrome;
-        }
-        return agentConfig.browser.chromePath || "";
-    }
-    /**
-解析 CDP URL。
-优先使用主进程按 browserType 解析后写入环境变量的端口
-（Chrome 默认 9222，Edge 默认 9223），避免两者共用同一端口。
-*/
-    resolveCdpUrl() {
-        const envCdp = process.env.BROWSER_CDP_URL || process.env.XML_AGENT_CDP_URL;
-        if (envCdp && String(envCdp).trim()) {
-            return String(envCdp).trim();
-        }
-        return agentConfig.browser.cdpUrl;
-    }
-    /**
-- 收集动作产出的、需要上传给模型看的图片路径（相对 workspace）。
-- 由动作定义上的 meta.collectImages 决定，编排器不再按 action 名特判：
-- 内置 screenshot 与（将来的）插件动作走的是同一条通道。
-*/
-    collectArtifactPaths(result) {
-        const definition = this.resolveActionDefinition(result.action);
-        const collect = definition && definition.meta ? definition.meta.collectImages : null;
-        if (typeof collect !== "function") {
-            return [];
-        }
-        try {
-            const paths = collect(result);
-            return Array.isArray(paths) ? paths : [];
-        } catch (error) {
-            return [];
-        }
+        return providerOptions.resolveBrowserPath(this.browserType);
     }
 
     /**
-- 动作定义解析：内置动作表优先，其次是插件注册表。
-- 用于读取终止语义（meta.terminal）与产物声明（meta.collectImages）。
-*/
+     * CDP 调试地址。主进程按 browserType 写入对应端口
+     * （Chrome 默认 9222，Edge 默认 9223），避免两者共用同一端口。
+     */
+    resolveCdpUrl() {
+        return providerOptions.resolveCdpUrl();
+    }
+    /**
+     * 动作产出的、需要上传给模型看的图片路径（相对 workspace）。
+     * 实现见 agent/artifacts.js：由动作定义的 meta.collectImages 决定，
+     * 编排器不再按 action 名特判。
+     */
+    collectArtifactPaths(result) {
+        return this.artifacts.collect(result);
+    }
+
+    /**
+     * 动作定义解析：内置动作表优先，其次是插件注册表。
+     * 用于读取终止语义（meta.terminal）与产物声明（meta.collectImages）。
+     */
     resolveActionDefinition(actionName) {
         if (!actionName) {
             return null;
@@ -203,103 +152,28 @@ class Agent extends EventEmitter {
         return path.resolve(this.workspace, relativeOrAbsolute);
     }
     /**
-- 动作成功后，把它产出的图片上传到当前对话，让大模型能在下一轮"看到"内容。
-- 是否上传由动作声明的 meta.collectImages 决定（当前是 screenshot）。
-- 支持一次上传多张；只对支持 uploadImages 的 provider 生效，
-- 失败不影响主流程，仅记录在结果里。
-- 方法名保留 attachScreenshotToProvider 以兼容既有调用方与测试。
-*/
-    async attachScreenshotToProvider(result) {
-        if (!result || !result.ok) {
-            return result;
-        }
-        const relativePaths = this.collectArtifactPaths(result);
-        if (relativePaths.length === 0) {
-            result.uploaded = false;
-            return result;
-        }
-        if (!this.provider || typeof this.provider.uploadImages !== "function") {
-            result.uploaded = false;
-            return result;
-        }
-        const absolutePaths = relativePaths.map((relativePath) =>
-            this.toAbsolutePath(relativePath)
-        );
-        try {
-            const upload = await this.provider.uploadImages(absolutePaths);
-            result.uploaded = upload && upload.ok !== false;
-            result.uploadCount = upload && upload.count ? upload.count : 0;
-            result.uploadedPaths = relativePaths;
-            this.emitEvent("screenshot.uploaded", {
-                step: this.step,
-                action: result.action,
-                path: relativePaths[0],
-                paths: relativePaths,
-                uploaded: result.uploaded,
-                uploadCount: result.uploadCount,
-            });
-        } catch (error) {
-            result.uploaded = false;
-            result.uploadError = error.message;
-            this.emitEvent("screenshot.upload_error", {
-                step: this.step,
-                action: result.action,
-                path: relativePaths[0],
-                paths: relativePaths,
-                error: error.message,
-            });
-        }
-        return result;
+     * 动作成功后，把它产出的产物上传到当前对话，让模型下一轮"看到"内容。
+     * 通道实现在 agent/artifacts.js：由 meta.collectImages 决定传什么，
+     * 只对支持 uploadImages 的 provider 生效，失败不影响主流程。
+     */
+    async uploadArtifacts(result) {
+        return this.artifacts.upload(result);
     }
 
     /**
-- 把用户随任务附带的图片上传给模型（第一条 prompt 之前执行）。
-- 失败只记录事件，不阻断任务——模型仍可继续处理文本任务。
-*/
+     * 历史方法名（原语义只有截图需要回传，如今通道已泛化）。
+     * 保留仅因为有既有调用方与测试按此名调用，新代码请用 uploadArtifacts。
+     */
+    async attachScreenshotToProvider(result) {
+        return this.uploadArtifacts(result);
+    }
+
+    /**
+     * 把用户随任务附带的图片上传给模型（第一条 prompt 之前执行）。
+     * 实现见 agent/artifacts.js 的 uploadPreset。
+     */
     async uploadPresetImages() {
-        if (!this.images.length) {
-            return;
-        }
-        if (!this.provider || typeof this.provider.uploadImages !== "function") {
-            this.emitEvent("images.upload_skipped", {
-                reason: "provider does not support image upload",
-                count: this.images.length,
-            });
-            return;
-        }
-        const existing = [];
-        const missing = [];
-        for (const item of this.images) {
-            const absolute = this.toAbsolutePath(item);
-            if (fs.existsSync(absolute)) {
-                existing.push(absolute);
-            } else {
-                missing.push(item);
-            }
-        }
-        if (missing.length) {
-            this.emitEvent("images.missing", {
-                count: missing.length,
-                paths: missing,
-            });
-        }
-        if (!existing.length) {
-            return;
-        }
-        try {
-            const upload = await this.provider.uploadImages(existing);
-            this.emitEvent("images.uploaded", {
-                count: existing.length,
-                uploaded: upload && upload.ok !== false,
-                uploadCount: upload && upload.count ? upload.count : 0,
-                paths: this.images,
-            });
-        } catch (error) {
-            this.emitEvent("images.upload_error", {
-                count: existing.length,
-                error: error.message,
-            });
-        }
+        return this.artifacts.uploadPreset(this.images);
     }
 
     async run() {
@@ -322,24 +196,17 @@ class Agent extends EventEmitter {
                 images: this.images,
                 execScope: this.execScope,
             });
-            const cdpUrl = this.resolveCdpUrl();
-            // 访问地址：用户配置（browser.targetUrls）覆盖 > provider 自己声明的默认地址。
-            // 新增 provider（含插件 provider）因此不需要改配置或前端。
-            const providerMeta = getProviderMeta(this.providerName);
-            this.provider = createProvider(this.providerName, {
-                autoStart: agentConfig.browser.autoStart,
-                startTimeout: agentConfig.browser.startTimeout,
-                retryInterval: agentConfig.browser.retryInterval,
-                cdpUrl,
-                // 保持旧字段 chromePath 兼容，同时显式传入 browserType。
-                chromePath: this.resolveBrowserPath(),
-                browserType: this.browserType,
-                targetUrl: resolveTargetUrl(this.providerName, agentConfig.browser.targetUrls),
-                supportsImages: providerMeta ? providerMeta.supportsImages : true,
-                reuseExistingPage: agentConfig.browser.reuseExistingPage,
-                focusCdpPage: this.focusCdpPage,
-                conversationId: this.conversationId,
-            });
+            // 浏览器相关参数（CDP 地址、可执行文件、超时、访问地址）统一由
+            // providers/options 装配：编排器不关心它们来自哪个环境变量或配置项。
+            this.provider = createProvider(
+                this.providerName,
+                providerOptions.buildProviderOptions({
+                    providerName: this.providerName,
+                    browserType: this.browserType,
+                    focusCdpPage: this.focusCdpPage,
+                    conversationId: this.conversationId,
+                })
+            );
             this.emitEvent("provider.starting", {
                 provider: this.providerName,
                 browserType: this.browserType,
@@ -370,7 +237,7 @@ class Agent extends EventEmitter {
                 this.emitEvent("step.started", {
                     step: this.step,
                 });
-                const stepResult = await this.runStep({
+                const stepResult = await runStep(this, {
                     prompt,
                     providerErrorState,
                 });
@@ -404,129 +271,7 @@ class Agent extends EventEmitter {
             throw error;
         }
     }
-    async runStep({ prompt, providerErrorState }) {
-        let response;
-        try {
-            this.emitEvent("provider.request", {
-                step: this.step,
-            });
-            response = await this.provider.send(prompt);
-            if (this.status !== "running" || this.stopRequested) {
-                return {
-                    stop: true,
-                    prompt: null,
-                };
-            }
-            providerErrorState.count = 0;
-            this.syncConversationId();
-            this.emitEvent("provider.response", {
-                step: this.step,
-                length: response ? response.length : 0,
-            });
-        } catch (error) {
-            if (this.status === "stopped" || this.stopRequested) {
-                return {
-                    stop: true,
-                    prompt: null,
-                };
-            }
-            providerErrorState.count++;
-            const delay = Math.min(1000 * Math.pow(2, providerErrorState.count - 1), 30000);
-            this.emitEvent("provider.retry", {
-                step: this.step,
-                error: error.message,
-                count: providerErrorState.count,
-                max: providerErrorState.max,
-                delay,
-            });
-            await sleep(delay);
-            this.emitEvent("provider.error", {
-                step: this.step,
-                error: error.message,
-                count: providerErrorState.count,
-                max: providerErrorState.max,
-            });
-            if (providerErrorState.count >= providerErrorState.max) {
-                throw new Error(
-                    "Provider failed " +
-                        providerErrorState.count +
-                        " consecutive times: " +
-                        error.message
-                );
-            }
-            return {
-                stop: false,
-                prompt: getSendErrorPrompt(error),
-            };
-        }
-        let action;
-        try {
-            action = extractXML(response);
-            this.emitEvent("action.parsed", {
-                step: this.step,
-                action: action.action,
-                // 附带解析出的完整动作，便于在 Trace 中查看该 Action 的细节
-                parsed: action,
-            });
-        } catch (error) {
-            this.emitEvent("action.parse_error", {
-                step: this.step,
-                error: error.message,
-            });
-            return {
-                stop: false,
-                prompt: getXmlErrorPrompt(error),
-            };
-        }
-        let result;
-        try {
-            result = await this.runtime.run(action);
-        } catch (error) {
-            result = {
-                ok: false,
-                action: "runtime_error",
-                error: error.message,
-            };
-        }
-        // 动作产出的图片（当前是 screenshot）自动上传给模型，由 meta.collectImages 驱动。
-        result = await this.attachScreenshotToProvider(result);
-        this.history.push(createHistoryRecord(this.step, action, result));
-        this.emitEvent("runtime.result", {
-            step: this.step,
-            action: result.action,
-            result,
-        });
-        const definition = this.resolveActionDefinition(result.action);
-        // 终止语义由动作定义的 meta.terminal 决定，编排器不再认识具体动作名。
-        const terminal = definition ? definition.meta.terminal : null;
-        if (terminal === "answer" && result.ok) {
-            this.answer = result.content;
-            this.emitEvent("answer", {
-                step: this.step,
-                content: result.content,
-            });
-            return {
-                stop: false,
-                prompt: getDonePrompt(),
-            };
-        }
-        if (terminal === "end") {
-            return {
-                stop: true,
-                prompt: null,
-            };
-        }
-        if (result.ok === false) {
-            return {
-                stop: false,
-                prompt: getRuntimeErrorPrompt(result),
-            };
-        }
-        return {
-            stop: false,
-            prompt: getRuntimeOkPrompt(result),
-        };
-    }
+
     async stop() {
         if (this.status !== "running") {
             return false;
@@ -582,17 +327,9 @@ class Agent extends EventEmitter {
         };
     }
 }
-function normalizeBrowserType(value) {
-    const text = String(value || "")
-        .trim()
-        .toLowerCase();
-    if (text === "edge" || text === "msedge" || text === "microsoft-edge") {
-        return "edge";
-    }
-    return "chrome";
-}
 module.exports = {
     Agent,
-    normalizeBrowserType,
+    // 导出面保持兼容：既有测试与调用方从这里取归一化函数。
+    normalizeBrowserType: providerOptions.normalizeBrowserType,
     normalizePresetImages,
 };

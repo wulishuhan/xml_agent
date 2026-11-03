@@ -19,8 +19,7 @@ pnpm-debug.log*
 *.log
 *.tmp
 *.temp
-test outputs
-/test-output-deepseek/
+test-output*/
 workspace/test-runtime-output.txt
 editor
 .idea

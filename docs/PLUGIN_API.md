@@ -266,7 +266,11 @@ const response = await ctx.http.request({
 
 ### ctx.storage
 
-目录：`~/.xml-agent/plugins/<name>/data/`（不进用户 workspace）
+目录：`~/.xml-agent/plugin-data/<name>/`（不进用户 workspace，也不进插件安装目录）
+
+刻意与插件安装目录 `~/.xml-agent/plugins/<name>/` 分开：那边是"待加载插件"的扫描根，
+数据目录放在里面会被当成一个缺少 `plugin.json` 的插件，每次启动都报一条假故障。
+旧版本写在 `plugins/<name>/data/`，启动时会自动搬到新位置（同名文件改名为 `*.migrated` 保留）。
 
 `readJson(name, fallback)` `writeJson(name, value)`（原子写）`appendLine(name, text)` `readText(name)`
 

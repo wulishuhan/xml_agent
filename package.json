@@ -22,9 +22,10 @@
         "electron:build:simple": "node scripts/prepare-electron-dist.js && npm run webui:build && electron-builder && node scripts/postbuild-fix-exe.js",
         "test:electron": "node test/test-electron-main.js && node test/test-electron-port.js && node test/test-electron-server-port.js && node test/test-electron-port-isolation.js && node test/test-electron-chrome-finder.js && node test/test-electron-settings.js && node test/test-electron-conversation.js && node test/test-electron-smoke.js",
         "test:plugins": "node test/test-plugins.js && node test/test-plugin-ui.js && node test/test-plugin-api.js && node test/test-plugin-hooks-smoke.js",
+        "test:unit": "node test/unit/test-retry.js && node test/unit/test-artifacts.js && node test/unit/test-browser-chat.js && node test/unit/test-plugin-storage.js && node test/unit/test-glm-message.js && node test/unit/test-empty-response.js && node test/unit/test-step.js",
         "test:core": "node test/test-builtin-actions.js && node test/test-screenshot-plugin.js && node test/test-xml-parse-cdata.js && node test/test-config-schema.js && node test/test-provider-registry.js && node test/test-normalize-conversation-id.js && node test/test-route-surface.js",
         "test:ui": "node test/check-vue-sfc.js",
-        "test:offline": "npm run test:core && npm run test:plugins",
+        "test:offline": "npm run test:unit && npm run test:core && npm run test:plugins",
         "test:conversation": "node test/test-electron-conversation.js",
         "test:session-conversation": "node test/test-session-conversation.js && node test/test-session-manager-conversation.js && node test/test-conversation-e2e.js",
         "test:conversation:all": "npm run test:conversation && npm run test:session-conversation"

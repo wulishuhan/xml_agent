@@ -21,6 +21,17 @@ function statusForError(error) {
     return 400;
 }
 
+/**
+路径解码：非法编码保持原样（不因为一个坏字符让整个请求 400）。
+*/
+function decodePath(value) {
+    try {
+        return decodeURIComponent(String(value));
+    } catch (error) {
+        return String(value);
+    }
+}
+
 function registerPluginRoutes(app, deps = {}) {
     const resolveRegistry =
         deps.getRegistry ||
@@ -29,8 +40,13 @@ function registerPluginRoutes(app, deps = {}) {
             return require("../../plugins/registry").getRegistry();
         };
 
-    function withRegistry(handler) {
-        return async (req, res) => {
+    /**
+    把处理器包一层：解析 registry + 统一错误响应。
+    label 会写进函数名，这样 Express 把一个 app.use 挂载注册成中间件层之后，
+    路由表测试仍然能按名字认出它是谁（否则只能看到一个 <anonymous>）。
+    */
+    function withRegistry(handler, label) {
+        const wrapped = async (req, res) => {
             let registry;
             try {
                 registry = resolveRegistry();
@@ -46,26 +62,35 @@ function registerPluginRoutes(app, deps = {}) {
                 });
             }
         };
+        if (label) {
+            Object.defineProperty(wrapped, "name", { value: label });
+        }
+        return wrapped;
     }
 
     /**
     插件自定义接口：路径被限定在 /api/plugins/<name>/api/* 之下，
     具体 method + path 由插件自己注册，因此插件之间不会互相串。
+
+    这里用 app.use 挂在前缀上，而不是 app.all 的通配路由：
+    "/api/plugins/:name/api/{*splat}" 是 Express 5 的语法，落到 Express 4
+    上不报错、只是永远匹配不上，于是插件接口会静默变成 404（前端面板空白）。
+    挂在 mount 路径上时，Express 4/5 都会先剥掉前缀、把剩下的部分留在 req.path，
+    两个版本行为一致，插件路由本身不需要关心宿主的版本。
     */
     const handlePluginApi = withRegistry(async (registry, req, res) => {
         const name = req.params.name;
-        const splat = req.params.splat;
-        const segments = Array.isArray(splat) ? splat : splat ? [splat] : [];
-        const subPath = "/" + segments.join("/");
+        // 挂载后剩下的是插件自己的路径；解码是为了和旧的 req.params 语义一致
+        // （插件路由只允许 ASCII 字符，解码不会引入穿越风险，只是字符串比较）。
+        const subPath = decodePath(req.path || "/");
         const result = await registry.callPluginApi(name, req.method, subPath, {
             query: req.query,
             body: req.body,
         });
         return res.status(result.status).json(result.body);
-    });
+    }, "pluginApi");
 
-    app.all("/api/plugins/:name/api", handlePluginApi);
-    app.all("/api/plugins/:name/api/{*splat}", handlePluginApi);
+    app.use("/api/plugins/:name/api", handlePluginApi);
 
     app.get(
         "/api/plugins",

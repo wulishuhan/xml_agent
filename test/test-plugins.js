@@ -272,7 +272,9 @@ async function main() {
         registry.grantPermission("network:http", "allow");
 
         console.log("\n=== 6. 钩子（hook 插件） ===");
-        const auditFile = path.join(storeRoot, "plugins", "audit-log", "data");
+        // 目录从注册表取，不在测试里重复拼路径：插件数据放在
+        // <storeRoot>/plugin-data/<name>/，与插件安装目录分开。
+        const auditFile = registry.storageDir("audit-log");
         const before = fs.existsSync(auditFile) ? fs.readdirSync(auditFile).length : 0;
         registry.emitHook("runtime.result", {
             step: 3,

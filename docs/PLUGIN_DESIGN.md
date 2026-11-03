@@ -15,7 +15,7 @@
 
 | 设计项                                                     | 状态      | 说明                                                                                                           |
 | ---------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
-| 插件注册表（发现 / 校验 / 隔离 / 权限 / 执行 / 钩子）      | ✅ 已实现 | `plugins/registry.js`                                                                                          |
+| 插件注册表（发现 / 校验 / 隔离 / 权限 / 执行 / 钩子）      | ✅ 已实现 | `plugins/registry.js` + `plugins/registry/`                                                                                          |
 | 插件 SDK（清单 / 动作定义 / schema / 版本区间 / 契约自检） | ✅ 已实现 | `plugins/sdk.js`                                                                                               |
 | 能力门面（workspace fs / 受控 http / storage / secrets）   | ✅ 已实现 | `plugins/capabilities.js`                                                                                      |
 | 内置示例插件 `fetch`（action）/ `audit-log`（hook）        | ✅ 已实现 | `plugins/builtin/`                                                                                             |
@@ -262,6 +262,7 @@ plugins/                          ← 内置插件（随包分发；electron-bui
 ~/.xml-agent/plugins/<name>/      ← 用户插件（不进仓库、不进安装包）
     plugin.json
     index.js
+~/.xml-agent/plugin-data/<name>/  ← 插件私有数据（与安装目录分开，不进插件扫描根）
 ~/.xml-agent/plugins-state.json   ← 启用/禁用状态
 ~/.xml-agent/permissions.json     ← 权限策略（每 scope: allow / deny / ask）
 ~/.xml-agent/secrets.json         ← 密钥（0600，日志脱敏）
@@ -313,7 +314,7 @@ module.exports = {
 | `ctx.permissions.check(scope)`                                     | 权限控制器；申请未授权 scope 直接抛错                                                        |
 | `ctx.secrets.get(key)`                                             | 密钥读取，返回值在日志与 Trace 中自动脱敏                                                    |
 | `ctx.config`                                                       | 本插件配置（`configSchema` 默认值 + 用户覆盖，带类型校验）                                   |
-| `ctx.storage`                                                      | 插件私有 JSON KV + `~/.xml-agent/plugins/<name>/data/`                                       |
+| `ctx.storage`                                                      | 插件私有 JSON KV + `~/.xml-agent/plugin-data/<name>/`（与插件安装目录分开，避免被当成插件扫描） |
 | `ctx.events.emit(type, payload)`                                   | 事件必须带 `plugin.<name>.` 命名空间前缀                                                     |
 | `ctx.logger`                                                       | 结构化日志（自动带插件名前缀）                                                               |
 | `ctx.agent.uploadImagesToModel(paths)`                             | 唯一能让模型"看到"产物的通道（截图插件用它，从而把 `attachScreenshotToProvider` 从核心摘除） |
@@ -346,6 +347,25 @@ Agent run
 
 进程退出 → 状态写回 plugins-state.json
 ```
+
+#### 代码组织
+
+注册表曾经是单个 1300 行的类，现按职责拆到 `plugins/registry/`，`plugins/registry.js`
+只保留构造、`userDirs` getter 与单例，其余方法以 mixin 挂回 `PluginRegistry.prototype`
+（`this` 语义不变，导出面不变）：
+
+| 文件 | 职责 | 主要方法 |
+| :--- | :--- | :--- |
+| `registry.js` | 门面：构造、单例、默认配置 | `createRegistry` / `getRegistrySafe` / `defaultOptions` |
+| `registry/shared.js` | 常量与工具 | `createScopedLogger` / `runWithTimeout` |
+| `registry/storage.js` | 持久化 | `storageDir` / `_readState` / `_migrateLegacyStorage` |
+| `registry/loader.js` | 加载管线 | `load` / `_loadPlugin` / `_commit` |
+| `registry/context.js` | 上下文装配 | `_createSetupContext` / `_createRunContext` |
+| `registry/catalog.js` | 只读查询 | `getActionDefinition` / `listPromptContributions` |
+| `registry/present.js` | 对外展示 | `getStatus` / `getUiManifest` / `formatEvent` |
+| `registry/api.js` | 插件 HTTP 接口 | `callPluginApi` |
+| `registry/settings.js` | 配置与权限 | `getConfig` / `getPolicy` / `grantPermission` |
+| `registry/invoke.js` | 动作执行与钩子 | `invokeAction` / `emitHook` |
 
 ### 4.7 权限模型（v1）
 

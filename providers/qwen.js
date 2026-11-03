@@ -1,251 +1,33 @@
-const { BrowserAgent } = require("./browser-agent");
+const { BrowserChatProvider } = require("./browser-chat");
+const { containsActionTag } = require("./action-tag");
+const { balanceMarkdownFences, extractXmlFromCandidate } = require("./markdown-fence-utils");
+const { collectChildFiberCandidate } = require("./dom/fiber");
 
 const QWEN_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
-const TRAILING_SLASH_PATTERN = new RegExp("/+$/");
 
-const LT = String.fromCharCode(60);
-const BACKTICK = String.fromCharCode(96);
+const RESPONSE_SELECTOR = ".response-message-content";
+const FALLBACK_RESPONSE_SELECTOR = ".qwen-markdown-html";
 
-const ACTION_TAG_NAMES = ["write", "read", "exec", "answer", "done"];
+// 点按式提交的兜底按钮。回车不生效时用它把消息送出去。
+const SEND_BUTTON_SELECTORS = [
+    'button[aria-label*="发送"]',
+    'button[aria-label*="Send"]',
+    'button[class*="send"]',
+    'button[type="submit"]',
+];
 
-function containsActionTag(text) {
-    if (!text || typeof text !== "string") return false;
-    for (const tag of ACTION_TAG_NAMES) {
-        if (text.indexOf(LT + tag) !== -1) return true;
-    }
-    return false;
-}
+const PROFILE = {
+    targetUrl: "https://chat.qwen.ai",
+    conversationPathPrefix: "/c/",
+    conversationIdPattern: QWEN_CONVERSATION_PATTERN,
+    pageUrlIncludes: "chat.qwen.ai",
+};
 
-/**
-
-从 React fiber 树上挖候选长字符串。
-
-关键修复（v3）：
-
-v2 用 full BFS（child + sibling + return 三向遍历），
-
-结果是它会向上爬到更早的对话节点甚至用户 prompt 上，
-
-抓到 1325 字符的旧内容，而不是最新这条 assistant 回复。
-
-v3 改为"只向下走 child"：
-
-起点是当前 response-message-content 节点自身的 fiber
-
-只沿 child 方向向下遍历，不碰 sibling，也不碰 return
-
-这样只能看到"属于最后这条消息"的子树，抓不到更早的消息
-
-同时仍然保留 element 自身 props 的扫描，作为第一优先级。
-*/
-function extractFromReactFiber(elementHandle) {
-    return elementHandle.evaluate((element) => {
-        function findReactKey(el, prefix) {
-            if (!el) return null;
-            for (const k in el) {
-                if (k.indexOf(prefix) === 0) return k;
-            }
-            return null;
-        }
-
-        const FIBER_PREFIX = "__react" + "Fiber";
-        const PROPS_PREFIX = "__react" + "Props";
-
-        const candidates = [];
-
-        const actionTagNames = ["write", "read", "exec", "answer", "done"];
-        const LT = String.fromCharCode(60);
-
-        function hasAction(text) {
-            if (typeof text !== "string") return false;
-            for (const tag of actionTagNames) {
-                if (text.indexOf(LT + tag) !== -1) return true;
-            }
-            return false;
-        }
-
-        function recordString(source, key, value, depth) {
-            if (typeof value !== "string") return;
-            if (value.length < 100) return;
-
-            const isAction = hasAction(value);
-            // 分数：Action 特征优先，深度浅优先，长度次要
-            const score =
-                (isAction ? 1000000 : 0) +
-                (1000 - Math.min(depth, 999)) * 100 +
-                Math.min(value.length, 99);
-            candidates.push({ source, key, value, isAction, depth, score });
-        }
-
-        function scanProps(source, props, depth) {
-            if (!props || typeof props !== "object") return;
-            for (const key in props) {
-                try {
-                    recordString(source, key, props[key], depth);
-                } catch (e) {}
-            }
-        }
-
-        // 1) element 自身 props
-        const propsKey = findReactKey(element, PROPS_PREFIX);
-        if (propsKey) {
-            scanProps("elementProps", element[propsKey], 0);
-        }
-
-        // 2) 从 element 的 fiber 出发，只向下走 child
-        const fiberKey = findReactKey(element, FIBER_PREFIX);
-        if (fiberKey) {
-            const seen = new Set();
-            const stack = [{ node: element[fiberKey], depth: 0 }];
-            let steps = 0;
-            const MAX_STEPS = 2000;
-            const MAX_DEPTH = 30;
-
-            while (stack.length > 0 && steps < MAX_STEPS) {
-                const item = stack.pop();
-                const node = item.node;
-                const depth = item.depth;
-
-                if (!node || seen.has(node)) continue;
-                seen.add(node);
-                steps++;
-
-                if (depth > MAX_DEPTH) continue;
-
-                try {
-                    scanProps("fiberChild", node.memoizedProps, depth);
-                } catch (e) {}
-
-                // 只往下走 child
-                if (node.child) {
-                    stack.push({ node: node.child, depth: depth + 1 });
-                }
-            }
-        }
-
-        if (candidates.length === 0) return null;
-
-        candidates.sort((a, b) => b.score - a.score);
-
-        const seenValues = new Set();
-        const unique = [];
-
-        for (const c of candidates) {
-            const key = c.value.substring(0, 200);
-            if (seenValues.has(key)) continue;
-            seenValues.add(key);
-            unique.push(c);
-            if (unique.length >= 5) break;
-        }
-
-        return {
-            top: unique[0],
-            candidates: unique,
-            totalCandidates: candidates.length,
-        };
-    });
-}
-
-function extractXmlFromCandidate(raw) {
-    if (!raw || typeof raw !== "string") return null;
-
-    const LT = String.fromCharCode(60);
-    const BT = String.fromCharCode(96);
-
-    let text = raw.trim();
-
-    const fence = BT + BT + BT;
-    const reStart = new RegExp("^" + fence + "xml\s", "i");
-    const reStartAny = new RegExp("^" + fence + "\s");
-    const reEnd = new RegExp("\s*" + fence + "$");
-
-    text = text.replace(reStart, "").replace(reStartAny, "").replace(reEnd, "");
-    text = text.trim();
-
-    const actionTags = ["write", "read", "exec", "answer", "done"];
-    let startIdx = -1;
-
-    for (const tag of actionTags) {
-        const needle = LT + tag;
-        const i = text.indexOf(needle);
-        if (i !== -1 && (startIdx === -1 || i < startIdx)) {
-            startIdx = i;
-        }
-    }
-
-    if (startIdx === -1) return null;
-
-    return text.substring(startIdx).trim();
-}
-
-function parseFenceLine(line) {
-    if (!line) return null;
-
-    let i = 0;
-    while (i < line.length && (line[i] === " " || line[i] === "\t")) {
-        i++;
-    }
-
-    if (line.length - i < 3) return null;
-    if (line[i] !== BACKTICK) return null;
-    if (line[i + 1] !== BACKTICK) return null;
-    if (line[i + 2] !== BACKTICK) return null;
-
-    const rest = line.substring(i + 3);
-
-    return { isOpen: rest.trim().length > 0 };
-}
-
-function balanceMarkdownFences(text) {
-    if (!text || typeof text !== "string") {
-        return text || "";
-    }
-
-    const lines = text.split("\n");
-    const indices = [];
-    const isOpenArr = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        const p = parseFenceLine(lines[i]);
-        if (!p) continue;
-        indices.push(i);
-        isOpenArr.push(p.isOpen);
-    }
-
-    if (indices.length === 0) return text;
-
-    const stack = [];
-    const remove = new Set();
-
-    for (let k = 0; k < indices.length; k++) {
-        const idx = indices[k];
-        if (isOpenArr[k]) {
-            stack.push(idx);
-        } else if (stack.length > 0) {
-            stack.pop();
-        } else {
-            remove.add(idx);
-        }
-    }
-
-    const unclosed = stack.length > 0;
-
-    if (remove.size === 0 && !unclosed) return text;
-
-    const result = [];
-    for (let i = 0; i < lines.length; i++) {
-        if (!remove.has(i)) result.push(lines[i]);
-    }
-
-    if (unclosed) result.push(BACKTICK + BACKTICK + BACKTICK);
-
-    return result.join("\n");
-}
-
-class QwenProvider extends BrowserAgent {
+class QwenProvider extends BrowserChatProvider {
     constructor(options = {}) {
         super({
             ...options,
+            profile: PROFILE,
             inputSelectors: [
                 ".message-input-textarea",
                 'div[contenteditable="true"][role="textbox"]',
@@ -262,37 +44,19 @@ class QwenProvider extends BrowserAgent {
         return "Qwen";
     }
 
-    async matchPage(page) {
-        try {
-            const url = page.url();
-            return url.includes("chat.qwen.ai");
-        } catch (error) {
-            return false;
-        }
-    }
-
-    getConversationIdFromUrl(url) {
-        if (!url || typeof url !== "string") return null;
-        const match = url.match(QWEN_CONVERSATION_PATTERN);
-        return match ? match[1] : null;
-    }
-
-    buildTargetUrl() {
-        const base = this.targetUrl || "https://chat.qwen.ai";
-        if (!this.conversationId) return base;
-        const trimmed = base.replace(TRAILING_SLASH_PATTERN, "");
-        return trimmed + "/c/" + this.conversationId;
-    }
-
     async getAssistantCount() {
         if (!this.isPageAlive()) return 0;
         try {
-            return await this.page.locator(".response-message-content").count();
+            return await this.page.locator(RESPONSE_SELECTOR).count();
         } catch (error) {
             return 0;
         }
     }
 
+    /**
+    Qwen 用"发送按钮 vs 停止按钮"的可见性表达生成状态，
+    这比"文本是否变化"更早、也更准地反映"开始了/结束了"。
+    */
     async getGenerationState() {
         if (!this.isPageAlive()) {
             return { generating: false, sendVisible: false, stopVisible: false };
@@ -326,6 +90,9 @@ class QwenProvider extends BrowserAgent {
         }
     }
 
+    /**
+    等待生成结束：先用按钮状态判定"已开始/已结束"，按钮状态拿不到时退回文本稳定判定。
+    */
     async waitForGenerationComplete(getResponse, options) {
         options = options || {};
 
@@ -333,6 +100,13 @@ class QwenProvider extends BrowserAgent {
         const finishTimeout = options.finishTimeout || this.responseTimeout;
         const pollInterval = options.pollInterval || this.responsePollInterval;
         const stableTime = options.stableTime || this.responseStableTime;
+
+        const stableFallback = () =>
+            this.waitForStableResponse(getResponse, {
+                timeout: finishTimeout,
+                stableTime,
+                pollInterval,
+            });
 
         const start = Date.now();
         let started = false;
@@ -361,11 +135,7 @@ class QwenProvider extends BrowserAgent {
         }
 
         if (!started) {
-            return await this.waitForStableResponse(getResponse, {
-                timeout: finishTimeout,
-                stableTime,
-                pollInterval,
-            });
+            return await stableFallback();
         }
 
         const finishStart = Date.now();
@@ -388,18 +158,10 @@ class QwenProvider extends BrowserAgent {
         }
 
         if (!lastState || lastState.stopVisible) {
-            return await this.waitForStableResponse(getResponse, {
-                timeout: finishTimeout,
-                stableTime,
-                pollInterval,
-            });
+            return await stableFallback();
         }
 
-        return await this.waitForStableResponse(getResponse, {
-            timeout: finishTimeout,
-            stableTime,
-            pollInterval,
-        });
+        return await stableFallback();
     }
 
     async buildFromDom(lastLocator) {
@@ -466,8 +228,12 @@ class QwenProvider extends BrowserAgent {
         });
     }
 
+    /**
+    取第 index 条回复：DOM 重建优先，fiber 兜底。
+    fiber 用的是"只向下"的窄遍历 —— 三向遍历会爬到上一条消息甚至用户 prompt 上。
+    */
     async extractOne(index, totalCount) {
-        const messages = this.page.locator(".response-message-content");
+        const messages = this.page.locator(RESPONSE_SELECTOR);
         const target = messages.nth(index);
 
         const visible = await target.isVisible().catch(() => false);
@@ -477,7 +243,7 @@ class QwenProvider extends BrowserAgent {
 
         let fiberResult = null;
         try {
-            fiberResult = await extractFromReactFiber(target);
+            fiberResult = await target.evaluate(collectChildFiberCandidate);
         } catch (error) {
             console.warn("[Qwen] fiber extraction failed:", error.message);
         }
@@ -518,28 +284,20 @@ class QwenProvider extends BrowserAgent {
     }
 
     /**
+    获取最后一条 assistant 回复。
 
-获取最后一条 assistant 回复。
-
-v3 关键修复：
-
-extractFromReactFiber 现在只沿 child 向下遍历，不再横跨 sibling/return
-
-因此拿到的就是"最后一条消息"自身的内容，不会混入用户 prompt 或更早消息
-
-只要最后一条消息能提取到 Action 就直接返回
-
-多段合并逻辑只在前一条没有 Action 时才触发
-*/
+    最后一条能提取到 Action 就直接返回；否则回溯最近几条合并
+    —— 长输出被拆成多条消息时，单个节点里看不到完整 XML。
+    */
     async getLastResponse() {
         if (!this.isPageAlive()) return "";
 
         try {
-            let messages = this.page.locator(".response-message-content");
+            let messages = this.page.locator(RESPONSE_SELECTOR);
             let count = await messages.count();
 
             if (!count) {
-                messages = this.page.locator(".qwen-markdown-html");
+                messages = this.page.locator(FALLBACK_RESPONSE_SELECTOR);
                 count = await messages.count();
             }
 
@@ -552,7 +310,6 @@ extractFromReactFiber 现在只沿 child 向下遍历，不再横跨 sibling/ret
                 return last.text;
             }
 
-            // 兜底：回溯最近几条合并（应对长输出拆成多条消息的场景）
             const backLimit = Math.min(count, 4);
             const parts = [];
 
@@ -584,90 +341,67 @@ extractFromReactFiber 现在只沿 child 向下遍历，不再横跨 sibling/ret
         }
     }
 
-    async getResponseState() {
-        return {
-            count: await this.getAssistantCount(),
-            text: await this.getLastResponse(),
-        };
-    }
-
-    async waitForResponseStart(oldCount, oldResponse) {
-        const start = Date.now();
-        const timeout = this.responseTimeout;
-        let lastText = oldResponse || "";
-
-        while (Date.now() - start < timeout) {
-            if (!this.isPageAlive()) {
-                throw new Error("Qwen page was closed while waiting for response");
-            }
-
-            try {
-                const state = await this.getResponseState();
-
-                if (state.count > oldCount) return true;
-
-                if (state.text && state.text.trim()) {
-                    if (!lastText) return true;
-                    if (state.text !== lastText) return true;
-                }
-
-                lastText = state.text || lastText;
-            } catch (error) {}
-
-            await this.sleep(this.responsePollInterval);
+    /** Qwen 只有输入元素回车这一条提交路径。 */
+    async deliverMessage() {
+        // Qwen 的输入区需要一次真实鼠标点击才会接管键盘：仅 focus() 后按 Enter
+        // 在当前版本不会触发发送（输入框内容会原样保留）。所以这里显式点击再回车。
+        const input = await this.findVisibleInput(this.inputSelectors, 3);
+        if (!input) {
+            throw new Error("Qwen failed to send message: input not found before pressing Enter");
         }
-
-        throw new Error("Qwen did not start a response within " + timeout + "ms");
-    }
-
-    async send(message) {
-        if (!message || !message.trim()) {
-            throw new Error("Qwen message cannot be empty");
-        }
-
-        if (!this.isPageAlive()) {
-            const recovered = await this.ensurePageAlive();
-            if (!recovered || !this.isPageAlive()) {
-                throw new Error("Qwen page is not available");
-            }
-        }
-
-        const oldAssistantCount = await this.getAssistantCount();
-        const oldResponse = await this.getLastResponse();
-
-        await this.insertMessage(message);
-
         try {
-            const input = await this.getInput();
-            if (!input) throw new Error("Qwen input not found before pressing Enter");
+            await input.click();
             await input.press("Enter");
         } catch (error) {
             throw new Error("Qwen failed to send message: " + error.message);
         }
+        // 回车仍无效时退回点击发送按钮，避免整个任务卡在"输入框未清空"。
+        if (await this.waitForInputClear(3000)) {
+            return;
+        }
+        if (!(await this.clickSendButton())) {
+            throw new Error(
+                "Qwen failed to send message: Enter did not submit and no send button matched"
+            );
+        }
+    }
 
-        const inputCleared = await this.waitForInputClear();
-        if (!inputCleared) {
+    /**
+    点击发送按钮。返回是否成功点中，便于调用方决定是否报错。
+    */
+    async clickSendButton() {
+        for (const selector of SEND_BUTTON_SELECTORS) {
+            try {
+                const button = this.page.locator(selector).first();
+                if ((await button.count()) > 0 && (await button.isVisible())) {
+                    await button.click();
+                    return true;
+                }
+            } catch (error) {
+                // 选择器没命中或按钮被遮挡，换下一个
+            }
+        }
+        return false;
+    }
+
+    /** 输入框未清空只记日志：Qwen 有时保留输入内容但已经发出去了。 */
+    async afterDelivered() {
+        const cleared = await this.waitForInputClear();
+        if (!cleared) {
             console.warn("[Qwen] Input did not clear within timeout, continuing...");
         }
+    }
 
-        this.refreshConversationId();
+    /** 先确认响应开始，再用按钮状态等待生成结束。 */
+    async collectResponse(before) {
+        await this.waitForResponseStart(before.count, before.text);
 
-        await this.waitForResponseStart(oldAssistantCount, oldResponse);
-
-        const response = await this.waitForGenerationComplete(() => this.getLastResponse(), {
+        return this.waitForGenerationComplete(() => this.getLastResponse(), {
             startTimeout: 60000,
             finishTimeout: this.responseTimeout,
             pollInterval: this.responsePollInterval,
             stableTime: this.responseStableTime,
         });
-
-        if (!response || !response.trim()) {
-            throw new Error("Qwen returned an empty response");
-        }
-
-        this.refreshConversationId();
-
-        return response;
     }
 }
 

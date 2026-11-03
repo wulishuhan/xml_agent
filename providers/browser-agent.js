@@ -4,17 +4,14 @@ const { promises: fs } = require("fs");
 const path = require("path");
 const os = require("os");
 const http = require("http");
+const {
+    DEFAULT_CDP_URL,
+    normalizeBrowserType,
+    browserPathFromEnv,
+    cdpUrlFromEnv,
+} = require("./browser-env");
 // 按浏览器类型返回候选可执行文件路径（与 electron/chrome-finder.js 保持一致语义，
 // 但这里不依赖 Electron，供纯 Node / WebUI 运行时使用）。
-function normalizeBrowserType(value) {
-    const text = String(value || "")
-        .trim()
-        .toLowerCase();
-    if (text === "edge" || text === "msedge" || text === "microsoft-edge") {
-        return "edge";
-    }
-    return "chrome";
-}
 function detectBrowserTypeFromPath(filePath) {
     const base = path.basename(String(filePath || "")).toLowerCase();
     if (base.indexOf("msedge") !== -1 || base === "microsoft edge") {
@@ -82,7 +79,7 @@ function getBrowserCandidates(browserType) {
 }
 class BrowserAgent {
     constructor(options = {}) {
-        this.cdpUrl = options.cdpUrl || process.env.XML_AGENT_CDP_URL || "http://127.0.0.1:9222";
+        this.cdpUrl = options.cdpUrl || cdpUrlFromEnv() || DEFAULT_CDP_URL;
         this.context = null;
         this.page = null;
         this.browser = null;
@@ -96,14 +93,7 @@ class BrowserAgent {
                 ? options.browserType
                 : process.env.BROWSER_TYPE || process.env.XML_AGENT_BROWSER_TYPE
         );
-        this.chromePath =
-            options.chromePath ||
-            (this.browserType === "edge"
-                ? process.env.BROWSER_EDGE_PATH ||
-                  process.env.EDGE_PATH ||
-                  process.env.XML_AGENT_EDGE_PATH
-                : process.env.CHROME_PATH || process.env.XML_AGENT_CHROME_PATH) ||
-            "";
+        this.chromePath = options.chromePath || browserPathFromEnv(this.browserType) || "";
         this.focusCdpPage =
             options.focusCdpPage !== undefined
                 ? options.focusCdpPage
@@ -133,6 +123,14 @@ class BrowserAgent {
             options.responseInitialTimeout,
             process.env.XML_AGENT_RESPONSE_INITIAL_TIMEOUT_MS,
             60 * 1000
+        );
+        // 新回复"已经出现但一直没有可读内容"的最长容忍时间。
+        // 平台偶尔会残留一个空占位（例如 GLM 的"正在思考"），
+        // 若不设这个上限，调用方会一直等到 responseTimeout（默认 10 分钟）。
+        this.responseContentGrace = this.getNumberOption(
+            options.responseContentGrace,
+            process.env.XML_AGENT_RESPONSE_CONTENT_GRACE_MS,
+            3 * 60 * 1000
         );
         this.inputSelectors = options.inputSelectors || [];
         this.targetUrl =
@@ -199,15 +197,9 @@ class BrowserAgent {
             return this.chromePath.trim();
         }
         const candidates = getBrowserCandidates(this.browserType);
-        // 追加环境变量兜底路径
-        if (this.browserType === "edge") {
-            if (process.env.BROWSER_EDGE_PATH) candidates.unshift(process.env.BROWSER_EDGE_PATH);
-            if (process.env.EDGE_PATH) candidates.unshift(process.env.EDGE_PATH);
-        } else {
-            if (process.env.BROWSER_CHROME_PATH)
-                candidates.unshift(process.env.BROWSER_CHROME_PATH);
-            if (process.env.CHROME_PATH) candidates.unshift(process.env.CHROME_PATH);
-        }
+        // 环境变量里的路径优先于平台默认安装位置
+        const envPath = browserPathFromEnv(this.browserType);
+        if (envPath) candidates.unshift(envPath);
         const fsSync = require("fs");
         for (const candidate of candidates) {
             try {

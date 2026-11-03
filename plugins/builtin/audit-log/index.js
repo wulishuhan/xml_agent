@@ -8,7 +8,7 @@
    （插件不向浏览器下发任何可执行代码）。
 
 日志落在插件私有目录
-（~/.xml-agent/plugins/audit-log/data/audit-YYYYMMDD.jsonl），不会污染用户 workspace。
+（~/.xml-agent/plugin-data/audit-log/audit-YYYYMMDD.jsonl），不会污染用户 workspace。
 刻意只记录摘要：runtime.result 里可能带文件内容，整包写盘会让日志迅速膨胀。
 */
 
@@ -174,7 +174,7 @@ function setup(ctx) {
             },
             {
                 kind: "note",
-                text: "日志保存在插件私有目录（~/.xml-agent/plugins/audit-log/data/），不会写入用户 workspace。",
+                text: "日志保存在插件私有目录（~/.xml-agent/plugin-data/audit-log/），不会写入用户 workspace。",
             },
         ],
     });

@@ -3,6 +3,7 @@ const fs = require("fs");
 const { createProvider } = require("../providers");
 const { extractXML } = require("../parse/xml-parse");
 const { createRuntime } = require("../runtime");
+const { sendWithTimeout } = require("./live-support");
 const agentConfig = require("../config/agent-config");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
@@ -20,7 +21,7 @@ async function runCase(provider, runtime, name, prompt, check) {
     const t0 = Date.now();
     let response;
     try {
-        response = await provider.send(prompt);
+        response = await sendWithTimeout(provider, prompt);
     } catch (e) {
         console.log("SEND FAILED:", e.message);
         return { name, ok: false, error: "send: " + e.message };

@@ -1,7 +1,7 @@
 const assert = require("assert");
 const path = require("path");
 const fs = require("fs");
-const { listWindows } = require("../capture/screenshot");
+const { listWindows } = require("../capture/windows");
 const { Runtime } = require("../runtime");
 // 真实多窗口截图测试：
 //   1. 枚举当前可见窗口

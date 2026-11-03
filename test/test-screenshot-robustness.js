@@ -10,7 +10,7 @@ const {
     normalizeTimeout,
     toBoolean,
 } = require("../webui/screenshot-api");
-const { materializeWindowsScript } = require("../capture/screenshot");
+const { materializeWindowsScript } = require("../capture/windows");
 const DOLLAR = String.fromCharCode(36);
 let passed = 0;
 let failed = 0;

@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs");
-const { listWindows } = require("../capture/screenshot");
+const { listWindows } = require("../capture/windows");
 const { takeScreenshot } = require("../webui/screenshot-api");
 async function run() {
     const workspace = path.resolve(__dirname, "..", "test-output-screenshot");

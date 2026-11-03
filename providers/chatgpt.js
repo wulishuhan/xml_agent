@@ -1,10 +1,39 @@
-const { BrowserAgent } = require("./browser-agent");
+const { BrowserChatProvider } = require("./browser-chat");
+
 const CHATGPT_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
-const TRAILING_SLASH_PATTERN = new RegExp("/+$/");
-class ChatGPTProvider extends BrowserAgent {
+
+// 可见输入框候选。ChatGPT 会把可见的 role=textbox 与隐藏的 fallback textarea 来回切换，
+// 所以每次写入前都按这个顺序重新找"真的能看见、有尺寸"的那个。
+const INPUT_SELECTORS = [
+    "div[role='textbox']",
+    ".ProseMirror",
+    "[contenteditable='true']",
+    "#prompt-textarea",
+    "textarea[name='prompt-textarea']",
+    "textarea",
+];
+
+// 发送按钮候选：新版用 data-testid，旧版可能只留 aria-label 或图标。
+const SEND_BUTTON_SELECTORS = [
+    'button[data-testid="send-button"]',
+    'button[aria-label="Send message"]',
+    'button[aria-label="Send"]',
+    'button:has(svg[data-icon="send"])',
+    'button:has(svg[data-icon="paper-plane"])',
+];
+
+const PROFILE = {
+    targetUrl: "https://chatgpt.com",
+    conversationPathPrefix: "/c/",
+    conversationIdPattern: CHATGPT_CONVERSATION_PATTERN,
+    pageUrlIncludes: "chatgpt.com",
+};
+
+class ChatGPTProvider extends BrowserChatProvider {
     constructor(options = {}) {
         super({
             ...options,
+            profile: PROFILE,
             inputSelectors: [
                 "div[role='textbox']",
                 ".ProseMirror",
@@ -15,42 +44,9 @@ class ChatGPTProvider extends BrowserAgent {
             ],
         });
     }
+
     get name() {
         return "ChatGPT";
-    }
-
-    async matchPage(page) {
-        try {
-            const url = page.url();
-            return url.includes("chatgpt.com");
-        } catch (error) {
-            return false;
-        }
-    }
-
-    getConversationIdFromUrl(url) {
-        if (!url || typeof url !== "string") {
-            return null;
-        }
-
-        const match = url.match(CHATGPT_CONVERSATION_PATTERN);
-
-        if (!match) {
-            return null;
-        }
-
-        return match[1];
-    }
-
-    buildTargetUrl() {
-        const base = this.targetUrl || "https://chatgpt.com";
-
-        if (!this.conversationId) {
-            return base;
-        }
-
-        const trimmed = base.replace(TRAILING_SLASH_PATTERN, "");
-        return trimmed + "/c/" + this.conversationId;
     }
 
     async getAssistantCount() {
@@ -95,122 +91,17 @@ class ChatGPTProvider extends BrowserAgent {
         }
     }
 
-    async getResponseState() {
-        return {
-            count: await this.getAssistantCount(),
-            text: await this.getLastResponse(),
-        };
-    }
-
-    async waitForResponseStart(oldCount, oldResponse) {
-        const start = Date.now();
-        const timeout = this.responseTimeout;
-        let lastText = oldResponse || "";
-
-        while (Date.now() - start < timeout) {
-            if (!this.isPageAlive()) {
-                throw new Error("ChatGPT page was closed while waiting for response");
-            }
-
-            try {
-                const state = await this.getResponseState();
-
-                if (state.count > oldCount) {
-                    return true;
-                }
-
-                if (state.text && state.text.trim()) {
-                    if (!lastText) return true;
-                    if (state.text !== lastText) return true;
-                }
-
-                lastText = state.text || lastText;
-            } catch (error) {
-                // DOM 临时异常，继续等待
-            }
-
-            await this.sleep(this.responsePollInterval);
-        }
-
-        throw new Error("ChatGPT did not start a response within " + timeout + "ms");
-    }
-
     /**
-
-ChatGPT 输入框会在页面更新时动态切换：
-
-可见的 contenteditable / role=textbox
-
-隐藏的 fallback textarea
-
-因此不能只依赖 BrowserAgent 的缓存 Locator。
-
-每次真正写入前重新寻找当前可见、可编辑的元素。
-*/
-    async getChatGPTInput() {
-        if (!this.isPageAlive()) {
-            throw new Error("[ChatGPT] page is not available");
-        }
-
-        const selectors = [
-            "div[role='textbox']",
-            ".ProseMirror",
-            "[contenteditable='true']",
-            "#prompt-textarea",
-            "textarea[name='prompt-textarea']",
-            "textarea",
-        ];
-
-        for (let attempt = 0; attempt < 3; attempt++) {
-            for (const selector of selectors) {
-                try {
-                    const locator = this.page.locator(selector);
-
-                    const count = await locator.count();
-
-                    for (let index = 0; index < count; index++) {
-                        const candidate = locator.nth(index);
-
-                        if (!(await candidate.isVisible().catch(() => false))) {
-                            continue;
-                        }
-
-                        if (await candidate.isDisabled().catch(() => false)) {
-                            continue;
-                        }
-
-                        const box = await candidate.boundingBox().catch(() => null);
-
-                        if (!box || box.width <= 0 || box.height <= 0) {
-                            continue;
-                        }
-
-                        return candidate;
-                    }
-                } catch (error) {
-                    // ChatGPT 页面正在切换 DOM，继续寻找
-                }
-            }
-
-            await this.sleep(150);
-        }
-
-        return null;
-    }
-
+    ChatGPT 新版输入区域会在消息发送、页面 hydration、虚拟键盘切换过程中替换 DOM，
+    因此整个写入过程允许重新获取输入框。
+    */
     async insertMessage(message) {
         console.log("[ChatGPT] Inserting message: " + JSON.stringify(message));
 
-        if (!this.isPageAlive()) {
-            throw new Error("[ChatGPT] page is not available");
-        }
-
         let lastError = null;
 
-        // ChatGPT 新版输入区域可能在消息发送、页面 hydration、
-        // 虚拟键盘切换过程中替换 DOM，因此整个插入过程允许重新获取输入框。
         for (let attempt = 0; attempt < 3; attempt++) {
-            const input = await this.getChatGPTInput();
+            const input = await this.findVisibleInput(INPUT_SELECTORS);
 
             if (!input) {
                 await this.sleep(300);
@@ -218,7 +109,6 @@ ChatGPT 输入框会在页面更新时动态切换：
             }
 
             try {
-                // 先确认当前 Locator 仍然是可见元素。
                 if (!(await input.isVisible())) {
                     await this.sleep(200);
                     continue;
@@ -233,7 +123,6 @@ ChatGPT 输入框会在页面更新时动态切换：
                 await this.sleep(150);
 
                 const tagName = await input.evaluate((el) => el.tagName.toLowerCase());
-
                 const isContentEditable = await input.evaluate((el) => el.isContentEditable);
 
                 if (isContentEditable || tagName === "div") {
@@ -251,8 +140,7 @@ ChatGPT 输入框会在页面更新时动态切换：
                         );
                     }, message);
                 } else {
-                    // 不直接对可能已经被 ChatGPT 隐藏的 textarea 调用 fill。
-                    // fill 前再次确认元素仍然可见。
+                    // 不直接对可能已经被隐藏的 textarea 调用 fill。
                     if (!(await input.isVisible())) {
                         throw new Error("ChatGPT input became hidden before fill");
                     }
@@ -292,27 +180,11 @@ ChatGPT 输入框会在页面更新时动态切换：
         );
     }
 
-    async send(message) {
-        if (!message || !message.trim()) {
-            throw new Error("ChatGPT message cannot be empty");
-        }
-
-        if (!this.isPageAlive()) {
-            // 页面丢失时先尝试自动恢复，避免 agent 连续重试直接失败。
-            const recovered = await this.ensurePageAlive();
-
-            if (!recovered || !this.isPageAlive()) {
-                throw new Error("ChatGPT page is not available");
-            }
-        }
-
-        const oldAssistantCount = await this.getAssistantCount();
-        const oldResponse = await this.getLastResponse();
-
-        console.log("[ChatGPT] Old assistant count: " + oldAssistantCount);
-
-        await this.insertMessage(message);
-
+    /**
+    三级降级提交：键盘回车 → 发送按钮 → 输入元素自身回车。
+    Enter 优先是因为新版的发送按钮有时在动画中途不可点。
+    */
+    async deliverMessage() {
         let sent = false;
         let sendError = null;
 
@@ -326,41 +198,25 @@ ChatGPT 输入框会在页面更新时动态切换：
         }
 
         if (!sent) {
-            try {
-                const sendButtonSelectors = [
-                    'button[data-testid="send-button"]',
-                    'button[aria-label="Send message"]',
-                    'button[aria-label="Send"]',
-                    'button:has(svg[data-icon="send"])',
-                    'button:has(svg[data-icon="paper-plane"])',
-                ];
+            for (const selector of SEND_BUTTON_SELECTORS) {
+                try {
+                    const button = this.page.locator(selector).first();
 
-                for (const selector of sendButtonSelectors) {
-                    try {
-                        const button = this.page.locator(selector).first();
-
-                        if ((await button.count()) > 0 && (await button.isVisible())) {
-                            await button.click();
-                            console.log("[ChatGPT] Clicked send button: " + selector);
-                            sent = true;
-                            break;
-                        }
-                    } catch (error) {
-                        continue;
+                    if ((await button.count()) > 0 && (await button.isVisible())) {
+                        await button.click();
+                        console.log("[ChatGPT] Clicked send button: " + selector);
+                        sent = true;
+                        break;
                     }
-                }
-            } catch (error) {
-                console.warn("[ChatGPT] Send button click failed: " + error.message);
-
-                if (!sendError) {
-                    sendError = error;
+                } catch (error) {
+                    continue;
                 }
             }
         }
 
         if (!sent) {
             try {
-                const input = await this.getChatGPTInput();
+                const input = await this.findVisibleInput(INPUT_SELECTORS);
 
                 if (input) {
                     await input.press("Enter");
@@ -382,38 +238,9 @@ ChatGPT 输入框会在页面更新时动态切换：
                     (sendError ? sendError.message : "unknown")
             );
         }
-
-        const inputCleared = await this.waitForInputClear(5000);
-
-        if (inputCleared) {
-            console.log("[ChatGPT] Input cleared successfully");
-        } else {
-            console.warn(
-                "[ChatGPT] Input did not clear within 5000ms; waiting for response without retrying send"
-            );
-        }
-
-        this.refreshConversationId();
-
-        await this.waitForResponseStart(oldAssistantCount, oldResponse);
-
-        const response = await this.waitForStableResponse(() => this.getLastResponse(), {
-            timeout: this.responseTimeout,
-            stableTime: this.responseStableTime,
-            pollInterval: this.responsePollInterval,
-        });
-
-        if (!response || !response.trim()) {
-            throw new Error("ChatGPT returned an empty response");
-        }
-
-        this.refreshConversationId();
-
-        console.log("[ChatGPT] Response received, length: " + response.length);
-
-        return response;
     }
 }
+
 module.exports = {
     ChatGPTProvider,
     // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。

@@ -21,6 +21,7 @@ const fs = require("fs");
 const { GlmProvider } = require("../providers/glm");
 const { extractXML } = require("../parse/xml-parse");
 const { createRuntime } = require("../runtime");
+const { sendWithTimeout } = require("./live-support");
 const agentConfig = require("../config/agent-config");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
@@ -67,7 +68,7 @@ async function runCase(provider, runtime, name, prompt, check) {
     let response;
 
     try {
-        response = await provider.send(prompt);
+        response = await sendWithTimeout(provider, prompt);
     } catch (e) {
         console.log("SEND FAILED: " + e.message);
         return { name, ok: false, error: "send: " + e.message };
@@ -161,8 +162,11 @@ async function main() {
         chromePath: agentConfig.browser.chromePath,
         targetUrl: agentConfig.browser.targetUrls.glm,
         reuseExistingPage: args.reuse === true,
-        responseTimeout: 15 * 60 * 1000,
-        responseInitialTimeout: 120 * 1000,
+        // 实测：394 行代码的 long-code 用例约 229 秒，这里留到 8 分钟；
+        // 真正的"平台没给内容"由 responseContentGrace 提前判定，不会干等这么久。
+        responseTimeout: 8 * 60 * 1000,
+        responseInitialTimeout: 150 * 1000,
+        responseContentGrace: 4 * 60 * 1000,
     });
 
     console.log("[glm-comprehensive] starting provider...");
@@ -279,7 +283,9 @@ async function main() {
                     ["有 function greet", text.indexOf("function greet") !== -1],
                     ["代码围栏成对（偶数）", fenceCount > 0 && fenceCount % 2 === 0],
                     ["中文正文 >= 500 字", chineseCount >= 500],
-                    ["正文 >= 1000 字符", text.length >= 1000],
+                    // prompt 只要求 "至少 500 个中文字符"，500 汉字 + 标点/标题/代码
+                    // 一定超过 600 字符；这里用作"内容没有被截断"的下限。
+                    ["正文 >= 600 字符", text.length >= 600],
                 ];
             }
         )
@@ -294,6 +300,10 @@ async function main() {
             [
                 "你是一个 XML Agent。可用 XML Action 示例：",
                 exampleLine,
+                "",
+                // GLM 是 agent 型产品，看到 write 示例会去调用自己的文件工具，
+                // 结果只留下工具卡片、没有正文，必须先明确禁止。
+                "重要：不要调用任何工具，不要创建或修改真实文件，只以纯文本输出 XML。",
                 "",
                 "请写一个 write action 写入 src/toolkit.js。",
                 "最终 JavaScript 源文件必须不少于 120 行，并且实际代码内容至少 500 个字符。",
@@ -414,10 +424,15 @@ async function main() {
                         text.indexOf("Users") !== -1 || text.indexOf(BACKSLASH) !== -1,
                     ],
                     [
+                        // 模型可能写 ASCII（<=/>=/!=），也可能写 Unicode（≤/≥/≠），
+                        // prompt 用的是中文描述，两种都算符合要求。
                         "有数学比较符号",
                         text.indexOf("<=") !== -1 ||
                             text.indexOf(">=") !== -1 ||
-                            text.indexOf("!=") !== -1,
+                            text.indexOf("!=") !== -1 ||
+                            text.indexOf("≤") !== -1 ||
+                            text.indexOf("≥") !== -1 ||
+                            text.indexOf("≠") !== -1,
                     ],
                     ["无替换字符（无乱码）", response.indexOf("\uFFFD") === -1],
                 ];

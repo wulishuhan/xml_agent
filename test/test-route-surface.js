@@ -25,11 +25,11 @@ function check(name, ok, detail) {
 }
 
 // 冻结的路由表（顺序无关，按字典序比较）。
-// "ALL" 表示用 app.all() 注册（会覆盖所有 HTTP 方法），
-// 目前只有插件自定义接口走 app.all（GET/POST/PUT/DELETE 由插件自己注册）。
+// "ALL" 表示用 app.all() 注册（会覆盖所有 HTTP 方法）。
+// "MOUNT" 表示用 app.use() 挂在某个前缀上（插件自定义接口就是这种：
+// 具体 method + path 由插件自己注册，宿主只知道前缀，所以按处理器的名字记录）。
 const EXPECTED = [
-    "ALL /api/plugins/:name/api",
-    "ALL /api/plugins/:name/api/{*splat}",
+    "MOUNT pluginApi",
     "DELETE /api/sessions/:id",
     "GET /api/agent/config",
     "GET /api/browser/detect",
@@ -84,6 +84,11 @@ function collectRoutes(app) {
             }
         } else {
             lastMiddleware = layer.name || "anonymous";
+            // 挂载式路由（app.use(prefix, handler)）只会留下中间件层，
+            // Express 不暴露挂载前缀，因此按处理器名字记录。
+            if (lastMiddleware === "pluginApi") {
+                routes.push("MOUNT " + lastMiddleware);
+            }
         }
     }
     return { routes, lastMiddleware };
