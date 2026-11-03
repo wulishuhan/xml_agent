@@ -25,7 +25,7 @@
 | ① 动作定义对象化                                           | ✅ 已实现 | 6 个内置动作迁入 `actions/`，`runtime.js` 只剩沙箱 + 查表；`xml-parse.js` 校验走同一张表                       |
 | ④ `server.js` 拆路由                                       | ✅ 已实现 | 653 → 161 行，路由按领域拆到 `webui/routes/*.js`；`test-route-surface.js` 冻结接口表                           |
 | P1 配置单源（`config/schema.js`）                          | ✅ 已实现 | 默认值 / env 名 / 校验 / 浏览器设置归一化收敛到一处，四处副本已删，含"必须同源"的漂移守卫测试                  |
-| P2 截图迁移为插件                                          | ✅ 已实现 | `plugins/builtin/screenshot`，内置动作表只剩 5 个；代价：`XML_AGENT_PLUGINS=0` 时截图不可用（启动日志会提示）  |
+| P2 截图迁移为插件                                          | ✅ 已实现 | `plugins/builtin/screenshot` 自包含（动作 + 引擎 `engine/`），内置动作表只剩 5 个；核心无截图实现、无截图 HTTP 接口。删掉插件目录即彻底移除，`<screenshot>` 报 `Unknown XML Action` |
 | P3 Provider 契约化                                         | ✅ 已实现 | `providers/registry.js`：元数据 + 契约校验 + 插件 provider 接入；地址与会话 id 正则由 provider 声明            |
 | P4 声明式 UI 面板                                          | ✅ 已实现 | `note/status/table/action` 四种 block 由宿主渲染；数据来自 `ctx.api.*`（限定插件命名空间，插件零 JS 进浏览器） |
 | P5 权限授权 UI / secrets 管理                              | ⚠️ 部分   | 权限已有可视化授权界面；`secrets.json` 仍需手工编辑                                                            |
@@ -252,9 +252,10 @@ plugins/                          ← 内置插件（随包分发；electron-bui
     registry.js                   ← 发现 / 校验 / 排序 / 加载 / 隔离 / 状态
     sdk.js                        ← definePlugin() / defineAction() / 作用域门面 / 测试工具
     builtin/
-        screenshot/               ← P2 迁移目标：证明"非核心能力也能以插件存在"
+        screenshot/               ← P2 迁移目标：非核心能力以插件存在，且引擎随插件走
             plugin.json
-            index.js
+            index.js              ← 动作定义（validate / run / meta）
+            engine/               ← 截图引擎：take-screenshot / screenshot / windows / proc
         audit-log/                ← hook 插件示例
         fetch/                    ← action 插件示例（域名白名单）
     README.md                     ← 插件开发说明

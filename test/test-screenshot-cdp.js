@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const browserSettings = require("../webui/browser-settings");
-const { takeScreenshot } = require("../webui/screenshot-api");
+const { takeScreenshot } = require("../plugins/builtin/screenshot/engine/take-screenshot");
 async function run() {
     const workspace = path.resolve(__dirname, "..", "test-output-screenshot");
     fs.mkdirSync(workspace, { recursive: true });

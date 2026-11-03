@@ -10,7 +10,10 @@ v1.1.0 起路由按领域拆到 webui/routes/：
     agent-config.js  agent / runtime / session 运行参数
     plugins.js       插件管理与插件自定义接口
     providers.js     provider 列表
-    screenshot-api.js / upload-api.js（更早就已独立）
+    upload-api.js    用户附件上传（前端在用）
+
+注意：截图没有 HTTP 入口。它是 screenshot 插件的 XML 动作，由模型调用，
+引擎实现随插件放在 plugins/builtin/screenshot/engine/，核心不参与。
 
 本文件只负责：启动顺序（会话恢复 → 配置应用 → 插件加载）、静态资源、
 路由注册顺序、HTTP 服务生命周期。新增接口请加到对应的 routes/*.js。
@@ -23,7 +26,6 @@ const { SessionManager } = require("./session/session-manager");
 const browserSettings = require("./browser-settings");
 const agentConfigApi = require("./agent-config-api");
 const { normalizeImages, normalizeConversationId } = require("./request-input");
-const { registerScreenshotRoutes } = require("./screenshot-api");
 const { registerUploadRoutes } = require("./upload-api");
 const { registerSessionRoutes } = require("./routes/sessions");
 const { registerWorkspaceRoutes } = require("./routes/workspace");
@@ -98,8 +100,7 @@ const frontendDistPath = path.join(__dirname, "frontend", "dist");
 
 app.use(express.json());
 
-// 截图与上传：Web 版与桌面版共用同一份本地 Node 后端实现。
-registerScreenshotRoutes(app);
+// 用户附件上传（Web 版与桌面版共用同一份本地 Node 实现）。
 registerUploadRoutes(app);
 // 插件管理 + 插件自定义接口；provider 列表。
 registerPluginRoutes(app);

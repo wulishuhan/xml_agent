@@ -1,0 +1,34 @@
+refactor: 截图引擎下沉到插件，核心不再持有插件能力
+
+问题：截图早已迁成插件（P2），但实现仍留在核心——
+capture/ 四个文件 851 行只服务 screenshot 插件，webui 还单开了一条
+POST /api/screenshot，而这条路由没有任何生产消费者（前端不调、插件不调，
+只有测试在调）。也就是说"插件能力"实际仍长在内核里。
+
+改动：
+- capture/{take-screenshot,screenshot,windows,proc}.js 整体迁到
+  plugins/builtin/screenshot/engine/（git mv 保留历史）。
+  插件入口改为 require("./engine/take-screenshot")，
+  核心目录已无任何截图实现引用。
+- 删除 webui/screenshot-api.js 与 POST /api/screenshot 路由，
+  test-route-surface 期望表同步（33 条）。
+- 删除 test/test-screenshot-api.js（它只测那层 HTTP 壳）；
+  越界路径拒绝等安全属性由 test-screenshot.js 能力层覆盖。
+- package.json build.files 去掉 capture/**/*（plugins/**/* 已包含）。
+- 文档：ARCHITECTURE_FLOW 移除 Capture 行并注明归属；
+  PLUGIN_DESIGN 的 P2 与目录树补 engine/；
+  PLUGIN_API 修正保留名列表（screenshot 早已不在其中）与同名冲突行为。
+
+保持不变的边界：
+- read / write / exec / answer / done 仍是内置动作。
+  前三个是 agent 的基本工作手段（提示词深度耦合，插件关闭时必须可用），
+  answer / done 是 XML 协议的终止语义，都不是"可选能力"。
+- POST /api/uploads 保留（前端 agent-api.js 在用，属 UI 能力）。
+
+验证：
+- 删掉整个 plugins/builtin/screenshot 目录后核心仍正常启动，
+  插件 2 个 / 动作 1 个，<screenshot> 报 Unknown XML Action。
+- test:offline 全绿（unit 168 / core 207 / plugins 97）。
+- test-screenshot-robustness 21/21，含真实截屏与真实窗口枚举。
+- 服务冒烟：/api/plugins 200、/api/uploads 400（存在）、
+  /api/screenshot 404（已移除）。

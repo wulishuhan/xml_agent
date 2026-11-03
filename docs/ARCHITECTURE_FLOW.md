@@ -106,9 +106,13 @@ graph TB
 | **Runtime** | 安全沙箱、动作分发、路径校验 | `runtime.js`, `actions/` |
 | **Plugins** | 能力扩展、权限管理、审计日志 | `plugins/registry.js`（门面）, `plugins/registry/*.js`（加载/存储/执行/配置）, `plugins/sdk.js` |
 | **Provider** | 模型适配、CDP 连接、会话管理 | `providers/registry.js`, `providers/browser-chat.js`, `providers/browser-agent.js` |
-| **Capture** | 截图：平台分派、窗口枚举、子进程 | `capture/take-screenshot.js`, `capture/screenshot.js`, `capture/windows.js`, `capture/proc.js` |
 | **Parser** | XML 语法解析、动作校验 | `parse/xml-parse.js` |
 | **WebUI** | 用户界面、会话管理、实时反馈 | `webui/server.js`, `webui/frontend/` |
+
+> **截图不在核心**。它是 `plugins/builtin/screenshot` 这一个插件的能力，
+> 引擎（平台分派 / 窗口枚举 / 子进程）随插件放在 `plugins/builtin/screenshot/engine/`。
+> 核心目录不包含任何截图实现，也没有截图 HTTP 接口——删除整个插件目录即可彻底移除该能力，
+> 此时 `<screenshot>` 会被解析层报为 `Unknown XML Action`。
 
 ## 6. 大模块的拆分现状
 
@@ -117,7 +121,7 @@ graph TB
 | 原模块 | 拆分后 | 说明 |
 | :--- | :--- | :--- |
 | `plugins/registry.js`（1311 行） | `registry.js`（门面 + 单例）+ `registry/{storage,loader,context,catalog,present,api,settings,invoke}.js` | 各 mixin 挂回 `PluginRegistry.prototype`，`this` 语义不变 |
-| `capture/screenshot.js`（589 行） | `screenshot.js`（平台分派）+ `windows.js`（窗口枚举 / PowerShell）+ `proc.js`（子进程） | 平台差异隔离，工具函数从原文件继续 re-export |
+| `capture/screenshot.js`（589 行） | `plugins/builtin/screenshot/engine/` 下的 `screenshot.js`（平台分派）+ `windows.js`（窗口枚举 / PowerShell）+ `proc.js`（子进程） | 平台差异隔离；整个 `engine/` 只服务 screenshot 插件，因此随插件走 |
 | `agent-core.js`（491 行） | `agent-core.js`（循环与收尾）+ `agent/step.js`（单轮闭环）+ `agent/inputs.js`（入参归一化） | `run()` 只保留循环骨架 |
 
 ## 7. 数据流向总结

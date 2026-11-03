@@ -9,8 +9,8 @@ const {
     normalizeClip,
     normalizeTimeout,
     toBoolean,
-} = require("../webui/screenshot-api");
-const { materializeWindowsScript } = require("../capture/windows");
+} = require("../plugins/builtin/screenshot/engine/take-screenshot");
+const { materializeWindowsScript } = require("../plugins/builtin/screenshot/engine/windows");
 const DOLLAR = String.fromCharCode(36);
 let passed = 0;
 let failed = 0;

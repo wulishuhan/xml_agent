@@ -21,8 +21,9 @@
 - 失败/成功都带 plugin 与 durationMs，审计日志里能看出它是插件动作。
 */
 
-// 直接依赖内核能力层，不经 webui —— 插件不应反向依赖 UI 层。
-const { takeScreenshot } = require("../../../capture/take-screenshot");
+// 截图引擎随插件走（engine/），核心目录不再有截图实现。
+// 这样删掉整个插件目录即可彻底移除这项能力，内核不留残骸。
+const { takeScreenshot } = require("./engine/take-screenshot");
 const { normalizeScreenshotTargets } = require("../../../parse/xml-parse");
 const { CHAR_LT, CHAR_GT, CHAR_SLASH } = require("../../../parse/xml-chars");
 

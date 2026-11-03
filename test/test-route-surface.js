@@ -57,7 +57,6 @@ const EXPECTED = [
     "POST /api/plugins/:name/enabled",
     "POST /api/plugins/reload",
     "POST /api/run",
-    "POST /api/screenshot",
     "POST /api/sessions/:id/stop",
     "POST /api/sessions/new",
     "POST /api/storage/clean",

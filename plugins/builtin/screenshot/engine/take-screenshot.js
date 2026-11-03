@@ -1,14 +1,14 @@
 /**
  * 截图能力入口（参数校验 + 路径沙箱 + 结果归一化）
-
-与 capture/screenshot.js 的分工：
-- `screenshot.js`  平台原语（PowerShell/C#、CDP、跨平台命令），只认绝对路径与结构化参数；
-- `take-screenshot.js`（本文件）面向调用方的稳定入口：校验 source/path/clip，
-                       把相对路径解析到 workspace 内，并把结果归一化成相对路径。
-
-本文件不含任何 HTTP 概念，因此 webui 路由、plugins/builtin/screenshot、测试
-三方共用同一份实现，而不是让插件反向依赖 webui。
-*/
+ *
+ * 与同目录 screenshot.js 的分工：
+ * - `screenshot.js`  平台原语（PowerShell/C#、CDP、跨平台命令），只认绝对路径与结构化参数；
+ * - `take-screenshot.js`（本文件）面向调用方的稳定入口：校验 source/path/clip，
+ *                       把相对路径解析到 workspace 内，并把结果归一化成相对路径。
+ *
+ * 归属：整个 engine/ 是 screenshot 插件的私有实现，核心目录不引用它。
+ * 这一层刻意不含任何 HTTP / WebUI 概念——截图没有 HTTP 入口，它只是插件的 XML 动作。
+ */
 
 const path = require("path");
 const fs = require("fs");

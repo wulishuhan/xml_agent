@@ -4,7 +4,7 @@ const fs = require("fs");
 const browserSettings = require("../webui/browser-settings");
 const { DeepSeekProvider, extractXmlFromCandidate } = require("../providers/deepseek");
 const { extractXML } = require("../parse/xml-parse");
-const { takeScreenshot } = require("../webui/screenshot-api");
+const { takeScreenshot } = require("../plugins/builtin/screenshot/engine/take-screenshot");
 // ============================================================
 // DeepSeek CDP 浏览器端到端测试用例（真实连接 CDP + 真实对话）
 //

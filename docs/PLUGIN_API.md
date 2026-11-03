@@ -143,7 +143,11 @@ promptResult: (result) => ({
 `run` 的返回约定与内置动作完全一致：`{ ok, action, error?, ... }`。registry 会自动补上
 `plugin` 与 `durationMs` 两个字段；`ok: false` 时 `error` 会走既有的 Runtime 错误提示通道回给模型。
 
-**内置动作名保留**：`read` `write` `exec` `screenshot` `answer` `done`。插件不得占用（加载期直接拒绝）。
+**内置动作名保留**：`read` `write` `exec` `answer` `done`。插件不得占用（加载期直接拒绝）。
+
+`screenshot` **不在保留名里**——它本身就是插件动作（`plugins/builtin/screenshot`）。
+但它同样不能和别人重名：任何两个插件注册同名动作时，后加载的那个会整体加载失败，
+报 `REGISTRATION_CONFLICT`（"动作名 X 已被插件 Y 占用"）。
 
 ---
 
@@ -442,8 +446,8 @@ sdk.assertPluginConformance(require("./index.js")); // 抛错即不符合契约
 
 内置插件是最好的参考实现：
 
-| 插件                         | 演示了什么                                                                                                                                                       |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `plugins/builtin/fetch`      | action + schema 校验 + `ctx.http` + `meta.promptResult`（回给模型的精简视图）                                                                                    |
-| `plugins/builtin/screenshot` | action + 自定义 `validate` + `meta.fastPath` + `meta.collectImages`（产物自动上传给模型）；**它本来是内置动作，v1.1.0 迁成插件**，可作为"把已有能力插件化"的模板 |
-| `plugins/builtin/audit-log`  | hook + `ctx.api` + 声明式面板（三合一）                                                                                                                          |
+| 插件                         | 演示了什么                                                                                                                                                                                                                       |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `plugins/builtin/fetch`      | action + schema 校验 + `ctx.http` + `meta.promptResult`（回给模型的精简视图）                                                                                                                                                    |
+| `plugins/builtin/screenshot` | action + 自定义 `validate` + `meta.fastPath` + `meta.collectImages`（产物自动上传给模型）+ `engine/` 私有实现；**它本来是内置动作，v1.1.0 迁成插件，之后又把引擎从核心 `capture/` 下沉进来**，可作为"把已有能力插件化"的完整模板 |
+| `plugins/builtin/audit-log`  | hook + `ctx.api` + 声明式面板（三合一）                                                                                                                                                                                          |
