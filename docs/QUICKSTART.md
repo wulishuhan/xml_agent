@@ -1,4 +1,3 @@
-
 # XML Agent 快速上手指南
 
 本文档旨在帮助新人快速理解项目架构、核心概念及开发流程。
@@ -7,6 +6,7 @@
 
 XML Agent 是一个基于 Node.js 实现的工程型 AI Agent Framework。
 **核心理念**：
+
 - **LLM 负责思考**：理解任务、规划步骤。
 - **Runtime 负责执行**：安全地操作文件系统、执行命令。
 - **XML Action 负责通信**：Agent 与 Runtime 之间通过标准化的 XML 协议交互。
@@ -30,6 +30,7 @@ graph TD
 ```
 
 ### 关键模块
+
 - **Agent (`agent.js`, `agent-core.js`)**: 编排者，负责加载 Provider、构建 Prompt、解析 LLM 返回的 XML、调用 Runtime。
 - **Runtime (`runtime.js`)**: 执行者，提供沙箱环境，处理 `read`, `write`, `exec` 等动作。
 - **Provider (`providers/`)**: 模型后端适配器，支持 ChatGPT, Qwen, DeepSeek, GLM 等。
@@ -40,6 +41,7 @@ graph TD
 ## 3. 快速开始
 
 ### 3.1 环境要求
+
 - Node.js >= 20.19
 - Windows 10/11 (x64)
 - Google Chrome 或 Microsoft Edge (用于 CDP 自动化)
@@ -60,13 +62,15 @@ node agent.js --workspace "D:\code\my-project" "创建一个简单的 Node.js He
 ```
 
 ### 3.3 浏览器配置
+
 Agent 通过 CDP (Chrome DevTools Protocol) 控制浏览器。
+
 - **默认**: Edge (端口 9223)
 - **切换**: 在 WebUI 右上角 Settings -> Browser Settings 中可切换为 Chrome (端口 9222)。
-- **手动启动**: 
-  ```powershell
-  & "C:\Program Files\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9223 --user-data-dir="$PWD\edge-profile"
-  ```
+- **手动启动**:
+    ```powershell
+    & "C:\Program Files\Microsoft\Edge\Application\msedge.exe" --remote-debugging-port=9223 --user-data-dir="$PWD\edge-profile"
+    ```
 
 ## 4. XML Action 协议
 
@@ -74,17 +78,19 @@ LLM 通过输出特定的 XML 标签来指令 Agent 执行操作。每次只能�
 
 ### 内置动作
 
-| 动作 | 描述 | 示例 |
-| :--- | :--- | :--- |
-| `<read>` | 读取文件或目录 | `<read path="package.json"/>` |
-| `<write>` | 写入文件 (自动创建目录) | `<write path="src/app.js"><![CDATA[console.log('hi');]]></write>` |
-| `<exec>` | 执行命令 | `<exec command="npm install"/>` |
-| `<screenshot>` | 截图 (插件提供) | `<screenshot source="screen" path="shot.png"/>` |
-| `<answer>` | 返回最终答案 | `<answer><![CDATA[任务完成]]></answer>` |
-| `<done/>` | 结束任务 | `<done/>` |
+| 动作           | 描述                    | 示例                                                              |
+| :------------- | :---------------------- | :---------------------------------------------------------------- |
+| `<read>`       | 读取文件或目录          | `<read path="package.json"/>`                                     |
+| `<write>`      | 写入文件 (自动创建目录) | `<write path="src/app.js"><![CDATA[console.log('hi');]]></write>` |
+| `<exec>`       | 执行命令                | `<exec command="npm install"/>`                                   |
+| `<screenshot>` | 截图 (插件提供)         | `<screenshot source="screen" path="shot.png"/>`                   |
+| `<answer>`     | 返回最终答案            | `<answer><![CDATA[任务完成]]></answer>`                           |
+| `<done/>`      | 结束任务                | `<done/>`                                                         |
 
 ### 插件动作 (v1.1.0+)
+
 从 v1.1.0 起，支持通过插件新增自定义动作。例如内置的 `<fetch>` 动作：
+
 ```xml
 <fetch url="http://127.0.0.1:3000/api" method="GET"/>
 ```
@@ -94,6 +100,7 @@ LLM 通过输出特定的 XML 标签来指令 Agent 执行操作。每次只能�
 插件允许在不修改核心代码的情况下扩展 Agent 能力。
 
 ### 插件类型
+
 1. **Action**: 新增 XML 动作 (如 `fetch`)。
 2. **Hook**: 监听生命周期事件 (如 `audit-log` 记录审计日志)。
 3. **Provider**: 新增模型后端支持。
@@ -103,32 +110,32 @@ LLM 通过输出特定的 XML 标签来指令 Agent 执行操作。每次只能�
 
 1. 创建目录 `~/.xml-agent/plugins/echo/`
 2. `plugin.json`:
-   ```json
-   {
-     "name": "echo",
-     "version": "1.0.0",
-     "kind": "action",
-     "apiVersion": 1,
-     "permissions": []
-   }
-   ```
+    ```json
+    {
+        "name": "echo",
+        "version": "1.0.0",
+        "kind": "action",
+        "apiVersion": 1,
+        "permissions": []
+    }
+    ```
 3. `index.js`:
-   ```js
-   module.exports = {
-     setup(ctx) {
-       ctx.actions.register({
-         name: "echo",
-         schema: { attrs: { text: { type: "string", required: true } } },
-         run(node, ctx) {
-           return { ok: true, action: "echo", text: ctx.attrs.text };
-         },
-         meta: {
-           prompt: { group: "plugin", usage: '<echo text="hello"/>' }
-         }
-       });
-     }
-   };
-   ```
+    ```js
+    module.exports = {
+        setup(ctx) {
+            ctx.actions.register({
+                name: "echo",
+                schema: { attrs: { text: { type: "string", required: true } } },
+                run(node, ctx) {
+                    return { ok: true, action: "echo", text: ctx.attrs.text };
+                },
+                meta: {
+                    prompt: { group: "plugin", usage: '<echo text="hello"/>' },
+                },
+            });
+        },
+    };
+    ```
 4. 重启服务或调用 `POST /api/plugins/reload`。
 
 详细 API 参见 [PLUGIN_API.md](./PLUGIN_API.md) 和 [PLUGIN_DESIGN.md](./PLUGIN_DESIGN.md)。
@@ -136,19 +143,19 @@ LLM 通过输出特定的 XML 标签来指令 Agent 执行操作。每次只能�
 ## 6. 项目结构概览
 
 xml_agent/
-├── actions/            # 内置动作定义 (read/write/exec/answer/done)
-├── plugins/            # 插件系统内核及内置插件
-├── providers/          # 模型后端适配器
-├── config/             # 配置管理 (schema.js 为单一来源)
-├── parse/              # XML 解析器
-├── prompts/            # 系统提示词构建
-├── webui/              # Web 界面与服务端
-│   ├── frontend/       # Vue3 前端
-│   ├── routes/         # API 路由
-│   └── server.js       # Express 入口
-├── electron/           # 桌面应用主进程
-├── docs/               # 详细设计文档
-└── test/               # 测试用例
+├── actions/ # 内置动作定义 (read/write/exec/answer/done)
+├── plugins/ # 插件系统内核及内置插件
+├── providers/ # 模型后端适配器
+├── config/ # 配置管理 (schema.js 为单一来源)
+├── parse/ # XML 解析器
+├── prompts/ # 系统提示词构建
+├── webui/ # Web 界面与服务端
+│ ├── frontend/ # Vue3 前端
+│ ├── routes/ # API 路由
+│ └── server.js # Express 入口
+├── electron/ # 桌面应用主进程
+├── docs/ # 详细设计文档
+└── test/ # 测试用例
 
 ## 7. 常用命令
 
@@ -183,4 +190,5 @@ npm run electron:build
 - **浏览器依赖**: 确保 Chrome/Edge 已安装且 CDP 端口未被占用。
 
 ---
-*最后更新: 2026-11-02*
+
+_最后更新: 2026-11-02_

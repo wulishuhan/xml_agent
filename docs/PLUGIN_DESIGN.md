@@ -13,22 +13,22 @@
 
 本文是设计蓝图。v1.1.0 已实现**插件内核**与 **P0 的 ①③**，其余为后续迭代：
 
-| 设计项                                                     | 状态      | 说明                                                                                                           |
-| ---------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------- |
-| 插件注册表（发现 / 校验 / 隔离 / 权限 / 执行 / 钩子）      | ✅ 已实现 | `plugins/registry.js` + `plugins/registry/`                                                                                          |
-| 插件 SDK（清单 / 动作定义 / schema / 版本区间 / 契约自检） | ✅ 已实现 | `plugins/sdk.js`                                                                                               |
-| 能力门面（workspace fs / 受控 http / storage / secrets）   | ✅ 已实现 | `plugins/capabilities.js`                                                                                      |
-| 内置示例插件 `fetch`（action）/ `audit-log`（hook）        | ✅ 已实现 | `plugins/builtin/`                                                                                             |
-| 插件管理 HTTP API + 权限接口                               | ✅ 已实现 | `webui/routes/plugins.js`                                                                                      |
-| ③ 事件格式化注册表 + 未知事件兜底                          | ✅ 已实现 | `agent-session.js` 三层格式化                                                                                  |
-| ② Prompt 构建器（插件区块自动生成 + 预算裁剪）             | ⚠️ 部分   | 插件区块已自动生成；内置动作的完整文档仍手写在 `prompts/system-prompt.js`（定义里已带简版用法）                |
-| ① 动作定义对象化                                           | ✅ 已实现 | 6 个内置动作迁入 `actions/`，`runtime.js` 只剩沙箱 + 查表；`xml-parse.js` 校验走同一张表                       |
-| ④ `server.js` 拆路由                                       | ✅ 已实现 | 653 → 161 行，路由按领域拆到 `webui/routes/*.js`；`test-route-surface.js` 冻结接口表                           |
-| P1 配置单源（`config/schema.js`）                          | ✅ 已实现 | 默认值 / env 名 / 校验 / 浏览器设置归一化收敛到一处，四处副本已删，含"必须同源"的漂移守卫测试                  |
+| 设计项                                                     | 状态      | 说明                                                                                                                                                                                |
+| ---------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 插件注册表（发现 / 校验 / 隔离 / 权限 / 执行 / 钩子）      | ✅ 已实现 | `plugins/registry.js` + `plugins/registry/`                                                                                                                                         |
+| 插件 SDK（清单 / 动作定义 / schema / 版本区间 / 契约自检） | ✅ 已实现 | `plugins/sdk.js`                                                                                                                                                                    |
+| 能力门面（workspace fs / 受控 http / storage / secrets）   | ✅ 已实现 | `plugins/capabilities.js`                                                                                                                                                           |
+| 内置示例插件 `fetch`（action）/ `audit-log`（hook）        | ✅ 已实现 | `plugins/builtin/`                                                                                                                                                                  |
+| 插件管理 HTTP API + 权限接口                               | ✅ 已实现 | `webui/routes/plugins.js`                                                                                                                                                           |
+| ③ 事件格式化注册表 + 未知事件兜底                          | ✅ 已实现 | `agent-session.js` 三层格式化                                                                                                                                                       |
+| ② Prompt 构建器（插件区块自动生成 + 预算裁剪）             | ⚠️ 部分   | 插件区块已自动生成；内置动作的完整文档仍手写在 `prompts/system-prompt.js`（定义里已带简版用法）                                                                                     |
+| ① 动作定义对象化                                           | ✅ 已实现 | 6 个内置动作迁入 `actions/`，`runtime.js` 只剩沙箱 + 查表；`xml-parse.js` 校验走同一张表                                                                                            |
+| ④ `server.js` 拆路由                                       | ✅ 已实现 | 653 → 161 行，路由按领域拆到 `webui/routes/*.js`；`test-route-surface.js` 冻结接口表                                                                                                |
+| P1 配置单源（`config/schema.js`）                          | ✅ 已实现 | 默认值 / env 名 / 校验 / 浏览器设置归一化收敛到一处，四处副本已删，含"必须同源"的漂移守卫测试                                                                                       |
 | P2 截图迁移为插件                                          | ✅ 已实现 | `plugins/builtin/screenshot` 自包含（动作 + 引擎 `engine/`），内置动作表只剩 5 个；核心无截图实现、无截图 HTTP 接口。删掉插件目录即彻底移除，`<screenshot>` 报 `Unknown XML Action` |
-| P3 Provider 契约化                                         | ✅ 已实现 | `providers/registry.js`：元数据 + 契约校验 + 插件 provider 接入；地址与会话 id 正则由 provider 声明            |
-| P4 声明式 UI 面板                                          | ✅ 已实现 | `note/status/table/action` 四种 block 由宿主渲染；数据来自 `ctx.api.*`（限定插件命名空间，插件零 JS 进浏览器） |
-| P5 权限授权 UI / secrets 管理                              | ⚠️ 部分   | 权限已有可视化授权界面；`secrets.json` 仍需手工编辑                                                            |
+| P3 Provider 契约化                                         | ✅ 已实现 | `providers/registry.js`：元数据 + 契约校验 + 插件 provider 接入；地址与会话 id 正则由 provider 声明                                                                                 |
+| P4 声明式 UI 面板                                          | ✅ 已实现 | `note/status/table/action` 四种 block 由宿主渲染；数据来自 `ctx.api.*`（限定插件命名空间，插件零 JS 进浏览器）                                                                      |
+| P5 权限授权 UI / secrets 管理                              | ⚠️ 部分   | 权限已有可视化授权界面；`secrets.json` 仍需手工编辑                                                                                                                                 |
 
 **P0 ① 的落地方式**（等价性由 `test/test-builtin-actions.js` 的 53 项用例锁死）：
 
@@ -304,21 +304,21 @@ module.exports = {
 
 `ctx` 提供的全部能力（**刻意不暴露 raw `fs` / raw `fetch` / `child_process`**）：
 
-| 成员                                                               | 说明                                                                                         |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `ctx.actions.register`                                             | 注册 XML 动作（校验期即做权限与 schema 检查）                                                |
-| `ctx.providers.register(name, factory, meta)`                      | 注册 Provider（`meta.targetUrl` 自动并入浏览器 targetUrls）                                  |
-| `ctx.hooks.on(event, handler)`                                     | 观察生命周期：`session.created/finished`、`runtime.result`、`agent.error` 等                 |
-| `ctx.ui.registerPanel / registerSettings / registerComposerAction` | 声明式 UI 贡献                                                                               |
-| `ctx.fs`                                                           | workspace 内受控文件访问（复用 Runtime 的 `resolvePath`，天然不能越界）                      |
-| `ctx.http`                                                         | 受控请求：域名白名单、超时、响应体积上限、禁止跨域重定向                                     |
-| `ctx.permissions.check(scope)`                                     | 权限控制器；申请未授权 scope 直接抛错                                                        |
-| `ctx.secrets.get(key)`                                             | 密钥读取，返回值在日志与 Trace 中自动脱敏                                                    |
-| `ctx.config`                                                       | 本插件配置（`configSchema` 默认值 + 用户覆盖，带类型校验）                                   |
+| 成员                                                               | 说明                                                                                            |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `ctx.actions.register`                                             | 注册 XML 动作（校验期即做权限与 schema 检查）                                                   |
+| `ctx.providers.register(name, factory, meta)`                      | 注册 Provider（`meta.targetUrl` 自动并入浏览器 targetUrls）                                     |
+| `ctx.hooks.on(event, handler)`                                     | 观察生命周期：`session.created/finished`、`runtime.result`、`agent.error` 等                    |
+| `ctx.ui.registerPanel / registerSettings / registerComposerAction` | 声明式 UI 贡献                                                                                  |
+| `ctx.fs`                                                           | workspace 内受控文件访问（复用 Runtime 的 `resolvePath`，天然不能越界）                         |
+| `ctx.http`                                                         | 受控请求：域名白名单、超时、响应体积上限、禁止跨域重定向                                        |
+| `ctx.permissions.check(scope)`                                     | 权限控制器；申请未授权 scope 直接抛错                                                           |
+| `ctx.secrets.get(key)`                                             | 密钥读取，返回值在日志与 Trace 中自动脱敏                                                       |
+| `ctx.config`                                                       | 本插件配置（`configSchema` 默认值 + 用户覆盖，带类型校验）                                      |
 | `ctx.storage`                                                      | 插件私有 JSON KV + `~/.xml-agent/plugin-data/<name>/`（与插件安装目录分开，避免被当成插件扫描） |
-| `ctx.events.emit(type, payload)`                                   | 事件必须带 `plugin.<name>.` 命名空间前缀                                                     |
-| `ctx.logger`                                                       | 结构化日志（自动带插件名前缀）                                                               |
-| `ctx.agent.uploadImagesToModel(paths)`                             | 唯一能让模型"看到"产物的通道（截图插件用它，从而把 `attachScreenshotToProvider` 从核心摘除） |
+| `ctx.events.emit(type, payload)`                                   | 事件必须带 `plugin.<name>.` 命名空间前缀                                                        |
+| `ctx.logger`                                                       | 结构化日志（自动带插件名前缀）                                                                  |
+| `ctx.agent.uploadImagesToModel(paths)`                             | 唯一能让模型"看到"产物的通道（截图插件用它，从而把 `attachScreenshotToProvider` 从核心摘除）    |
 
 ### 4.5 动作定义对象（对外契约）
 
@@ -355,18 +355,18 @@ Agent run
 只保留构造、`userDirs` getter 与单例，其余方法以 mixin 挂回 `PluginRegistry.prototype`
 （`this` 语义不变，导出面不变）：
 
-| 文件 | 职责 | 主要方法 |
-| :--- | :--- | :--- |
-| `registry.js` | 门面：构造、单例、默认配置 | `createRegistry` / `getRegistrySafe` / `defaultOptions` |
-| `registry/shared.js` | 常量与工具 | `createScopedLogger` / `runWithTimeout` |
-| `registry/storage.js` | 持久化 | `storageDir` / `_readState` / `_migrateLegacyStorage` |
-| `registry/loader.js` | 加载管线 | `load` / `_loadPlugin` / `_commit` |
-| `registry/context.js` | 上下文装配 | `_createSetupContext` / `_createRunContext` |
-| `registry/catalog.js` | 只读查询 | `getActionDefinition` / `listPromptContributions` |
-| `registry/present.js` | 对外展示 | `getStatus` / `getUiManifest` / `formatEvent` |
-| `registry/api.js` | 插件 HTTP 接口 | `callPluginApi` |
-| `registry/settings.js` | 配置与权限 | `getConfig` / `getPolicy` / `grantPermission` |
-| `registry/invoke.js` | 动作执行与钩子 | `invokeAction` / `emitHook` |
+| 文件                   | 职责                       | 主要方法                                                |
+| :--------------------- | :------------------------- | :------------------------------------------------------ |
+| `registry.js`          | 门面：构造、单例、默认配置 | `createRegistry` / `getRegistrySafe` / `defaultOptions` |
+| `registry/shared.js`   | 常量与工具                 | `createScopedLogger` / `runWithTimeout`                 |
+| `registry/storage.js`  | 持久化                     | `storageDir` / `_readState` / `_migrateLegacyStorage`   |
+| `registry/loader.js`   | 加载管线                   | `load` / `_loadPlugin` / `_commit`                      |
+| `registry/context.js`  | 上下文装配                 | `_createSetupContext` / `_createRunContext`             |
+| `registry/catalog.js`  | 只读查询                   | `getActionDefinition` / `listPromptContributions`       |
+| `registry/present.js`  | 对外展示                   | `getStatus` / `getUiManifest` / `formatEvent`           |
+| `registry/api.js`      | 插件 HTTP 接口             | `callPluginApi`                                         |
+| `registry/settings.js` | 配置与权限                 | `getConfig` / `getPolicy` / `grantPermission`           |
+| `registry/invoke.js`   | 动作执行与钩子             | `invokeAction` / `emitHook`                             |
 
 ### 4.7 权限模型（v1）
 

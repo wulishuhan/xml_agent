@@ -89,10 +89,7 @@ async function run() {
                 },
             }),
         });
-        check(
-            "收集函数抛错时降级为空数组",
-            channel.collect({ action: "broken" }).length === 0
-        );
+        check("收集函数抛错时降级为空数组", channel.collect({ action: "broken" }).length === 0);
     }
 
     {
@@ -130,7 +127,11 @@ async function run() {
         );
         const uploadedEvent = events.filter((e) => e.type === "screenshot.uploaded")[0];
         check("发出 screenshot.uploaded 事件", Boolean(uploadedEvent));
-        check("事件带步骤号", uploadedEvent && uploadedEvent.step === 7, String(uploadedEvent.step));
+        check(
+            "事件带步骤号",
+            uploadedEvent && uploadedEvent.step === 7,
+            String(uploadedEvent.step)
+        );
     }
 
     {
@@ -159,7 +160,11 @@ async function run() {
         const result = await channel.upload({ ok: true, action: "screenshot", path: "a.png" });
         check("provider 抛错时不向上抛", true);
         check("失败标记 uploaded=false", result.uploaded === false);
-        check("失败原因写入 uploadError", result.uploadError === "upload exploded", result.uploadError);
+        check(
+            "失败原因写入 uploadError",
+            result.uploadError === "upload exploded",
+            result.uploadError
+        );
     }
 
     {
@@ -196,7 +201,9 @@ async function run() {
         }
 
         {
-            const { channel, events } = makeChannel({ provider: makeProvider({ unsupported: true }) });
+            const { channel, events } = makeChannel({
+                provider: makeProvider({ unsupported: true }),
+            });
             await channel.uploadPreset([existing]);
             const skipped = events.filter((e) => e.type === "images.upload_skipped")[0];
             check("provider 不支持时发 upload_skipped", Boolean(skipped));
@@ -213,7 +220,9 @@ async function run() {
         }
 
         {
-            const { channel, events } = makeChannel({ provider: makeProvider({ shouldThrow: true }) });
+            const { channel, events } = makeChannel({
+                provider: makeProvider({ shouldThrow: true }),
+            });
             await channel.uploadPreset([existing]);
             const failed = events.filter((e) => e.type === "images.upload_error")[0];
             check("上传抛错时发 images.upload_error", failed && failed.error === "upload exploded");

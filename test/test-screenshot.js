@@ -3,7 +3,11 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const { extractXML, tryExtractScreenshotManually } = require("../parse/xml-parse");
-const { isPathInside, resolveOutputPath, takeScreenshot } = require("../plugins/builtin/screenshot/engine/take-screenshot");
+const {
+    isPathInside,
+    resolveOutputPath,
+    takeScreenshot,
+} = require("../plugins/builtin/screenshot/engine/take-screenshot");
 async function run() {
     // 1. 手动解析 screenshot 自闭合标签
     const manual = tryExtractScreenshotManually(
