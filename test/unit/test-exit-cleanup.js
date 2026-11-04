@@ -139,6 +139,89 @@ async function testExitGuardOnHardExit() {
     check("退出兜底结束后台进程（不再需要 stop()）", await waitGone(orphanPid), "pid=" + orphanPid);
 }
 
+/**
+信号路径：SIGTERM / SIGINT 的默认处理是直接终止进程，**不会**触发 exit 事件，
+因此入口必须在信号处理里显式调 cleanupAllSync（agent.js / webui/server.js / electron）。
+这里按同样写法验证：带 handler 的会被清掉，不带的会留成孤儿。
+*/
+async function testSignalPath() {
+    const buildScript = (withHandler) => {
+        const pidFile = path.join(
+            os.tmpdir(),
+            "xml-agent-signal-" + (withHandler ? "on" : "off") + "-" + process.pid + ".pid"
+        );
+        const lines = [
+            'const { spawn } = require("child_process");',
+            'const fs = require("fs");',
+            "const { createProcessRegistry, cleanupAllSync } = require(" +
+                JSON.stringify(REGISTRY_PATH) +
+                ");",
+            'const child = spawn(process.execPath, ["-e", "setTimeout(function(){},60000)"], {',
+            '    stdio: "ignore",',
+            "    detached: true,",
+            "    windowsHide: true,",
+            "});",
+            "child.unref();",
+            'createProcessRegistry().track(child, { command: "orphan", kind: "background" });',
+            "fs.writeFileSync(" + JSON.stringify(pidFile) + ", String(child.pid));",
+        ];
+        if (withHandler) {
+            // 与入口一致的写法：同步收摊后再退出
+            lines.push('process.on("SIGTERM", () => {');
+            lines.push('    cleanupAllSync("signal");');
+            lines.push("    process.exit(0);");
+            lines.push("});");
+            // Windows 上外部 kill 走的是 TerminateProcess，信号不会投递给 JS，
+            // 因此这里在进程内部触发一次，验证的是入口那段处理代码本身。
+            lines.push('setTimeout(() => process.emit("SIGTERM"), 100);');
+        }
+        lines.push("setInterval(function(){}, 1000);");
+        return { script: lines.join("\n"), pidFile };
+    };
+
+    const run = async (withHandler) => {
+        const { script, pidFile } = buildScript(withHandler);
+        try {
+            fs.unlinkSync(pidFile);
+        } catch (error) {
+            // 本来就不存在
+        }
+        const helper = spawn(process.execPath, ["-e", script], { stdio: "ignore" });
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline && !fs.existsSync(pidFile)) {
+            await sleep(50);
+        }
+        const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+        const exited = new Promise((resolve) => helper.on("exit", resolve));
+        if (!withHandler) {
+            // 对照组：没有信号处理，外部终止进程（Windows 上是 TerminateProcess，
+            // POSIX 上是默认 SIGTERM），JS 侧没有任何机会收摊
+            helper.kill("SIGTERM");
+        }
+        await exited;
+        const gone = await waitGone(pid);
+        try {
+            fs.unlinkSync(pidFile);
+        } catch (error) {
+            // ignore
+        }
+        return { pid, gone };
+    };
+
+    const withHandler = await run(true);
+    check("信号处理里同步收摊 → 后台进程被结束", withHandler.gone, "pid=" + withHandler.pid);
+
+    const withoutHandler = await run(false);
+    check(
+        "对照：信号无处理 → 后台进程留下（说明必须显式收摊）",
+        !withoutHandler.gone,
+        "pid=" + withoutHandler.pid
+    );
+    // 对照组留下的进程由这里清掉，别污染环境
+    killTreeSync(withoutHandler.pid);
+    await waitGone(withoutHandler.pid, 3000);
+}
+
 function testInstallExitGuardIdempotent() {
     const before = process.listenerCount("exit");
     installExitGuard();
@@ -156,6 +239,7 @@ async function main() {
     await testKillTreeSync();
     await testDisposeSyncAcrossRegistries();
     await testExitGuardOnHardExit();
+    await testSignalPath();
     testInstallExitGuardIdempotent();
 
     console.log("");

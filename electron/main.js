@@ -10,6 +10,7 @@ const {
     detectBrowserTypeFromPath,
 } = require("./chrome-finder");
 const { launchChromeWithCdp, checkCdpServer, getCdpVersionInfo } = require("./chrome-launcher");
+const { cleanupAllSync } = require("../processes/registry");
 const {
     readSettings,
     writeSettings,
@@ -669,6 +670,13 @@ async function shutdown() {
         await closeLaunchedBrowser();
     } catch (error) {
         console.warn("[Electron] Failed to close launched browser:", error.message);
+    }
+    // 兜底：stopAll 已经结束了各会话的进程，这里再同步扫一遍，
+    // 防止某个会话 stop 失败或从未进入会话表（例如刚起的后台命令）。
+    try {
+        cleanupAllSync("shutdown");
+    } catch (error) {
+        console.warn("[Electron] Failed to clean up child processes:", error.message);
     }
 }
 app.on("window-all-closed", () => {

@@ -28,6 +28,7 @@ const agentConfigApi = require("./agent-config-api");
 const { normalizeImages, normalizeConversationId } = require("./request-input");
 const { registerUploadRoutes } = require("./upload-api");
 const { registerSessionRoutes } = require("./routes/sessions");
+const { cleanupAllSync } = require("../processes/registry");
 const { registerWorkspaceRoutes } = require("./routes/workspace");
 const { registerStorageRoutes } = require("./routes/storage");
 const { registerBrowserRoutes } = require("./routes/browser");
@@ -173,6 +174,9 @@ if (require.main === module) {
         }
         shuttingDownBySignal = true;
         await shutdown();
+        // 信号路径不会触发 process 的 exit 事件，走不到 registry 的退出兜底，
+        // 因此这里同步收一次：shutdown 里 stopAll 抛错时也能保证进程不残留。
+        cleanupAllSync("signal");
         process.exit(0);
     };
     for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {

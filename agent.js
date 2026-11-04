@@ -3,6 +3,7 @@ const { saveHistory } = require("./workspace/history");
 const { saveReport } = require("./workspace/report");
 const agentConfig = require("./config/agent-config");
 const logger = require("./logger");
+const { cleanupAllSync } = require("./processes/registry");
 
 function parseArgs() {
     const args = process.argv.slice(2);
@@ -102,6 +103,28 @@ async function main() {
 
         logger.info("Running in background mode");
     }
+
+    // 信号路径不会触发 process 的 exit 事件（实测 SIGTERM / SIGINT 都是直接终止），
+    // 所以必须在这里显式收摊，否则 --background 启动的命令会留成孤儿。
+    // 后台模式的 SIGINT 语义保持原样（忽略），只处理 SIGTERM / SIGHUP。
+    let stoppingBySignal = false;
+    const stopBySignal = (signal) => {
+        if (stoppingBySignal) {
+            return;
+        }
+        stoppingBySignal = true;
+        logger.warn("Received " + signal + ", stopping child processes...");
+        const killed = cleanupAllSync("signal");
+        if (killed > 0) {
+            logger.info("Stopped " + killed + " child process(es)");
+        }
+        process.exit(0);
+    };
+    if (!background) {
+        process.on("SIGINT", () => stopBySignal("SIGINT"));
+    }
+    process.on("SIGTERM", () => stopBySignal("SIGTERM"));
+    process.on("SIGHUP", () => stopBySignal("SIGHUP"));
 
     const agent = new Agent({
         workspace,

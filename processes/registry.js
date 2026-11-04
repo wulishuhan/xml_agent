@@ -348,6 +348,11 @@ let exitGuardInstalled = false;
 为什么挂在 exit 上：agent.stop() 覆盖的是"用户点了停止"，
 而进程崩溃、`process.exit()`、未捕获异常走的是另一条路径，那条路径上
 没有任何人调用 stop()。exit 是最后一道能执行代码的机会。
+
+**exit 覆盖不到信号**：实测（Node 20 / Windows / Linux 一致）收到 SIGTERM、SIGINT 时，
+Node 的默认处理是直接终止进程，不会触发 exit 事件。因此信号路径必须由
+持有生命周期的入口显式调用 cleanupAllSync() —— 见 agent.js、webui/server.js、
+electron/main.js 的关闭流程。
 */
 function installExitGuard() {
     if (exitGuardInstalled || typeof process.once !== "function") {

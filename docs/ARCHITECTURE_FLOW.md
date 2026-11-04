@@ -133,7 +133,13 @@ graph TB
 > 退出时对所有登记表执行 `cleanupAllSync()`——用 `spawnSync` 跑 `taskkill`，
 > 因为 `exit` 阶段事件循环已停，异步回调不会再执行。
 > 兜底只结束「子进程句柄仍报告存活」的条目，不按历史 pid 猜，
-> 避免 pid 被系统复用后误杀无关进程。任务管理器强杀 / 断电仍无法覆盖。
+> 避免 pid 被系统复用后误杀无关进程。
+>
+> **信号路径要单独接**：实测 SIGTERM / SIGINT 的默认处理是直接终止进程，
+> **不会**触发 `exit` 事件，所以 `agent.js`、`webui/server.js`（SIGINT / SIGTERM / SIGHUP）、
+> `electron/main.js`（`before-quit` → `shutdown()`）各自在关闭流程里显式调
+> `cleanupAllSync()`。Windows 上外部 `kill` 走 `TerminateProcess`、信号不会投递给 JS，
+> 那种情况（含任务管理器强杀、断电）无法覆盖，属已知边界。
 
 ## 6. 大模块的拆分现状
 

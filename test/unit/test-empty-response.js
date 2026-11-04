@@ -90,14 +90,19 @@ async function main() {
     // ------------------------------------------------------------
     {
         const timeline = [];
+        // 这段的窗口刻意放大：原来 grace=80ms、占位边界也卡在 80ms，
+        // 全量跑测试时机器一有负载，单次轮询就可能跨过边界，误判成空回复。
+        // 改成 grace=400ms，每个占位只活 0.6 倍 grace，留足调度抖动余量。
+        const grace = 400;
         const provider = makeProvider(GlmProvider, {
+            responseContentGrace: grace,
+            responseTimeout: 8000,
             getAssistantMessageKeys: async () => {
                 timeline.push(Date.now());
-                // 前 8 次是占位 A，之后换成占位 B，再之后才出内容。
-                // 总耗时明显超过 grace(80ms)，但单个占位的存活时间都不超过它。
+                // 占位 A → 占位 B 的存活时间都短于 grace，但总耗时超过 grace。
                 const elapsed = Date.now() - timeline[0];
-                if (elapsed < 160) {
-                    return ["glm:0:old", elapsed < 80 ? "glm:1:a" : "glm:1:b"];
+                if (elapsed < grace * 1.2) {
+                    return ["glm:0:old", elapsed < grace * 0.6 ? "glm:1:a" : "glm:1:b"];
                 }
                 return ["glm:0:old", "glm:1:c"];
             },
@@ -114,6 +119,11 @@ async function main() {
         }
 
         check("占位换新后重新计时", !error && key === "glm:1:c", error ? error.message : key);
+        check(
+            "总耗时确实超过 grace（否则这条断言没意义）",
+            timeline.length > 1 && timeline[timeline.length - 1] - timeline[0] > grace * 0.6,
+            "calls=" + timeline.length
+        );
     }
 
     // ------------------------------------------------------------
