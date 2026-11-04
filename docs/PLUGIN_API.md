@@ -199,7 +199,7 @@ setup 期**不提供** `fs` / `http`：能力只在动作执行期、且通过�
 
 ```js
 ctx.providers.register(
-    "my-llm", // provider id（小写，不能与内置 4 个重名）
+    "my-llm", // provider id（小写，不能与内置的 chatgpt / qwen / deepseek / glm / gemini 重名）
     (options) => new MyProvider(options), // 工厂：返回 provider 实例
     {
         label: "My LLM",
@@ -214,6 +214,9 @@ ctx.providers.register(
 
 - 必需：`start()` / `send(prompt)` / `close()`
 - 可选：`uploadImages(paths)` / `getConversationIdFromUrl(url)` / `ensurePageAlive()`
+- 可选：`getActionMarkupHint()` —— 返回一段"本平台输出格式约束"，会被拼进首轮提示词。
+  只有当平台会破坏 XML 时才需要实现：例如 Gemini 的渲染器会把裸的 `<answer>` 标签
+  整块丢弃（DOM 里只剩文本），必须要求模型把动作放进代码块。
 - 属性：`currentConversationId`
 
 注册成功后：

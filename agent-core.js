@@ -227,6 +227,12 @@ class Agent extends EventEmitter {
             }
             let prompt = getFirstPrompt(currentWorkspace, manifest, this.task, {
                 registry: this.plugins,
+                // 少数平台（如 Gemini）的渲染器会把裸 XML 标签整块丢掉，
+                // 需要 provider 自己声明"输出格式怎么适配"。
+                providerHint:
+                    typeof this.provider.getActionMarkupHint === "function"
+                        ? this.provider.getActionMarkupHint()
+                        : "",
             });
             const providerErrorState = {
                 count: 0,

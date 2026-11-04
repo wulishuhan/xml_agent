@@ -137,6 +137,7 @@ const BUILTIN_DEFINITIONS = [
     require("./qwen"),
     require("./deepseek"),
     require("./glm"),
+    require("./gemini"),
 ].map((module, index) => {
     const meta = module.meta;
     if (!meta) {

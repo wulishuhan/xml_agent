@@ -63,8 +63,9 @@ async function main() {
         const list = providers.listProviders();
         const ids = list.map((item) => item.id);
         check(
-            "四个内置 provider 都已注册（顺序即前端下拉顺序）",
-            JSON.stringify(ids) === JSON.stringify(["chatgpt", "qwen", "deepseek", "glm"]),
+            "五个内置 provider 都已注册（顺序即前端下拉顺序）",
+            JSON.stringify(ids) ===
+                JSON.stringify(["chatgpt", "qwen", "deepseek", "glm", "gemini"]),
             ids.join(",")
         );
         check(

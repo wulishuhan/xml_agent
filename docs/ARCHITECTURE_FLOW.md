@@ -114,6 +114,12 @@ graph TB
 > 核心目录不包含任何截图实现，也没有截图 HTTP 接口——删除整个插件目录即可彻底移除该能力，
 > 此时 `<screenshot>` 会被解析层报为 `Unknown XML Action`。
 
+> **平台的输出破坏由 Provider 自己声明**。多数平台原样显示 XML，但有的会把它当富文本：
+> Gemini 的渲染器会把裸的 `<answer>` 标签整块删掉（实测 DOM 里只剩 `<p><span>收到</span></p>`），
+> 模型写了动作 Agent 也收不到。这类平台实现 `getActionMarkupHint()` 返回一段输出约束
+> （Gemini 要求把动作放进代码块），由 `prompts/first-prompt.js` 拼进首轮提示词；
+> 没有声明该方法的 provider，提示词与原来完全一致。
+
 > **子进程归 Runtime 管**。`exec`（含 `--background`）启动的子进程统一登记到
 > `processes/registry.js`，用户点「停止」时 `Agent.stop()` 先调
 > `runtime.killAllProcesses()` 把整棵进程树结束（Windows `taskkill /T /F`，

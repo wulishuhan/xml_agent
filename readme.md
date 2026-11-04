@@ -403,7 +403,9 @@ console.log("hello");
 const provider = createProvider("chatgpt");
 ```
 
-当前支持：ChatGPT、DeepSeek、Qwen、GLM。BrowserAgent 内置页面自愈机制（`ensurePageAlive`），浏览器崩溃或标签页关闭时自动重连恢复会话。浏览器类型可通过 `browserType` 选项或 `BROWSER_TYPE` 环境变量指定为 `chrome` 或 `edge`；CDP URL 优先使用按浏览器类型解析后的环境变量（`BROWSER_CDP_URL` / `XML_AGENT_CDP_URL`）。
+当前支持：ChatGPT、DeepSeek、Qwen、GLM、Gemini。BrowserAgent 内置页面自愈机制（`ensurePageAlive`），浏览器崩溃或标签页关闭时自动重连恢复会话。浏览器类型可通过 `browserType` 选项或 `BROWSER_TYPE` 环境变量指定为 `chrome` 或 `edge`；CDP URL 优先使用按浏览器类型解析后的环境变量（`BROWSER_CDP_URL` / `XML_AGENT_CDP_URL`）。
+
+> Gemini 用的是独立浏览器配置目录（`%TEMP%/edge-agent-profile-9223`），**首次使用需要在弹出的浏览器窗口里登录一次 Google 账号**，之后保持登录状态。
 
 ### 新增一个 provider（不需要改 server / 前端）
 
@@ -654,7 +656,7 @@ node test/test-config-schema.js
 - ✅ XML Agent 协议
 - ✅ Workspace 安全管理（路径沙箱、超时、进程树级别的停止）
 - ✅ 文件读写与命令执行（含后台执行与停止语义）
-- ✅ 多模型 Provider（ChatGPT / DeepSeek / Qwen / GLM）
+- ✅ 多模型 Provider（ChatGPT / DeepSeek / Qwen / GLM / Gemini）
 - ✅ Runtime 与 XML 错误恢复
 - ✅ BrowserAgent 页面自愈
 - ✅ Chrome / Microsoft Edge CDP 支持（自动探测、启动参数适配、独立端口、一键切换）
@@ -689,7 +691,7 @@ node test/test-config-schema.js
 
 本项目为个人学习与技术研究用途的参考学习项目，仅用于学习、研究、技术交流与自用，不用于任何商业用途，也不构成任何形式的产品或服务。
 
-本项目通过浏览器自动化（CDP）操作第三方大模型平台的网页界面来演示 Agent 架构，属于技术探索与学习实践。使用者应遵守各第三方平台（包括但不限于 ChatGPT、DeepSeek、Qwen、GLM 等）的用户协议、服务条款及相关法律法规。使用本项目所产生的任何后果由使用者自行承担，与项目作者无关。
+本项目通过浏览器自动化（CDP）操作第三方大模型平台的网页界面来演示 Agent 架构，属于技术探索与学习实践。使用者应遵守各第三方平台（包括但不限于 ChatGPT、DeepSeek、Qwen、GLM、Gemini 等）的用户协议、服务条款及相关法律法规。使用本项目所产生的任何后果由使用者自行承担，与项目作者无关。
 
 本项目不隶属于、不代表、也未获得上述任何平台或其所属公司的授权、认可或赞助。相关名称、商标及知识产权归其各自所有者所有。
 

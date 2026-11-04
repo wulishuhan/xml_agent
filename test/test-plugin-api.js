@@ -166,7 +166,7 @@ async function main() {
     const providers = await request("GET", base + "/api/providers");
     const providerList = (providers.data && providers.data.providers) || [];
     check(
-        "GET /api/providers 返回 200 与四个内置 provider",
+        "GET /api/providers 返回 200 与全部内置 provider",
         providers.statusCode === 200 &&
             providerList.length >= 4 &&
             providerList.every((item) => item.id && item.defaultTargetUrl),

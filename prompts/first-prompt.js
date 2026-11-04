@@ -15,8 +15,19 @@ function getFirstPrompt(currentWorkspace, manifest, task, options = {}) {
     }
     const pluginBlock = pluginSection ? "\n\n" + pluginSection : "";
 
+    // provider 声明的输出格式约束（例如 Gemini 会吞掉裸 XML 标签，
+    // 必须把动作放进代码块）。没有声明时提示词与原来完全一致。
+    const providerHint =
+        typeof options.providerHint === "string" ? options.providerHint.trim() : "";
+    const providerBlock = providerHint
+        ? "\n\n============================================================\n" +
+          "输出格式（本平台强制要求）\n" +
+          "============================================================\n\n" +
+          providerHint
+        : "";
+
     let prompt = `
-${SYSTEM_PROMPT}${pluginBlock}
+${SYSTEM_PROMPT}${pluginBlock}${providerBlock}
 
 ============================================================
 Workspace

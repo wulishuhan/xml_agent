@@ -5,6 +5,7 @@ node test/test-provider-live.js deepseek
 node test/test-provider-live.js chatgpt
 node test/test-provider-live.js qwen
 node test/test-provider-live.js glm
+node test/test-provider-live.js gemini
 node test/test-provider-live.js all
 可选参数：
 --cid=<conversationId> 使用指定会话（例如已有会话 URL 中的 id）
@@ -144,16 +145,19 @@ async function main() {
     const targets = [];
 
     if (!args.provider || args.provider === "all") {
-        targets.push("deepseek", "chatgpt", "qwen", "glm");
+        targets.push("deepseek", "chatgpt", "qwen", "glm", "gemini");
     } else if (
         args.provider === "deepseek" ||
         args.provider === "chatgpt" ||
         args.provider === "qwen" ||
-        args.provider === "glm"
+        args.provider === "glm" ||
+        args.provider === "gemini"
     ) {
         targets.push(args.provider);
     } else {
-        console.error("Usage: node test/test-provider-live.js [deepseek|chatgpt|qwen|glm|all]");
+        console.error(
+            "Usage: node test/test-provider-live.js [deepseek|chatgpt|qwen|glm|gemini|all]"
+        );
         process.exitCode = 2;
         return;
     }

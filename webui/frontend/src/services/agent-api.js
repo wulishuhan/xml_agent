@@ -209,7 +209,7 @@ export async function uploadWorkspaceImages(workspace, files) {
 
 正则优先取自 `/api/providers` 返回的 provider 元数据（与 server 端同一份声明），
 接口不可用时回落到下面的内置表，因此页面在接口异常时行为不变。
-@param {string} provider "chatgpt" | "deepseek" | "qwen" | "glm" | 插件 provider
+@param {string} provider "chatgpt" | "deepseek" | "qwen" | "glm" | "gemini" | 插件 provider
 @param {string} url
 @returns {string|null}
 */
@@ -218,6 +218,7 @@ const FALLBACK_PROVIDER_PATTERNS = {
     chatgpt: "/c/([0-9a-zA-Z-]+)",
     qwen: "/c/([0-9a-zA-Z-]+)",
     glm: "/(?:c|s)/([0-9a-zA-Z-]+)",
+    gemini: "/app/([0-9a-zA-Z_-]{8,})",
 };
 let providerPatternCache = null;
 let providersPromise = null;
