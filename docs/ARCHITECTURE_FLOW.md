@@ -127,6 +127,14 @@ graph TB
 > 这一步不能省：不登记句柄的话，`--background` 的 detached 进程会脱离父进程成为孤儿，
 > 一直占着端口，下次启动就报 `EADDRINUSE`；而前台长命令会拖到
 > `maxExecTimeout`（默认 5 分钟）才返回，停止按钮看起来完全没反应。
+>
+> **退出路径另有一道兜底**。`Agent.stop()` 只覆盖「用户点停止」，而崩溃、
+> `process.exit()`、未捕获异常走的是另一条路径，那条路上没人调用 stop()。
+> 因此 `track()` 在第一次登记时自动装 `process.once("exit")`（`installExitGuard`），
+> 退出时对所有登记表执行 `cleanupAllSync()`——用 `spawnSync` 跑 `taskkill`，
+> 因为 `exit` 阶段事件循环已停，异步回调不会再执行。
+> 兜底只结束「子进程句柄仍报告存活」的条目，不按历史 pid 猜，
+> 避免 pid 被系统复用后误杀无关进程。任务管理器强杀 / 断电仍无法覆盖。
 
 ## 6. 大模块的拆分现状
 

@@ -164,10 +164,20 @@ async function shutdown() {
 
 if (require.main === module) {
     startServer();
-    process.on("SIGINT", async () => {
+    // SIGTERM（kill / 进程管理器停止）与 SIGHUP（终端关闭）原来没接，
+    // 这两种情况下会话不会被 stopAll()，后台命令会留成孤儿。
+    let shuttingDownBySignal = false;
+    const handleSignal = async () => {
+        if (shuttingDownBySignal) {
+            return;
+        }
+        shuttingDownBySignal = true;
         await shutdown();
         process.exit(0);
-    });
+    };
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+        process.on(signal, handleSignal);
+    }
 }
 
 module.exports = {
