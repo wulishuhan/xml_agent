@@ -333,6 +333,8 @@ Runtime 是系统的执行核心，LLM 不直接操作电脑，所有操作必�
 <read path="src"/>
 ```
 
+只处理文本文件：检测到 NUL 字节会返回 `binary: true` 的错误，而不是把乱码塞进提示词（二进制内容请用 `exec` 处理）。路径解析按真实路径校验，工作区内的符号链接 / junction 指向外部时会被拒绝。
+
 ### write
 
 写入文件（自动创建父目录，仅限 Workspace 内）：
@@ -343,6 +345,8 @@ console.log("hello");
 ]]></write>
 ```
 
+路径里的 XML 实体（`&amp;`、`&lt;`…）会被解码，与 `read` 的行为一致；目标是已存在的目录时返回明确错误，不会抛出底层 `EPERM`。Windows 下的保留设备名（`CON`、`NUL`、`COM1`…）与 `file.txt:stream` 这类数据流写法会被拒绝——它们不会真正落盘，却会让写入"看似成功"。
+
 ### exec
 
 执行命令（工作目录固定为 Workspace，超时上限 `runtime.maxExecTimeout`，默认 300 秒）：
@@ -351,11 +355,13 @@ console.log("hello");
 <exec command="npm test"/>
 ```
 
-命令末尾加 `--background` 可后台运行（exec 会剥掉该旗标再执行）：
+命令末尾加 `--background` 可后台运行（exec 会剥掉该旗标再执行）。只认**命令结尾**的这个标记，命令中间出现同名字符串不会被改写：
 
 ```xml
 <exec command="node server.js --background"/>
 ```
+
+输出上限 `runtime.maxExecOutputSize`（默认 1MB）。超限时保留**首尾**两段（失败摘要通常在末尾），并置 `outputTruncated: true`；子进程缓冲上限是它的 8 倍，超过缓冲才会杀进程，此时会明确说明"剩余输出已丢弃"。
 
 后台进程在会话停止或异常结束时会被一并结束，不会残留成孤儿进程。
 
@@ -405,7 +411,7 @@ const provider = createProvider("chatgpt");
 
 当前支持：ChatGPT、DeepSeek、Qwen、GLM、Gemini。BrowserAgent 内置页面自愈机制（`ensurePageAlive`），浏览器崩溃或标签页关闭时自动重连恢复会话（首次连接失败会小退避重试，CDP 地址的尾斜杠会被自动去掉）。浏览器类型可通过 `browserType` 选项或 `BROWSER_TYPE` 环境变量指定为 `chrome` 或 `edge`；CDP URL 优先使用按浏览器类型解析后的环境变量（`BROWSER_CDP_URL` / `XML_AGENT_CDP_URL`）。
 
-整轮任务另有墙钟上限 `agent.runTimeoutMs`（默认 30 分钟，`AGENT_RUN_TIMEOUT_MS` 覆盖，`0` 表示不限制）：`maxSteps` 只管步数，浏览器 provider 每步十几秒，没有这个上限时单任务可能跑半小时而界面上毫无反馈。超时后状态记为 `timeout`，已产生的历史与报告照常落盘。
+整轮任务另有墙钟上限 `agent.runTimeoutMs`（默认 30 分钟，`AGENT_RUN_TIMEOUT_MS` 覆盖，`0` 表示不限制）：`maxSteps` 只管步数，浏览器 provider 每步十几秒，没有这个上限时单任务可能跑半小时而界面上毫无反馈。超时后状态记为 `timeout`，已产生的历史与报告照常落盘。这个上限是**硬**的：除了两步之间检查，还有一个看门狗在到点时直接关掉 provider —— 浏览器那边的 CDP 调用挂住时自身没有超时，只靠"两步之间检查"会让单步无限拖下去。
 
 > Gemini 用的是独立浏览器配置目录（`%TEMP%/edge-agent-profile-9223`），**首次使用需要在弹出的浏览器窗口里登录一次 Google 账号**，之后保持登录状态。
 

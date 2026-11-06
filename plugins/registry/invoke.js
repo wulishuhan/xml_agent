@@ -174,6 +174,10 @@ module.exports = {
         }
         let count = 0;
         for (const item of handlers) {
+            // 先计数再调用：handler 抛错也已经被"通知"过了。
+            // 原来的 count += 1 放在 try 末尾，抛错时会被跳过，于是 1 个 handler 抛错
+            // 时返回值是 0，日志里看起来像"根本没有插件监听这个事件"。
+            count += 1;
             try {
                 const returned = item.handler(payload);
                 if (returned && typeof returned.then === "function") {
@@ -188,7 +192,6 @@ module.exports = {
                         );
                     });
                 }
-                count += 1;
             } catch (error) {
                 this.logger.warn?.(
                     "[plugins] hook " +

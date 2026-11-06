@@ -253,6 +253,10 @@ function normalizeConfigSchema(raw, label) {
             default: spec.default,
             description: String(spec.description || ""),
             enum: Array.isArray(spec.enum) ? spec.enum.slice() : null,
+            // 数值范围：此前 configSchema 只有类型，没有上下限，
+            // 于是 keepDays:-5 这类值能通过校验并写进配置文件。
+            min: Number.isFinite(Number(spec.min)) ? Number(spec.min) : null,
+            max: Number.isFinite(Number(spec.max)) ? Number(spec.max) : null,
         };
     }
     return schema;
@@ -302,7 +306,16 @@ function normalizeConfig(manifest, raw) {
                 errors.push("config." + key + " 必须是数字");
                 continue;
             }
-            value[key] = spec.type === "integer" ? Math.trunc(number) : number;
+            const parsed = spec.type === "integer" ? Math.trunc(number) : number;
+            if (spec.min !== null && parsed < spec.min) {
+                errors.push("config." + key + " 不能小于 " + spec.min);
+                continue;
+            }
+            if (spec.max !== null && parsed > spec.max) {
+                errors.push("config." + key + " 不能大于 " + spec.max);
+                continue;
+            }
+            value[key] = parsed;
             continue;
         }
         const text = String(item);

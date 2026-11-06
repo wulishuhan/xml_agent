@@ -63,6 +63,12 @@ function createScopedLogger(logger, pluginName) {
 
 /**
 执行 run() 并强制超时。超时会 abort signal，让插件有机会清理（fetch 会销毁请求）。
+
+注意：这里的定时器**不能** unref。
+它和普通的后台心跳不同——它是当前这一刻唯一的"进度保证"：一旦 unref，
+当插件动作挂住、而进程里又没有别的活跃句柄（CLI 模式下 provider 已释放、
+WebUI 请求已断开）时，事件循环空转，Node 会直接以 exit 0 退出：
+既不触发超时，也不打印任何错误，调用方永远等不到结果。
 */
 function runWithTimeout(factory, timeoutMs, controller) {
     return new Promise((resolve, reject) => {
@@ -80,9 +86,6 @@ function runWithTimeout(factory, timeoutMs, controller) {
             }
             reject(error);
         }, timeoutMs);
-        if (typeof timer.unref === "function") {
-            timer.unref();
-        }
         Promise.resolve()
             .then(factory)
             .then(

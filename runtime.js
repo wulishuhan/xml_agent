@@ -18,6 +18,71 @@ const { getRegistrySafe } = require("./plugins/registry");
 const { createProcessRegistry } = require("./processes/registry");
 const logger = require("./logger");
 
+/**
+Windows 保留设备名：CON / PRN / AUX / NUL / COM1-9 / LPT1-9。
+这些名字在任意目录下都会被 Win32 解释成设备：写 CON 会被丢到控制台（不落盘），
+读 CON 会等键盘输入。fs 不会报错，于是模型会看到"写入成功"但文件根本不存在。
+*/
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)$/i;
+
+/** 取真实路径（解开符号链接 / junction）。失败返回 null，交给后续 fs 自己报错。 */
+function realPathOf(target) {
+    try {
+        const resolve = fs.realpathSync.native || fs.realpathSync;
+        return resolve(target);
+    } catch (error) {
+        return null;
+    }
+}
+
+/** 目标可能还不存在（新建文件），找到最近的已存在祖先再取真实路径。 */
+function nearestExistingPath(target) {
+    let current = target;
+    for (;;) {
+        if (fs.existsSync(current)) {
+            return current;
+        }
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return null;
+        }
+        current = parent;
+    }
+}
+
+/** child 是否位于 root 之内（两者都应是真实路径）。 */
+function isInsidePath(root, child) {
+    const relative = path.relative(root, child);
+    if (!relative) {
+        return true;
+    }
+    return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep);
+}
+
+/** Windows 专属：拒绝设备名与 NTFS 数据流写法（相对路径里出现冒号只可能是这两者）。 */
+function assertWindowsSafeSegments(filePath) {
+    if (process.platform !== "win32") {
+        return;
+    }
+    const segments = String(filePath).split(/[\\/]+/);
+    for (const segment of segments) {
+        if (!segment || segment === "." || segment === "..") {
+            continue;
+        }
+        if (segment.indexOf(":") !== -1) {
+            throw new Error("Alternate data stream paths are not allowed: " + segment);
+        }
+        // Win32 会忽略设备名的扩展名与结尾点，CON.txt 同样是设备
+        const base = segment
+            .replace(/[. ]+$/, "")
+            .split(".")[0]
+            .trim();
+        if (WINDOWS_RESERVED_NAMES.test(base)) {
+            throw new Error("Windows reserved device name is not allowed: " + segment);
+        }
+    }
+}
+
 class Runtime {
     constructor(workspace = null, execScope = "workspace") {
         this.workspace = null;
@@ -101,6 +166,18 @@ class Runtime {
         const workspacePrefix = workspace.endsWith(path.sep) ? workspace : workspace + path.sep;
         if (fullPath !== workspace && !fullPath.startsWith(workspacePrefix)) {
             throw new Error("Path escapes workspace");
+        }
+        assertWindowsSafeSegments(filePath);
+        // 字符串前缀只能证明"路径看起来在工作区里"。工作区内的一个 junction
+        // （mklink /J，pnpm 与 git 仓库里都很常见）会让实际读写落到工作区之外，
+        // 所以再按真实路径判一次：目标最近的已存在祖先必须仍在工作区的真实路径内。
+        const realRoot = realPathOf(workspace);
+        const anchor = nearestExistingPath(fullPath);
+        if (realRoot && anchor) {
+            const realAnchor = realPathOf(anchor);
+            if (realAnchor && !isInsidePath(realRoot, realAnchor)) {
+                throw new Error("Path escapes workspace (symlink)");
+            }
         }
         return fullPath;
     }

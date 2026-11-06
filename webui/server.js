@@ -138,6 +138,33 @@ app.use("/api", (req, res) => {
     });
 });
 
+/**
+请求体解析失败（坏 JSON / 体积超限）时，Express 默认回一页 HTML 错误页，
+页面上带着完整堆栈与本机绝对路径。前端拿到的不是 JSON，用户看到一屏堆栈
+也无从判断，同时把服务端目录结构暴露给了浏览器。
+*/
+// eslint-disable-next-line no-unused-vars
+app.use((error, req, res, next) => {
+    if (res.headersSent) {
+        return next(error);
+    }
+    if (error && error.type === "entity.parse.failed") {
+        return res.status(400).json({
+            error: "Malformed JSON request body",
+            code: "BODY_PARSE_FAILED",
+        });
+    }
+    const status = Number(error && (error.status || error.statusCode));
+    if (status === 413) {
+        return res.status(413).json({
+            error: "Request body too large",
+            code: "BODY_TOO_LARGE",
+        });
+    }
+    console.error("[WebUI] Unhandled request error:", error && error.message);
+    return res.status(500).json({ error: "Internal server error" });
+});
+
 // ------------------------------------------------------------
 // HTTP 服务生命周期
 // ------------------------------------------------------------

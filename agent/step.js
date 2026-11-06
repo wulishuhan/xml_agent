@@ -58,7 +58,9 @@ async function runStep(agent, { prompt, providerErrorState }) {
             length: response ? response.length : 0,
         });
     } catch (error) {
-        if (agent.status === "stopped" || agent.stopRequested) {
+        // 状态已经不是 running（停止 / 超时看门狗把 provider 关了）时，
+        // 不能再当成"provider 抖动"去重试 —— 那会把超时又拖成一串重试。
+        if (agent.status !== "running" || agent.stopRequested) {
             return {
                 stop: true,
                 prompt: null,

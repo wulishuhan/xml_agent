@@ -34,6 +34,35 @@ function stripCdataLeadingNewline(content) {
     return typeof content === "string" ? content.replace(/^\r?\n/, "") : content;
 }
 
+const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/**
+解码属性里的实体。
+
+快速解析器读到的是原始文本，`path="a&amp;b.txt"` 会原样当成文件名；
+而通用解析路径（fast-xml-parser）和 read 都会解码成 `a&b.txt`。
+两条路径给出不同的文件名，就会出现"刚写进去的文件读不到"，
+所以这里统一按 XML 规则解一次。
+*/
+function decodeXmlAttribute(value) {
+    return String(value).replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/g, (match, body) => {
+        if (body.charAt(0) === "#") {
+            const hex = body.charAt(1) === "x" || body.charAt(1) === "X";
+            const code = hex ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+            if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) {
+                return match;
+            }
+            try {
+                return String.fromCodePoint(code);
+            } catch (error) {
+                return match;
+            }
+        }
+        const key = body.toLowerCase();
+        return Object.prototype.hasOwnProperty.call(XML_ENTITIES, key) ? XML_ENTITIES[key] : match;
+    });
+}
+
 // 验证写入内容（可选）
 function validateContent(filePath, content) {
     // 如果是 JSON 文件，尝试解析
@@ -67,7 +96,7 @@ function tryExtractWriteManually(text) {
     const pathValueStart = pathStart + pathMarker.length;
     const pathValueEnd = openTag.indexOf(CHAR_DQUOTE, pathValueStart);
     if (pathValueEnd === -1) return null;
-    const filePath = openTag.substring(pathValueStart, pathValueEnd);
+    const filePath = decodeXmlAttribute(openTag.substring(pathValueStart, pathValueEnd));
     if (!filePath) return null;
     let content = trimmed.substring(firstGt + 1, trimmed.length - WRITE_CLOSE_TAG.length);
     content = content.trim();
@@ -111,6 +140,16 @@ module.exports = {
         }
         const fullPath = ctx.runtime.resolvePath(filePath);
         const content = stripCdataLeadingNewline(getText(node));
+        // 目标是已存在的目录时，rename 会抛 EPERM 并把临时文件名带进错误信息，
+        // 模型看到的是"内部错误"。这里直接给出可理解的结论。
+        if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
+            return {
+                ok: false,
+                action: "write",
+                path: filePath,
+                error: "Path is an existing directory, not a file",
+            };
+        }
         if (Buffer.byteLength(content, "utf8") > agentConfig.runtime.maxFileSize) {
             return {
                 ok: false,

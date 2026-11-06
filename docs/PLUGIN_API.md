@@ -344,11 +344,13 @@ const response = await ctx.http.request({
 ```json
 "configSchema": {
     "allowHosts": { "type": "array", "default": ["127.0.0.1"], "description": "..." },
-    "httpTimeoutMs": { "type": "integer", "default": 30000 }
+    "httpTimeoutMs": { "type": "integer", "default": 30000, "min": 1000, "max": 60000 }
 }
 ```
 
 支持类型：`string` / `integer` / `number` / `boolean` / `array`（元素按字符串处理）。
+数值类型可用 `min` / `max` 声明范围，越界会被拒绝（`CONFIG_INVALID`），
+而不是把一个负的保留天数写进配置文件。
 配置存 `~/.xml-agent/plugins-config.json`，写入时按 schema 校验、未知字段丢弃。
 
 API：`GET/POST /api/plugins/:name/config`（body：`{ "config": {...} }`）。

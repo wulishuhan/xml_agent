@@ -60,7 +60,20 @@ module.exports = {
                 error: "File too large to read. Size: " + stat.size + " bytes",
             };
         }
-        const content = fs.readFileSync(fullPath, "utf8");
+        const buffer = fs.readFileSync(fullPath);
+        // 二进制文件读成 utf8 会得到一堆 U+0000 与乱码，既浪费上下文，也容易让
+        // 模型误判"这个文件坏了"并去改它。NUL 是最可靠的文本/二进制分界。
+        if (buffer.subarray(0, 8192).indexOf(0) !== -1) {
+            return {
+                ok: false,
+                action: "read",
+                path: filePath,
+                size: stat.size,
+                binary: true,
+                error: "Binary file (NUL bytes detected); read only handles text files",
+            };
+        }
+        const content = buffer.toString("utf8");
         return {
             ok: true,
             action: "read",

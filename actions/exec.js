@@ -19,6 +19,13 @@ const { spawn, exec } = require("child_process");
 const agentConfig = require("../config/agent-config");
 const logger = require("../logger");
 
+/**
+输出裁剪：保留头部与尾部。
+
+只留头部会把最该看的东西丢掉——测试/构建的失败摘要、报错堆栈、"XX passed / YY failed"
+几乎都在输出末尾。所以超限时按 6:4 截成 head + 提示 + tail，让模型同时看到
+"命令开头在干什么"和"最后结论是什么"。
+*/
 function limitExecOutput(value, maxSize) {
     const text = value || "";
     const limit = maxSize || agentConfig.runtime.maxExecOutputSize;
@@ -29,10 +36,39 @@ function limitExecOutput(value, maxSize) {
             truncated: false,
         };
     }
+    const marker = "\n…[output truncated: " + buffer.length + " bytes total]…\n";
+    const markerSize = Buffer.byteLength(marker, "utf8");
+    const budget = Math.max(0, limit - markerSize);
+    const headSize = Math.floor(budget * 0.6);
+    const tailSize = budget - headSize;
+    // 按字节切可能落在多字节字符中间，去掉边界上的替换字符避免出现"半个汉字"
+    const head = buffer
+        .subarray(0, headSize)
+        .toString("utf8")
+        .replace(/\uFFFD$/, "");
+    const tail = buffer
+        .subarray(buffer.length - tailSize)
+        .toString("utf8")
+        .replace(/^\uFFFD/, "");
     return {
-        value: buffer.subarray(0, limit).toString("utf8"),
+        value: head + marker + tail,
         truncated: true,
     };
+}
+
+/** 命令末尾的后台标记：只认结尾，避免命令里出现这个字符串就被改写。 */
+const BACKGROUND_FLAG = /\s+--background\s*$/;
+
+/**
+子进程缓冲上限（不是给模型看的量）。
+
+必须大于 maxExecOutputSize，否则"截断"永远不会走 head+tail 那条路：
+输出一旦超过 maxBuffer，exec 直接杀掉进程，尾部（失败摘要所在的位置）就没了。
+这里留 8 倍余量，让常见的 1–8MB 输出先被完整收下，再由 limitExecOutput 裁成首尾。
+*/
+function execBufferSize() {
+    const limit = agentConfig.runtime.maxExecOutputSize;
+    return Math.max(8 * 1024 * 1024, limit * 8);
 }
 
 /**
@@ -110,9 +146,13 @@ module.exports = {
             throw new Error("exec requires command");
         }
         logger.info("Executing command:", command);
-        const isBackground = command.includes(" --background");
+        // 只认命令结尾的 --background。此前是 command.includes(" --background")：
+        // 命令里只要出现这个字符串（比如 node -e "console.log(' --background')"）
+        // 就会被当成后台任务，而且这段文本会被直接从命令里删掉。
+        const backgroundMatch = BACKGROUND_FLAG.exec(command);
+        const isBackground = Boolean(backgroundMatch);
         if (isBackground) {
-            const cleanCommand = command.replace(/ --background/g, "");
+            const cleanCommand = command.slice(0, backgroundMatch.index).trim();
             logger.info("Running as background process: " + cleanCommand);
             try {
                 const child = spawn(cleanCommand, {
@@ -157,7 +197,7 @@ module.exports = {
                 cwd: workspace,
                 encoding: "utf8",
                 timeout: agentConfig.runtime.maxExecTimeout,
-                maxBuffer: agentConfig.runtime.maxExecOutputSize,
+                maxBuffer: execBufferSize(),
                 windowsHide: true,
                 // POSIX 下让命令自成进程组，停止时可以用负 pid 结束整棵树；
                 // Windows 不需要（会导致弹出控制台窗口），那边由 taskkill /T 处理。
@@ -186,6 +226,10 @@ module.exports = {
             };
         }
         const error = result.error || {};
+        // 输出超过 maxBuffer 时 exec 会杀掉子进程并回调 ENOBUFS：此时 stdout 正好停在
+        // 上限处，后面的内容（通常正是失败摘要）已经被丢弃。必须如实标记 truncated，
+        // 否则模型会看到 1MB 文本 + truncated:false，误以为这就是全部输出。
+        const bufferOverflow = error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
         const stdout = limitExecOutput(result.stdout);
         const stderr = limitExecOutput(result.stderr);
         logger.error("Command failed:", command, "exitCode:", error.code);
@@ -196,9 +240,13 @@ module.exports = {
             exitCode: typeof error.code === "number" ? error.code : null,
             stdout: stdout.value,
             stderr: stderr.value,
-            stdoutTruncated: stdout.truncated,
-            stderrTruncated: stderr.truncated,
-            error: error.message,
+            stdoutTruncated: stdout.truncated || bufferOverflow,
+            stderrTruncated: stderr.truncated || bufferOverflow,
+            error: bufferOverflow
+                ? "Command output exceeded the " +
+                  agentConfig.runtime.maxExecOutputSize +
+                  "-byte buffer; the process was terminated and the rest of the output was dropped"
+                : error.message,
         };
     },
     meta: {

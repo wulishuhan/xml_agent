@@ -72,10 +72,56 @@ class Agent extends EventEmitter {
         this.error = null;
         this.stopRequested = false;
         this.runDeadline = 0;
+        // 运行期墙钟看门狗的句柄（见 armDeadlineWatchdog）
+        this._deadlineTimer = null;
     }
     /** 墙钟上限是否已到（未设置上限时永远 false）。 */
     isRunTimeoutExceeded(now = Date.now()) {
         return Boolean(this.runDeadline) && now >= this.runDeadline;
+    }
+
+    /**
+    墙钟看门狗：到点强制收摊，而不是等某一步自己回来。
+
+    runDeadline 只在两步之间检查。如果某一步卡在 provider 调用里（浏览器那边
+    CDP 调用挂住时不会触发它自己的超时），主循环根本没机会走到检查点，
+    整轮就会远超上限。到点时直接把 provider 关掉，挂起的调用随即失败，
+    runStep 看到状态已不是 running 就收敛，主循环退出并记为 timeout。
+    */
+    armDeadlineWatchdog() {
+        this.clearDeadlineWatchdog();
+
+        if (!(this.runTimeoutMs > 0)) {
+            return;
+        }
+
+        this._deadlineTimer = setTimeout(() => {
+            if (this.status !== "running") {
+                return;
+            }
+
+            this.status = "timeout";
+            this.emitEvent("agent.timeout", {
+                step: this.step,
+                runTimeoutMs: this.runTimeoutMs,
+                hard: true,
+            });
+
+            if (this.provider && typeof this.provider.close === "function") {
+                Promise.resolve()
+                    .then(() => this.provider.close())
+                    .catch(() => {});
+            }
+        }, this.runTimeoutMs);
+        // 刻意不 unref：运行期间它是"必须活到点"的看门狗，
+        // 正常结束时由 closeProvider 清掉。
+    }
+
+    clearDeadlineWatchdog() {
+        if (this._deadlineTimer) {
+            clearTimeout(this._deadlineTimer);
+            this._deadlineTimer = null;
+        }
     }
     emitEvent(type, data = {}) {
         const event = {
@@ -249,6 +295,7 @@ class Agent extends EventEmitter {
                 max: this.maxProviderErrors,
             };
             this.runDeadline = this.runTimeoutMs > 0 ? Date.now() + this.runTimeoutMs : 0;
+            this.armDeadlineWatchdog();
             while (this.step < this.maxSteps && this.status === "running") {
                 // 每步开始前检查一次墙钟。单步本身由 provider 的 responseTimeout 兜底，
                 // 这里防的是"每一步都成功、但整轮跑了半小时还没结束"。
@@ -342,6 +389,9 @@ class Agent extends EventEmitter {
         }
     }
     async closeProvider() {
+        // 所有退出路径（正常 / 停止 / 报错 / 超时）都会走到这里
+        this.clearDeadlineWatchdog();
+
         if (!this.provider) {
             return;
         }

@@ -55,6 +55,21 @@ class GeminiProvider extends BrowserChatProvider {
             'button[aria-label*="Add files"]',
             'input[type="file"]',
         ];
+
+        // 会拦住点击的模态弹窗（CDK overlay）。Gemini 会不定期弹出
+        // "解锁最适合你的 Gemini / 关联 Google 应用" 这类引导层：
+        // 输入框还能写字，但发送按钮被 backdrop 挡住，点击会被 Playwright 判为
+        // "intercepts pointer events" 并重试到超时。优先点"不关联"，避免进入授权流程。
+        this.overlaySkipSelectors = [
+            'button:has-text("不关联")',
+            'a:has-text("不关联")',
+            'button:has-text("以后再说")',
+            'button:has-text("稍后")',
+            'button:has-text("Not now")',
+            'button:has-text("Maybe later")',
+            'mat-dialog-container button[aria-label*="关闭"]',
+            'mat-dialog-container button[aria-label*="Close"]',
+        ];
     }
 
     get name() {
@@ -337,8 +352,10 @@ class GeminiProvider extends BrowserChatProvider {
         };
     }
 
-    /** 两级降级提交：发送按钮 → 回车。输入框未清空中转时会自动换成停止按钮。 */
+    /** 三级降级提交：关掉遮挡弹窗 → 发送按钮 → 聚焦后回车。 */
     async deliverMessage() {
+        await this.dismissBlockingOverlay();
+
         let sent = false;
         let lastError = null;
 
@@ -350,6 +367,7 @@ class GeminiProvider extends BrowserChatProvider {
 
         if (!sent) {
             try {
+                await this.focusComposer();
                 await this.page.keyboard.press("Enter");
                 sent = true;
             } catch (error) {
@@ -363,6 +381,101 @@ class GeminiProvider extends BrowserChatProvider {
                     (lastError ? lastError.message : "send button not found")
             );
         }
+    }
+
+    /**
+    发送后校验：输入框没清空就说明消息根本没出去。
+
+    此前这里只打一行 warn 然后继续等回复 —— 一旦被弹窗/遮罩挡住点击，
+    回复永远不会来，整个 run 会挂到 30 分钟的运行超时。现在改成重试提交，
+    仍失败就抛错，让 agent 按 provider error 重试这一步（有次数上限）。
+    */
+    async afterDelivered() {
+        if (await this.waitForInputClear(3000)) {
+            return;
+        }
+
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+            await this.dismissBlockingOverlay();
+
+            const clicked = await this.clickSendButton();
+
+            if (!clicked) {
+                await this.focusComposer();
+                await this.page.keyboard.press("Enter").catch(() => {});
+            }
+
+            if (await this.waitForInputClear(2500)) {
+                return;
+            }
+        }
+
+        throw new Error(
+            "Gemini failed to send message: composer still contains text after 3 attempts"
+        );
+    }
+
+    /**
+    有 CDK 遮罩就关掉它，返回是否已无遮挡。
+
+    Gemini 会不定期弹 "解锁最适合你的 Gemini / 关联 Google 应用" 这类引导层：
+    输入框照常能写字，但发送按钮被 backdrop 拦住，Playwright 报
+    "intercepts pointer events" 并重试到超时。优先点"不关联"，避免进入授权流程。
+    */
+    async dismissBlockingOverlay() {
+        if (!this.isPageAlive()) {
+            return false;
+        }
+
+        const backdrop = this.page.locator(".cdk-overlay-backdrop-showing");
+
+        if ((await backdrop.count().catch(() => 0)) === 0) {
+            return false;
+        }
+
+        for (const selector of this.overlaySkipSelectors) {
+            try {
+                const locator = this.page.locator(selector).first();
+
+                if ((await locator.count()) === 0) {
+                    continue;
+                }
+                if (!(await locator.isVisible().catch(() => false))) {
+                    continue;
+                }
+
+                await locator.click({ timeout: 3000 });
+                console.log("[Gemini] Dismissed blocking overlay: " + selector);
+                await this.sleep(400);
+
+                if ((await backdrop.count().catch(() => 0)) === 0) {
+                    return true;
+                }
+            } catch (error) {
+                // 换下一个选择器
+            }
+        }
+
+        // 兜底：Esc。有些弹窗只认这个。
+        await this.page.keyboard.press("Escape").catch(() => {});
+        await this.sleep(300);
+
+        return (await backdrop.count().catch(() => 0)) === 0;
+    }
+
+    /** 点一下输入框，确保 Enter 落在 Quill 上而不是页面上。 */
+    async focusComposer() {
+        const input = await this.ensureComposer(5000);
+
+        if (!input) {
+            return false;
+        }
+
+        await input
+            .click({ timeout: 3000 })
+            .catch(() => input.focus({ timeout: 3000 }).catch(() => {}));
+
+        return true;
     }
 
     /**
@@ -386,6 +499,9 @@ class GeminiProvider extends BrowserChatProvider {
 
         for (let attempt = 0; attempt < 3; attempt++) {
             try {
+                // 引导弹窗会盖住输入区：先关掉再写，避免点击全被 backdrop 吃掉
+                await this.dismissBlockingOverlay();
+
                 const input = await this.ensureComposer(attempt === 0 ? 30000 : 8000);
 
                 if (!input) {
