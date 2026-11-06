@@ -21,6 +21,8 @@ const CONFIG_FILE = "plugins-config.json";
 const PERMISSIONS_FILE = "permissions.json";
 const SECRETS_FILE = "secrets.json";
 const DEFAULT_MAX_PROMPT_CHARS = 8000;
+// 插件自定义 HTTP 接口（声明式面板的数据来源）单次执行上限
+const DEFAULT_API_TIMEOUT_MS = 15000;
 const VALID_POLICIES = ["allow", "deny", "ask"];
 
 function readPackageVersion() {
@@ -114,6 +116,7 @@ module.exports = {
     PERMISSIONS_FILE,
     SECRETS_FILE,
     DEFAULT_MAX_PROMPT_CHARS,
+    DEFAULT_API_TIMEOUT_MS,
     VALID_POLICIES,
     readPackageVersion,
     createScopedLogger,

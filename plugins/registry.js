@@ -32,6 +32,7 @@ const {
     BUILTIN_DIR,
     DEFAULT_STORE_ROOT,
     DEFAULT_MAX_PROMPT_CHARS,
+    DEFAULT_API_TIMEOUT_MS,
     STATE_FILE,
     CONFIG_FILE,
     PERMISSIONS_FILE,
@@ -48,6 +49,11 @@ class PluginRegistry {
         this.agentVersion = options.agentVersion || readPackageVersion();
         this.enabled = options.enabled !== false;
         this.logger = options.logger || console;
+        // 插件接口的单次执行上限：handler 永不 resolve 时不能挂死 HTTP 连接
+        this.apiTimeoutMs =
+            Number.isFinite(Number(options.apiTimeoutMs)) && Number(options.apiTimeoutMs) > 0
+                ? Math.trunc(Number(options.apiTimeoutMs))
+                : DEFAULT_API_TIMEOUT_MS;
         this.maxPromptChars =
             Number.isFinite(Number(options.maxPromptChars)) && Number(options.maxPromptChars) > 0
                 ? Math.trunc(Number(options.maxPromptChars))
@@ -58,6 +64,8 @@ class PluginRegistry {
         this.hooks = new Map();
         this.providers = new Map();
         this.eventFormatters = new Map();
+        // 状态/配置/权限/密钥文件的读取缓存（按 mtime + size 失效，见 registry/storage.js）
+        this._fileCache = new Map();
         this.ui = { panels: [], settings: [], actions: [] };
         this.errors = [];
     }
@@ -104,6 +112,7 @@ function defaultOptions() {
         storeRoot: pluginConfig.storeRoot || DEFAULT_STORE_ROOT,
         dirs,
         maxPromptChars: pluginConfig.maxPromptChars,
+        apiTimeoutMs: pluginConfig.apiTimeoutMs,
     };
 }
 

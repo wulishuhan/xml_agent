@@ -5,10 +5,9 @@
 方法体内的 this 指向 registry 实例。
 */
 
-const sdk = require("../sdk");
 const capabilities = require("../capabilities");
 
-const { createScopedLogger } = require("./shared");
+const { createScopedLogger, runWithTimeout } = require("./shared");
 
 module.exports = {
     /**
@@ -36,6 +35,7 @@ module.exports = {
                 },
             };
         }
+        const controller = new AbortController();
         const ctx = {
             plugin: {
                 name: record.name,
@@ -50,12 +50,37 @@ module.exports = {
             config: this.getConfig(record.name),
             logger: createScopedLogger(this.logger, record.name),
             storage: capabilities.createStorage({ dir: this.storageDir(record.name) }),
+            secrets: this._secretsFor(record, this._canReadSecrets(record)),
+            // handler 超时会被 abort；用了自定义 I/O 的插件应监听这个信号
+            signal: controller.signal,
         };
+        let result;
         try {
-            const result = await route.handler(ctx);
-            return { status: 200, body: result === undefined ? {} : result };
+            result = await runWithTimeout(() => route.handler(ctx), this.apiTimeoutMs, controller);
         } catch (error) {
             const message = (error && error.message) || String(error);
+            if (error && error.code === "PLUGIN_TIMEOUT") {
+                // 不能把请求一直挂在这里：浏览器面板会永远转圈
+                this.logger.warn?.(
+                    "[plugins] " +
+                        record.name +
+                        " 的接口 " +
+                        verb +
+                        " " +
+                        pathText +
+                        " 超时（" +
+                        this.apiTimeoutMs +
+                        "ms）"
+                );
+                return {
+                    status: 504,
+                    body: {
+                        error: "插件接口超时（" + this.apiTimeoutMs + "ms）",
+                        code: "PLUGIN_API_TIMEOUT",
+                        plugin: record.name,
+                    },
+                };
+            }
             this.logger.warn?.(
                 "[plugins] " +
                     record.name +
@@ -68,5 +93,6 @@ module.exports = {
             );
             return { status: 500, body: { error: message, plugin: record.name } };
         }
+        return { status: 200, body: result === undefined ? {} : result };
     },
 };

@@ -52,6 +52,8 @@ function summarize(eventName, payload) {
             action: data.action || result.action,
             ok: result.ok !== false,
             plugin: result.plugin || null,
+            // 是否改动了 workspace / 系统：审计回放时能一眼区分"读"和"写"
+            mutating: result.mutating === true,
             durationMs: result.durationMs,
             path: result.path,
             command: truncate(result.command, 200),

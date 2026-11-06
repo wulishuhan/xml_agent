@@ -22,6 +22,18 @@ const {
     CHAR_DQUOTE,
 } = require("../parse/xml-chars");
 
+/**
+CDATA 起始处的那个换行是排版产物，不是正文内容。
+
+模型习惯写成 `<write path="x"><![CDATA[\nconsole.log(1);\n]]></write>`，
+走通用解析路径时（内容两侧还有别的文字、或首尾不是 `<write>`）这段文本会被
+原样取出来，于是每个新建文件都以一个空行开头——lint 会报，diff 也难看。
+只吃掉开头**一个**换行，正文内部的空行保持不动。
+*/
+function stripCdataLeadingNewline(content) {
+    return typeof content === "string" ? content.replace(/^\r?\n/, "") : content;
+}
+
 // 验证写入内容（可选）
 function validateContent(filePath, content) {
     // 如果是 JSON 文件，尝试解析
@@ -86,7 +98,9 @@ module.exports = {
         if (!node["@_path"]) {
             throw new Error("write requires path");
         }
-        if (!getText(node)) {
+        // 归一化之后再判空：只写了一个换行的文件等于空文件，
+        // 与 validate 的 "content cannot be empty" 保持一致。
+        if (!stripCdataLeadingNewline(getText(node)).trim()) {
             throw new Error("write content cannot be empty");
         }
     },
@@ -96,7 +110,7 @@ module.exports = {
             throw new Error("write requires path");
         }
         const fullPath = ctx.runtime.resolvePath(filePath);
-        const content = getText(node);
+        const content = stripCdataLeadingNewline(getText(node));
         if (Buffer.byteLength(content, "utf8") > agentConfig.runtime.maxFileSize) {
             return {
                 ok: false,

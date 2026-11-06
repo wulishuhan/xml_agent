@@ -9,6 +9,9 @@ POST /api/plugins/:name/config          写入插件配置（按 configSchema �
 GET  /api/plugins/ui                    声明式 UI 贡献（面板/设置/按钮）
 GET  /api/permissions                   权限 scope 与当前策略
 POST /api/permissions/grant             授权/禁止某个 scope（{ scope, policy })
+GET  /api/plugins/secrets               密钥键名清单（只回键名与长度，不回值）
+PUT  /api/plugins/secrets/:key          写入/覆盖一个密钥（{ value })
+DELETE /api/plugins/secrets/:key        删除一个密钥
 
 v1 的 UI 只做"宿主渲染的声明式面板"，不向前端下发可执行 JS。
 */
@@ -180,6 +183,36 @@ function registerPluginRoutes(app, deps = {}) {
             const policy = req.body && req.body.policy;
             const permissions = registry.grantPermission(scope, policy);
             return res.json({ message: "Permission updated", permissions });
+        })
+    );
+
+    // ---- 密钥管理：只回键名与长度，值只进不出 ----
+    app.get(
+        "/api/plugins/secrets",
+        withRegistry((registry, req, res) => {
+            return res.json({ secrets: registry.listSecrets() });
+        })
+    );
+
+    app.put(
+        "/api/plugins/secrets/:key",
+        withRegistry((registry, req, res) => {
+            const value = req.body && req.body.value;
+            const secrets = registry.setSecret(req.params.key, value);
+            return res.json({ message: "Secret saved", secrets });
+        })
+    );
+
+    app.delete(
+        "/api/plugins/secrets/:key",
+        withRegistry((registry, req, res) => {
+            const result = registry.deleteSecret(req.params.key);
+            return res.json(
+                Object.assign(
+                    { message: result.removed ? "Secret deleted" : "Secret not found" },
+                    result
+                )
+            );
         })
     );
 }

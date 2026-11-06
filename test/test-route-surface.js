@@ -30,6 +30,7 @@ function check(name, ok, detail) {
 // 具体 method + path 由插件自己注册，宿主只知道前缀，所以按处理器的名字记录）。
 const EXPECTED = [
     "MOUNT pluginApi",
+    "DELETE /api/plugins/secrets/:key",
     "DELETE /api/sessions/:id",
     "GET /api/agent/config",
     "GET /api/browser/detect",
@@ -38,6 +39,7 @@ const EXPECTED = [
     "GET /api/permissions",
     "GET /api/plugins",
     "GET /api/plugins/:name/config",
+    "GET /api/plugins/secrets",
     "GET /api/plugins/ui",
     "GET /api/providers",
     "GET /api/sessions",
@@ -62,6 +64,7 @@ const EXPECTED = [
     "POST /api/storage/clean",
     "POST /api/uploads",
     "POST /api/workspace/mkdir",
+    "PUT /api/plugins/secrets/:key",
 ];
 
 function collectRoutes(app) {

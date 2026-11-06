@@ -760,6 +760,29 @@ function assertPluginConformance(plugin) {
     return registered;
 }
 
+/**
+清单读不出来时用的占位清单：字段形状与 normalizeManifest 的输出一致，
+但 version 记 0.0.0、无权限、无配置。仅供注册表在 /api/plugins 里
+把"坏掉的插件"列出来（status:"error" + 原因），不参与任何能力下发。
+*/
+function brokenManifest(name) {
+    const safeName = String(name || "unknown").trim() || "unknown";
+    return {
+        name: safeName,
+        version: "0.0.0",
+        kind: "action",
+        apiVersion: API_VERSION,
+        description: "",
+        author: "",
+        permissions: [],
+        activation: { mode: "always" },
+        configSchema: {},
+        engines: { xmlAgent: "" },
+        enabledByDefault: true,
+        deprecated: false,
+    };
+}
+
 module.exports = {
     API_VERSION,
     API_ROUTE_METHODS,
@@ -768,11 +791,14 @@ module.exports = {
     PLUGIN_KINDS,
     RESERVED_ACTION_NAMES,
     ATTR_PREFIX,
+    PLUGIN_NAME_PATTERN,
+    ACTION_NAME_PATTERN,
     createError,
     parseVersion,
     compareVersions,
     satisfiesEngines,
     normalizeManifest,
+    brokenManifest,
     normalizePermissions,
     normalizeConfigSchema,
     normalizeConfig,

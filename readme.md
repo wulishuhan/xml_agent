@@ -403,7 +403,9 @@ console.log("hello");
 const provider = createProvider("chatgpt");
 ```
 
-当前支持：ChatGPT、DeepSeek、Qwen、GLM、Gemini。BrowserAgent 内置页面自愈机制（`ensurePageAlive`），浏览器崩溃或标签页关闭时自动重连恢复会话。浏览器类型可通过 `browserType` 选项或 `BROWSER_TYPE` 环境变量指定为 `chrome` 或 `edge`；CDP URL 优先使用按浏览器类型解析后的环境变量（`BROWSER_CDP_URL` / `XML_AGENT_CDP_URL`）。
+当前支持：ChatGPT、DeepSeek、Qwen、GLM、Gemini。BrowserAgent 内置页面自愈机制（`ensurePageAlive`），浏览器崩溃或标签页关闭时自动重连恢复会话（首次连接失败会小退避重试，CDP 地址的尾斜杠会被自动去掉）。浏览器类型可通过 `browserType` 选项或 `BROWSER_TYPE` 环境变量指定为 `chrome` 或 `edge`；CDP URL 优先使用按浏览器类型解析后的环境变量（`BROWSER_CDP_URL` / `XML_AGENT_CDP_URL`）。
+
+整轮任务另有墙钟上限 `agent.runTimeoutMs`（默认 30 分钟，`AGENT_RUN_TIMEOUT_MS` 覆盖，`0` 表示不限制）：`maxSteps` 只管步数，浏览器 provider 每步十几秒，没有这个上限时单任务可能跑半小时而界面上毫无反馈。超时后状态记为 `timeout`，已产生的历史与报告照常落盘。
 
 > Gemini 用的是独立浏览器配置目录（`%TEMP%/edge-agent-profile-9223`），**首次使用需要在弹出的浏览器窗口里登录一次 Google 账号**，之后保持登录状态。
 
@@ -485,7 +487,8 @@ Web 版与桌面版顶部都有 **Plugins** 按钮（History / Trace 旁边）�
 - 一键启用 / 禁用插件（写 `~/.xml-agent/plugins-state.json`）；
 - 逐个 scope 调整权限策略：`allow` / `ask` / `deny`（写 `~/.xml-agent/permissions.json`）；
 - 按 `configSchema` 渲染配置表单并保存（写 `~/.xml-agent/plugins-config.json`，服务端按类型校验）；
-- Reload 重新扫描插件目录（改完插件代码不用重启服务）；
+- 增删密钥（`secrets` 区块）：接口只回键名与长度，值写进 `~/.xml-agent/secrets.json` 后**读不回来**；
+- Reload 重新扫描插件目录（改完插件代码不用重启服务，被 `require` 的子模块也会重新加载）；
 - 查看插件声明的面板（`Plugin panels` 区块）：插件用纯 JSON 声明 `note` / `status` / `table` / `action` 四种 block，宿主前端渲染并调用插件自己的只读接口（`/api/plugins/<name>/api/*`）——插件不向浏览器下发任何 JS。
 
 > 前端面板只是调用下面的接口，没有额外权限；REST 接口仍然可以单独使用（例如 CI 或脚本）。
@@ -501,6 +504,9 @@ POST /api/plugins/:name/config    写入配置（按 configSchema 校验）
 GET  /api/plugins/ui              声明式 UI 贡献（面板 / 设置 / 按钮）
 GET  /api/permissions             权限 scope 与当前策略
 POST /api/permissions/grant       授权某个 scope（{ scope, policy }）
+GET  /api/plugins/secrets         密钥键名清单（只回 key 与长度，不回值）
+PUT  /api/plugins/secrets/:key    写入 / 覆盖一个密钥（{ value }，落盘权限 0600）
+DELETE /api/plugins/secrets/:key  删除一个密钥
 GET  /api/providers               可用模型后端（内置 + 插件），供前端下拉使用
 
 # 插件自定义接口（由插件用 ctx.api.* 注册，路径固定在其命名空间下）
@@ -514,7 +520,18 @@ POST /api/plugins/<name>/api/<path>
 
 - 内置插件声明的 scope 默认 `allow`；
 - 用户插件默认 `ask`，v1 中等同于"未授权即拒绝"，拒绝原因会回给模型；
-- 所有插件动作的调用都会带 `plugin` / `durationMs` 写入 Trace，便于审计。
+- `secrets:read` 有两道门：清单声明 + 策略 `allow`。setup 期与动作执行期口径一致，
+  未授权时 `ctx.secrets.get()` 返回 `null`（`ctx.secrets.denied === true`），不会静默泄漏；
+- 所有插件动作的调用都会带 `plugin` / `durationMs` / `mutating` 写入 Trace 与审计日志，便于回放。
+
+## 插件生命周期
+
+- `ctx.onDispose(fn)` 或 `module.exports.dispose()` 登记清理：Reload / 卸载时按逆序执行，
+  定时器、监听器、socket 不登记就会每重载一次泄漏一份；
+- Reload 会清掉插件目录下所有模块的 require 缓存，改了子模块也会真正生效；
+- 清单坏掉、缺 `index.js`、动作或 provider 重名的插件都会以 `status:"error"` 出现在 Plugins 面板里，
+  原因写在 `error` 字段——不会"凭空消失"；
+- 插件自定义接口有 15s 执行上限，超时返回 `504 PLUGIN_API_TIMEOUT`。
 
 ## 插件开发文档
 

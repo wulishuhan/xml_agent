@@ -141,7 +141,15 @@ class Runtime {
         const definition = getBuiltinAction(actionName);
         if (definition) {
             // 兼容同步/异步 run：await 一个非 Promise 值不会有任何副作用。
-            return await definition.run(node, this.createBuiltinContext());
+            const result = await definition.run(node, this.createBuiltinContext());
+            // 内置动作同样把"是否改动 workspace"暴露到结果里，
+            // 让 Trace / 审计对内置与插件动作口径一致（插件侧在 registry/invoke.js 里加）。
+            if (result && typeof result === "object" && !Array.isArray(result)) {
+                if (result.mutating === undefined) {
+                    result.mutating = definition.meta ? definition.meta.mutating === true : false;
+                }
+            }
+            return result;
         }
         const pluginResult = await this.runPluginAction(actionName, node);
         if (pluginResult) {

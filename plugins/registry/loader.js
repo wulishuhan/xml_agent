@@ -11,6 +11,29 @@ const path = require("path");
 
 const sdk = require("../sdk");
 
+/**
+内置 provider 的 id 清单。延迟 require：providers/registry 反向依赖本模块，
+模块加载期直接 require 会形成环。取不到就返回空数组（宁可少一道校验，也不要加载失败）。
+*/
+let cachedBuiltinProviderIds = null;
+
+function builtinProviderIds() {
+    if (cachedBuiltinProviderIds) {
+        return cachedBuiltinProviderIds;
+    }
+    try {
+        // eslint-disable-next-line global-require
+        const registry = require("../../providers/registry");
+        const ids = Array.isArray(registry.BUILTIN_PROVIDER_IDS)
+            ? registry.BUILTIN_PROVIDER_IDS
+            : [];
+        cachedBuiltinProviderIds = ids.slice();
+    } catch (error) {
+        return [];
+    }
+    return cachedBuiltinProviderIds;
+}
+
 module.exports = {
     load() {
         if (this.loaded) {
@@ -54,7 +77,22 @@ module.exports = {
         return this.load();
     },
 
+    /**
+    显式卸载：先让每个插件跑完自己的清理，再清空目录表。
+    单纯 reload 也会走到这里——插件注册的定时器、监听器、socket 必须由
+    ctx.onDispose 或 module.exports.dispose 回收，否则每重载一次泄漏一份。
+
+    卸载后保持 loaded=true：这样后续的查询不会又把插件全量扫回来。
+    想要恢复能力，显式调用 reload()。
+    */
+    unload() {
+        this._resetCatalogs();
+        this.loaded = true;
+        return this;
+    },
+
     _resetCatalogs() {
+        this._disposeAll();
         this.plugins.clear();
         this.actions.clear();
         this.hooks.clear();
@@ -62,6 +100,58 @@ module.exports = {
         this.eventFormatters.clear();
         this.ui = { panels: [], settings: [], actions: [] };
         this.errors.length = 0;
+    },
+
+    /**
+    收尾所有已加载插件。清理函数按注册的逆序执行（后申请的先释放），
+    单个清理抛错只告警：重载不能因为一个插件的 bug 而中断。
+    */
+    _disposeAll() {
+        for (const record of this.plugins.values()) {
+            if (record.status !== "loaded") {
+                continue;
+            }
+            this._disposeRecord(record);
+            record.status = "disposed";
+        }
+    },
+
+    _disposeRecord(record) {
+        const disposers = Array.isArray(record.disposers) ? record.disposers.slice().reverse() : [];
+        for (const disposer of disposers) {
+            this._runDisposer(record, disposer, "注册的清理函数");
+        }
+        if (typeof record.moduleDispose === "function") {
+            this._runDisposer(record, record.moduleDispose, "module.exports.dispose");
+        }
+        record.disposers = [];
+    },
+
+    _runDisposer(record, disposer, label) {
+        try {
+            const returned = disposer();
+            if (returned && typeof returned.then === "function") {
+                returned.catch((error) => {
+                    this.logger.warn?.(
+                        "[plugins] " +
+                            record.name +
+                            " 的 " +
+                            label +
+                            " 异步失败：" +
+                            ((error && error.message) || error)
+                    );
+                });
+            }
+        } catch (error) {
+            this.logger.warn?.(
+                "[plugins] " +
+                    record.name +
+                    " 的 " +
+                    label +
+                    " 失败：" +
+                    ((error && error.message) || error)
+            );
+        }
     },
 
     _loadFromDir(dir, source) {
@@ -73,7 +163,21 @@ module.exports = {
             return;
         }
         const names = entries
-            .filter((entry) => entry.isDirectory())
+            .filter((entry) => {
+                if (entry.isDirectory()) {
+                    return true;
+                }
+                // 开发插件时常把目录软链到 ~/.xml-agent/plugins 下；
+                // isDirectory() 对符号链接返回 false，不额外判断就会被静默忽略。
+                if (!entry.isSymbolicLink()) {
+                    return false;
+                }
+                try {
+                    return fs.statSync(path.join(dir, entry.name)).isDirectory();
+                } catch (error) {
+                    return false;
+                }
+            })
             .map((entry) => entry.name)
             .filter((name) => name.charAt(0) !== "." && name !== "node_modules")
             .sort();
@@ -83,6 +187,7 @@ module.exports = {
     },
 
     _loadPlugin(pluginDir, source) {
+        const dirName = path.basename(pluginDir);
         let record = null;
         try {
             const manifestPath = path.join(pluginDir, "plugin.json");
@@ -105,23 +210,7 @@ module.exports = {
 
             // 先落一个占位记录，再检查版本：这样"版本不兼容"的插件在
             // /api/plugins 里是可见的 error 状态，而不是凭空消失。
-            record = {
-                name: manifest.name,
-                version: manifest.version,
-                kind: manifest.kind,
-                manifest,
-                dir: pluginDir,
-                source,
-                status: "error",
-                error: null,
-                enabled: true,
-                actions: [],
-                hooks: [],
-                formatters: [],
-                apiRoutes: [],
-                // 声明式面板非法时只跳过该面板并记录原因，不让整个插件失效
-                uiErrors: [],
-            };
+            record = this._newRecord(manifest, pluginDir, source);
             this.plugins.set(manifest.name, record);
 
             if (manifest.apiVersion !== sdk.API_VERSION) {
@@ -155,14 +244,16 @@ module.exports = {
             if (!fs.existsSync(indexPath)) {
                 throw sdk.createError("ENTRY_MISSING", "缺少 index.js");
             }
-            // reload 时让插件入口重新执行（子模块可能仍被 require 缓存）
-            const resolvedEntry = require.resolve(indexPath);
-            delete require.cache[resolvedEntry];
+            // 重载时要让插件自己的代码重新执行：只删入口不够，被入口 require 的
+            // 子模块会继续用旧代码（改了 lib/helper.js 却看不到变化）。
+            this._purgeRequireCache(pluginDir);
             // eslint-disable-next-line global-require
-            const pluginModule = require(resolvedEntry);
+            const pluginModule = require(require.resolve(indexPath));
             if (!pluginModule || typeof pluginModule.setup !== "function") {
                 throw sdk.createError("ENTRY_INVALID", "插件必须导出 { setup(ctx) }");
             }
+            record.moduleDispose =
+                typeof pluginModule.dispose === "function" ? pluginModule.dispose : null;
 
             const staging = {
                 actions: [],
@@ -171,8 +262,12 @@ module.exports = {
                 formatters: [],
                 ui: [],
                 api: [],
+                disposers: [],
             };
             pluginModule.setup(this._createSetupContext(record, staging));
+            // setup 已经执行，注册的清理函数先挂到记录上：万一后面的冲突校验失败，
+            // 这些资源也要立即释放，不能等到下次 reload。
+            record.disposers = staging.disposers;
             // 先整体校验，再整体提交：setup 中途抛错时不会留下半注册状态
             this._commit(record, staging);
             record.status = "loaded";
@@ -187,18 +282,85 @@ module.exports = {
                     record.actions.length +
                     " 个动作"
             );
+            if (record.manifest.deprecated) {
+                // 设计里承诺"加载时告警"：动作仍可执行，但不会注入提示词
+                this.logger.warn?.(
+                    "[plugins] " +
+                        record.name +
+                        " 已标记 deprecated：动作不会注入提示词，建议尽快迁移"
+                );
+            }
         } catch (error) {
             const message = (error && error.message) || String(error);
+            if (!record) {
+                // 清单都没读出来（缺 plugin.json / JSON 坏了）：用目录名建一条占位记录。
+                // 否则这个插件只在 errors 数组里出现，前端看不到、也无从修复。
+                record = this._brokenRecord(dirName, pluginDir, source, message);
+                if (!this.plugins.has(record.name)) {
+                    this.plugins.set(record.name, record);
+                }
+            }
             this.errors.push({
-                plugin: record ? record.name : path.basename(pluginDir),
+                plugin: record.name,
                 dir: pluginDir,
                 error: message,
             });
-            if (record) {
-                record.status = "error";
-                record.error = message;
+            record.status = "error";
+            record.error = message;
+            this.logger.warn?.("[plugins] 加载失败 " + dirName + "：" + message);
+        }
+    },
+
+    _newRecord(manifest, pluginDir, source) {
+        return {
+            name: manifest.name,
+            version: manifest.version,
+            kind: manifest.kind,
+            manifest,
+            dir: pluginDir,
+            source,
+            status: "error",
+            error: null,
+            enabled: true,
+            broken: false,
+            actions: [],
+            hooks: [],
+            formatters: [],
+            apiRoutes: [],
+            // 声明式面板非法时只跳过该面板并记录原因，不让整个插件失效
+            uiErrors: [],
+            disposers: [],
+            moduleDispose: null,
+        };
+    },
+
+    /**
+    清单不可读时的占位记录：字段形状与正常记录一致，
+    这样 getStatus / getConfig / setEnabled 都不会因为 manifest 缺失而抛错。
+    */
+    _brokenRecord(name, pluginDir, source, message) {
+        const record = this._newRecord(sdk.brokenManifest(name), pluginDir, source);
+        record.error = message;
+        record.broken = true;
+        return record;
+    },
+
+    /**
+    清掉插件目录下所有模块的 require 缓存（含子模块）。
+    只清 realpath 落在该目录里的键，不会碰到宿主自己的模块；
+    Windows 路径大小写不敏感，比较时统一小写。
+    */
+    _purgeRequireCache(pluginDir) {
+        let prefix = path.resolve(pluginDir) + path.sep;
+        let ignoreCase = process.platform === "win32";
+        if (ignoreCase) {
+            prefix = prefix.toLowerCase();
+        }
+        for (const key of Object.keys(require.cache)) {
+            const normalized = ignoreCase ? key.toLowerCase() : key;
+            if (normalized.indexOf(prefix) === 0) {
+                delete require.cache[key];
             }
-            this.logger.warn?.("[plugins] 加载失败 " + path.basename(pluginDir) + "：" + message);
         }
     },
 
@@ -234,6 +396,32 @@ module.exports = {
                 problems.push("事件格式器 " + item.type + " 已被占用");
             }
         }
+        // 插件 provider：与内置 id 冲突、或与其它插件重名时，providers/registry 会静默丢弃，
+        // 插件看起来加载成功但模型永远选不到它 —— 这里直接判失败，让问题在加载期暴露。
+        const builtinProviders = builtinProviderIds();
+        for (const item of staging.providers) {
+            if (!sdk.PLUGIN_NAME_PATTERN.test(item.name)) {
+                problems.push("provider id 非法：" + item.name + "（只允许小写字母/数字与 - _ .）");
+                continue;
+            }
+            if (typeof item.factory !== "function") {
+                problems.push("provider " + item.name + " 的 factory 不是函数");
+                continue;
+            }
+            if (builtinProviders.indexOf(item.name) !== -1) {
+                problems.push("provider id " + item.name + " 与内置 provider 冲突");
+                continue;
+            }
+            if (this.providers.has(item.name)) {
+                problems.push(
+                    "provider id " +
+                        item.name +
+                        " 已被插件 " +
+                        this.providers.get(item.name).plugin +
+                        " 占用"
+                );
+            }
+        }
         // 插件 HTTP 路由：同一插件内 method+path 不允许重复
         const seenRoutes = new Set();
         for (const route of staging.api) {
@@ -245,6 +433,8 @@ module.exports = {
             seenRoutes.add(key);
         }
         if (problems.length > 0) {
+            // 注册被拒 → 插件不会加载，setup 里申请的资源要当场释放
+            this._disposeRecord(record);
             throw sdk.createError("REGISTRATION_CONFLICT", problems.join("; "));
         }
 

@@ -10,6 +10,19 @@ const capabilities = require("../capabilities");
 
 const { createScopedLogger } = require("./shared");
 
+/**
+未授权时的密钥门面：形状与真的一样，但拿不到任何值。
+插件作者可以在 setup 里用 ctx.permissions.check("secrets:read") 判断，
+或者直接读 ctx.secrets.denied。
+*/
+function deniedSecretsFacade() {
+    return {
+        denied: true,
+        get: () => null,
+        getAll: () => ({}),
+    };
+}
+
 module.exports = {
     _createSetupContext(record, staging) {
         const self = this;
@@ -25,7 +38,9 @@ module.exports = {
             config: this.getConfig(record.name),
             logger: createScopedLogger(this.logger, record.name),
             storage: capabilities.createStorage({ dir: this.storageDir(record.name) }),
-            secrets: capabilities.createSecrets({ file: this._secretsFile() }),
+            // 密钥属于能力，不是元数据：清单没声明 secrets:read 或策略未放行时
+            // 一律下发空门面。否则插件在 setup 期就能读到全部密钥，绕过权限校验。
+            secrets: this._secretsFor(record, this._canReadSecrets(record)),
             env: { agentVersion: this.agentVersion, storeRoot: this.storeRoot },
             actions: {
                 register(def) {
@@ -43,6 +58,16 @@ module.exports = {
                     }
                     staging.hooks.push({ event: name, handler });
                 },
+            },
+            /**
+            setup 期申请的资源（定时器、监听器、socket、子进程）在这里登记清理函数。
+            reload / 卸载时按逆序执行，不登记就会每重载一次泄漏一份。
+            */
+            onDispose(handler) {
+                if (typeof handler !== "function") {
+                    throw sdk.createError("DISPOSE_INVALID", "onDispose 需要函数");
+                }
+                staging.disposers.push(handler);
             },
             eventFormatters: {
                 register(type, formatter) {
@@ -107,10 +132,46 @@ module.exports = {
         };
     },
 
+    /**
+    清单声明了 secrets:read 且策略放行，才算拿到密钥读取能力。
+    setup 与 run 都用这一条判据，避免两条路径口径不一致。
+    */
+    _canReadSecrets(record) {
+        if (!record || !record.manifest) {
+            return false;
+        }
+        if (record.manifest.permissions.indexOf("secrets:read") === -1) {
+            return false;
+        }
+        return this.getPolicy("secrets:read", record) === "allow";
+    },
+
+    /**
+    密钥门面。未授权时返回空门面并告警一次：插件读到 null 会困惑，
+    日志里必须说明"为什么是 null"，否则排查成本全落在使用者身上。
+    */
+    _secretsFor(record, granted) {
+        if (granted) {
+            return capabilities.createSecrets({ file: this._secretsFile() });
+        }
+        if (record && !record.secretsDeniedWarned) {
+            record.secretsDeniedWarned = true;
+            this.logger.warn?.(
+                "[plugins] " +
+                    (record.name || "?") +
+                    " 读取密钥被拒：清单未声明 secrets:read 或权限策略未放行，已返回空值"
+            );
+        }
+        return deniedSecretsFacade();
+    },
+
     _createRunContext({ record, entry, host, attrs, signal }) {
         const config = this.getConfig(record.name);
         const secrets = capabilities.createSecrets({ file: this._secretsFile() });
+        // 脱敏始终用全量密钥值（只是把字面量替换成 ***，不向插件暴露任何东西）
         const secretValues = secrets.getAll();
+        // 能被插件读到值的，只有自己动作声明并通过权限校验的 secrets:read
+        const canReadSecrets = entry.def.meta.permission.indexOf("secrets:read") !== -1;
         const workspace = host.workspace || "";
         return {
             plugin: {
@@ -134,15 +195,17 @@ module.exports = {
                 maxBytes: config.httpMaxBytes,
             }),
             storage: capabilities.createStorage({ dir: this.storageDir(record.name) }),
-            secrets: {
-                get: (key) => {
-                    const name = String(key || "");
-                    return Object.prototype.hasOwnProperty.call(secretValues, name)
-                        ? secretValues[name]
-                        : null;
-                },
-                getAll: () => Object.assign({}, secretValues),
-            },
+            secrets: canReadSecrets
+                ? {
+                      get: (key) => {
+                          const name = String(key || "");
+                          return Object.prototype.hasOwnProperty.call(secretValues, name)
+                              ? secretValues[name]
+                              : null;
+                      },
+                      getAll: () => Object.assign({}, secretValues),
+                  }
+                : this._secretsFor(record, false),
             logger: createScopedLogger(this.logger, record.name),
             permissions: {
                 policy: (scope) => this.getPolicy(scope, record),

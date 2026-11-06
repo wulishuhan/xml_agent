@@ -28,7 +28,7 @@
 | P2 截图迁移为插件                                          | ✅ 已实现 | `plugins/builtin/screenshot` 自包含（动作 + 引擎 `engine/`），内置动作表只剩 5 个；核心无截图实现、无截图 HTTP 接口。删掉插件目录即彻底移除，`<screenshot>` 报 `Unknown XML Action` |
 | P3 Provider 契约化                                         | ✅ 已实现 | `providers/registry.js`：元数据 + 契约校验 + 插件 provider 接入；地址与会话 id 正则由 provider 声明                                                                                 |
 | P4 声明式 UI 面板                                          | ✅ 已实现 | `note/status/table/action` 四种 block 由宿主渲染；数据来自 `ctx.api.*`（限定插件命名空间，插件零 JS 进浏览器）                                                                      |
-| P5 权限授权 UI / secrets 管理                              | ⚠️ 部分   | 权限已有可视化授权界面；`secrets.json` 仍需手工编辑                                                                                                                                 |
+| P5 权限授权 UI / secrets 管理                              | ✅ 已实现 | 权限可视化授权；Plugins 面板可直接增删密钥，接口只回键名与长度（`GET/PUT/DELETE /api/plugins/secrets`），值落盘权限 0600                                                            |
 
 **P0 ① 的落地方式**（等价性由 `test/test-builtin-actions.js` 的 53 项用例锁死）：
 
@@ -344,10 +344,19 @@ module.exports = {
 Agent run
     ├─ 按 activation 决定注入哪些插件动作到本轮的提示词
     ├─ runtime.run(action) → permissions.check → timeout(AbortSignal) → run() → afterRun()
-    └─ 调用记录写入 history：{ plugin, action, permission, durationMs, ok }
+    └─ 调用记录写入 history：{ plugin, action, permission, durationMs, ok, mutating }
+
+重载 / 卸载
+    ├─ 各插件登记的清理函数逆序执行（ctx.onDispose）+ module.exports.dispose()
+    ├─ 插件目录下所有模块的 require 缓存被清除（子模块也会重新执行）
+    └─ 再走一遍"发现 → 校验 → setup → 提交"
 
 进程退出 → 状态写回 plugins-state.json
 ```
+
+清理是硬要求：`setup` 里起的 `setInterval`、`process.on`、socket 不登记，
+每重载一次就泄漏一份（实测两个 20ms 定时器会让 tick 数翻倍）。
+没有清理函数的插件仍然是合法的，但文档明确写了这条，扫一眼就能对上。
 
 #### 代码组织
 
@@ -401,8 +410,13 @@ Agent run
 ### 4.9 可靠性护栏
 
 - **超时**：每个动作 `timeoutMs` + `AbortSignal` 传播；超时返回结构化错误，不抛栈。
+  插件 HTTP 接口同样有执行上限（默认 15s），超时回 `504 PLUGIN_API_TIMEOUT`，
+  不让一个永不 resolve 的 handler 把浏览器面板挂成永久转圈。
 - **加载失败隔离**：单个插件 `setup()` 失败只标记 `status:"error"` 并通过 `/api/plugins` 暴露原因。
-- **缓存**：清单按 mtime 失效；`XML_AGENT_PLUGINS=0` 一键回到"仅内置动作"。
+  清单读不出来的（缺 `plugin.json` / JSON 坏了）用目录名建占位记录，同样可见——"消失"比"报错"更难排查。
+- **缓存**：清单按 mtime 失效；`plugins-state.json` / `plugins-config.json` / `permissions.json` /
+  `secrets.json` 统一按 `mtime + size` 缓存，动作执行路径不再反复读盘解析。
+- **一键回退**：`XML_AGENT_PLUGINS=0` 回到"仅内置动作"。
 - **提示词预算**：`maxPromptChars`（默认 8000），超限按 `priority` 裁剪并明确告知模型。
 - **激活策略**：`activation`（`always` / `keywords` / `manual`）。插件变多后，只有被任务触发的插件才注入提示词——这是长期不失控的关键。
 - **降级**：插件动作可在 `plugin.json` 声明 `"deprecated": true`，加载时告警且不注入提示词。

@@ -119,6 +119,8 @@ module.exports = {
 
         result.plugin = record.name;
         result.durationMs = Date.now() - startedAt;
+        // 声明式的"会改动 workspace/system"，让 Trace、审计与前端不必再按动作名猜
+        result.mutating = entry.def.meta.mutating === true;
 
         // 给模型看的精简视图（可选）。完整结果仍保留在 Trace / 报告里，
         // 只有回给模型的下一轮提示词使用这个视图，避免大响应体撑爆上下文。

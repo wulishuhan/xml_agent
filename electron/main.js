@@ -21,6 +21,17 @@ const {
 const HOST = "127.0.0.1";
 const PORT_START = 3000;
 const PORT_END = 3999;
+
+/**
+进程级兜底：主进程里任何一个没被 await 的 Promise 拒绝，在 Node 15+ 的默认语义下
+会直接带走整个应用——窗口闪退，只留下一行栈。桌面端崩一次用户就得重启，
+所以这里改成"记日志 + 继续"。真正的 bug 仍然完整留在日志里，只是不再升级成崩溃。
+（只兜 unhandledRejection：uncaughtException 意味着同步状态可能已经损坏，继续跑更危险。）
+*/
+process.on("unhandledRejection", (reason) => {
+    const detail = reason && reason.stack ? reason.stack : String(reason);
+    console.error("[main] unhandled rejection:", detail);
+});
 // Windows 通知（Toast）必须设置 AppUserModelID，否则系统会静默丢弃通知。
 const APP_USER_MODEL_ID = "com.shuhan.xmlagent";
 // 桌面端允许用户选择的图片扩展名，与 webui/upload-api.js 保持一致。

@@ -38,6 +38,17 @@ const { registerProviderRoutes } = require("./routes/providers");
 const { getRegistry } = require("../plugins/registry");
 
 const app = express();
+
+/**
+进程级兜底：provider / 插件里任何没被 await 的 Promise 拒绝，在 Node 15+ 的默认语义下
+会直接结束进程（WebUI 变成打不开的页面）。这里只记录不退出——
+单次拒绝通常是某条会话失败，不该带走整个服务。
+（uncaughtException 不在这里吞：同步状态可能已损坏。）
+*/
+process.on("unhandledRejection", (reason) => {
+    const detail = reason && reason.stack ? reason.stack : String(reason);
+    console.error("[webui] unhandled rejection:", detail);
+});
 const DEFAULT_PORT = Number(process.env.PORT) || 3000;
 const sessionManager = new SessionManager();
 

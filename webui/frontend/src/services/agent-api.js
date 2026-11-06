@@ -446,6 +446,37 @@ export async function callPluginApi(name, pluginPath, method = "GET", body) {
     }
     return result || {};
 }
+// ---- 密钥管理：只读键名与长度，值只进不出 ----
+export async function getSecrets() {
+    const response = await fetch(api("/api/plugins/secrets"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read secrets");
+    }
+    return Array.isArray(result.secrets) ? result.secrets : [];
+}
+export async function saveSecret(key, value) {
+    const response = await fetch(api("/api/plugins/secrets/" + encodeURIComponent(key)), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to save secret");
+    }
+    return Array.isArray(result.secrets) ? result.secrets : [];
+}
+export async function deleteSecret(key) {
+    const response = await fetch(api("/api/plugins/secrets/" + encodeURIComponent(key)), {
+        method: "DELETE",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to delete secret");
+    }
+    return Array.isArray(result.secrets) ? result.secrets : [];
+}
 export async function grantPermission(scope, policy) {
     const response = await fetch(api("/api/permissions/grant"), {
         method: "POST",

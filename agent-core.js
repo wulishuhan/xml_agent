@@ -36,6 +36,11 @@ class Agent extends EventEmitter {
         this.execScope = options.execScope || "workspace";
         this.maxSteps = options.maxSteps ?? agentConfig.agent.maxSteps;
         this.maxProviderErrors = options.maxProviderErrors ?? agentConfig.agent.maxProviderErrors;
+        // 整轮任务的墙钟上限。maxSteps 只管步数，浏览器 provider 每步十几秒，
+        // 100 步能跑半小时以上，UI 上却没有任何兜底。0 表示不限制。
+        this.runTimeoutMs = options.runTimeoutMs ?? agentConfig.agent.runTimeoutMs;
+        // provider 工厂可注入，便于单测在不起浏览器的情况下驱动主循环。
+        this.createProviderImpl = options.createProvider || createProvider;
         this.focusCdpPage =
             options.focusCdpPage !== undefined
                 ? options.focusCdpPage
@@ -66,6 +71,11 @@ class Agent extends EventEmitter {
         this.answer = null;
         this.error = null;
         this.stopRequested = false;
+        this.runDeadline = 0;
+    }
+    /** 墙钟上限是否已到（未设置上限时永远 false）。 */
+    isRunTimeoutExceeded(now = Date.now()) {
+        return Boolean(this.runDeadline) && now >= this.runDeadline;
     }
     emitEvent(type, data = {}) {
         const event = {
@@ -198,7 +208,7 @@ class Agent extends EventEmitter {
             });
             // 浏览器相关参数（CDP 地址、可执行文件、超时、访问地址）统一由
             // providers/options 装配：编排器不关心它们来自哪个环境变量或配置项。
-            this.provider = createProvider(
+            this.provider = this.createProviderImpl(
                 this.providerName,
                 providerOptions.buildProviderOptions({
                     providerName: this.providerName,
@@ -238,7 +248,18 @@ class Agent extends EventEmitter {
                 count: 0,
                 max: this.maxProviderErrors,
             };
+            this.runDeadline = this.runTimeoutMs > 0 ? Date.now() + this.runTimeoutMs : 0;
             while (this.step < this.maxSteps && this.status === "running") {
+                // 每步开始前检查一次墙钟。单步本身由 provider 的 responseTimeout 兜底，
+                // 这里防的是"每一步都成功、但整轮跑了半小时还没结束"。
+                if (this.isRunTimeoutExceeded()) {
+                    this.status = "timeout";
+                    this.emitEvent("agent.timeout", {
+                        step: this.step,
+                        runTimeoutMs: this.runTimeoutMs,
+                    });
+                    break;
+                }
                 this.step++;
                 this.emitEvent("step.started", {
                     step: this.step,

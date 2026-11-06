@@ -77,9 +77,27 @@ function getBrowserCandidates(browserType) {
         "/snap/bin/chromium",
     ];
 }
+/**
+规范化 CDP 地址：去掉尾部的斜杠。
+
+Playwright 的 `connectOverCDP` 会把 `/json/version` 拼到传入的地址后面，
+地址若以 `/` 结尾就变成了 `/json/version/`，Chromium 的 DevTools 端点对
+这个尾斜杠直接 404（真机日志：`Unexpected status 404 when connecting to
+http://127.0.0.1:9223/json/version/`）。配置里多一个斜杠不该让整轮任务失败。
+*/
+function normalizeCdpUrl(url) {
+    const text = String(url || "").trim();
+
+    if (!text) {
+        return text;
+    }
+
+    return text.replace(/\/+$/, "");
+}
+
 class BrowserAgent {
     constructor(options = {}) {
-        this.cdpUrl = options.cdpUrl || cdpUrlFromEnv() || DEFAULT_CDP_URL;
+        this.cdpUrl = normalizeCdpUrl(options.cdpUrl || cdpUrlFromEnv() || DEFAULT_CDP_URL);
         this.context = null;
         this.page = null;
         this.browser = null;
@@ -503,7 +521,7 @@ class BrowserAgent {
                         return false;
                     }
                 }
-                self.browser = await chromium.connectOverCDP(self.cdpUrl);
+                self.browser = await self.connectCdp();
                 await self.ensurePage();
                 await self.waitForInput();
                 const cid = self.refreshConversationId();
@@ -527,6 +545,39 @@ class BrowserAgent {
             this._recoveringPromise = null;
         }
     }
+    /**
+    连接 CDP，失败时小退避重试。
+
+    浏览器刚被拉起、或正在重启的那一两秒里 `/json/version` 会短暂不可用，
+    单次失败就放弃会把 README 里承诺的"页面自愈"变成"直接判死"（真机实测过）。
+    */
+    async connectCdp(attempts = 3) {
+        let lastError = null;
+
+        for (let attempt = 0; attempt < attempts; attempt += 1) {
+            try {
+                return await chromium.connectOverCDP(this.cdpUrl);
+            } catch (error) {
+                lastError = error;
+
+                if (attempt < attempts - 1) {
+                    console.warn(
+                        "[" +
+                            this.name +
+                            "] connectOverCDP failed (" +
+                            error.message +
+                            "), retry " +
+                            (attempt + 1) +
+                            "/" +
+                            (attempts - 1)
+                    );
+                    await this.sleep(this.retryInterval);
+                }
+            }
+        }
+
+        throw lastError;
+    }
     async start() {
         try {
             const isRunning = await this.checkCdpServer(this.cdpUrl);
@@ -540,7 +591,7 @@ class BrowserAgent {
                     "CDP server not running at " + this.cdpUrl + " and autoStart is disabled"
                 );
             }
-            this.browser = await chromium.connectOverCDP(this.cdpUrl);
+            this.browser = await this.connectCdp();
             console.log(
                 "[" + this.name + "] Connected to CDP server (" + this.getBrowserLabel() + ")"
             );
@@ -1006,6 +1057,7 @@ class BrowserAgent {
 }
 module.exports = {
     BrowserAgent,
+    normalizeCdpUrl,
     normalizeBrowserType,
     detectBrowserTypeFromPath,
     getBrowserCandidates,

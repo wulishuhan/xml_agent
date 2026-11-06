@@ -299,7 +299,11 @@ function normalizeConversationId(providerId, raw) {
     return match ? match[1] : null;
 }
 
+// 内置 provider 的 id 清单（插件侧据此拒绝与内置重名，否则会被本模块静默丢弃）
+const BUILTIN_PROVIDER_IDS = Array.from(builtinMap.keys());
+
 module.exports = {
+    BUILTIN_PROVIDER_IDS,
     DEFAULT_CONVERSATION_PATTERN,
     REQUIRED_METHODS,
     OPTIONAL_METHODS,

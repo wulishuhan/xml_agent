@@ -23,6 +23,22 @@ const PROFILE = {
     pageUrlIncludes: "chat.qwen.ai",
 };
 
+/**
+首次加载、崩溃自愈后新建的页面，Qwen 会先盖一层全屏启动遮罩
+（`#splash-screen` / `#splash-main-container`）。遮罩期间的点击在 Playwright
+眼里是 "element intercepts pointer events"，会一直重试到 30s 超时——
+实测这会连续吃掉 3 次 provider 重试，整个 run 直接失败。
+所以所有"要落到输入区"的动作都先等遮罩消失。
+*/
+const SPLASH_SELECTORS = ["#splash-screen", "#splash-main-container"];
+
+/** Playwright 的遮挡类错误：等遮罩消失后重试一次，而不是当场判死。 */
+function isInterceptionError(error) {
+    const message = String((error && error.message) || "");
+
+    return message.indexOf("intercepts pointer events") !== -1;
+}
+
 class QwenProvider extends BrowserChatProvider {
     constructor(options = {}) {
         super({
@@ -362,8 +378,76 @@ class QwenProvider extends BrowserChatProvider {
         }
     }
 
+    // ------------------------------------------------------------
+    // 启动遮罩
+    // ------------------------------------------------------------
+
+    /** 遮罩还在不在（不可见/零尺寸/透明都算没有）。 */
+    async isSplashVisible() {
+        if (!this.isPageAlive()) {
+            return false;
+        }
+
+        try {
+            return await this.page.evaluate((selectors) => {
+                return selectors.some((selector) => {
+                    const node = document.querySelector(selector);
+
+                    if (!node) {
+                        return false;
+                    }
+
+                    const rect = node.getBoundingClientRect();
+
+                    if (rect.width < 2 || rect.height < 2) {
+                        return false;
+                    }
+
+                    const style = window.getComputedStyle(node);
+
+                    if (style.display === "none" || style.visibility === "hidden") {
+                        return false;
+                    }
+
+                    return Number(style.opacity || 1) > 0.05;
+                });
+            }, SPLASH_SELECTORS);
+        } catch (error) {
+            // 查不到就当没有遮罩：诊断失败不该反过来把正常流程堵死
+            return false;
+        }
+    }
+
+    /**
+    等到遮罩消失。超时只告警不抛错——遮罩选择器将来失效时，
+    宁可让后面的点击自己报错，也不要在这里把整轮任务判死。
+    */
+    async waitForSplashGone(timeout = 15000) {
+        const deadline = Date.now() + timeout;
+
+        while (Date.now() < deadline) {
+            if (!(await this.isSplashVisible())) {
+                return true;
+            }
+
+            await this.sleep(250);
+        }
+
+        console.warn("[Qwen] splash screen still visible after " + timeout + "ms");
+        return false;
+    }
+
+    /** 写入前先等遮罩走开，否则 focus/click 都会被挡住。 */
+    async insertMessage(message) {
+        await this.waitForSplashGone();
+
+        return super.insertMessage(message);
+    }
+
     /** Qwen 只有输入元素回车这一条提交路径。 */
     async deliverMessage() {
+        await this.waitForSplashGone();
+
         // Qwen 的输入区需要一次真实鼠标点击才会接管键盘：仅 focus() 后按 Enter
         // 在当前版本不会触发发送（输入框内容会原样保留）。所以这里显式点击再回车。
         const input = await this.findVisibleInput(this.inputSelectors, 3);
@@ -371,10 +455,24 @@ class QwenProvider extends BrowserChatProvider {
             throw new Error("Qwen failed to send message: input not found before pressing Enter");
         }
         try {
-            await input.click();
+            await input.click({ timeout: 10000 });
             await input.press("Enter");
         } catch (error) {
-            throw new Error("Qwen failed to send message: " + error.message);
+            // 遮罩比预期晚出现（页面二次水合）：等它消失后重来一次，
+            // 不要把一个可恢复的遮挡升级成"连续 3 次 provider error"。
+            if (!isInterceptionError(error)) {
+                throw new Error("Qwen failed to send message: " + error.message);
+            }
+
+            console.warn("[Qwen] input click intercepted, waiting for splash screen...");
+            await this.waitForSplashGone(20000);
+
+            try {
+                await input.click({ timeout: 10000 });
+                await input.press("Enter");
+            } catch (retryError) {
+                throw new Error("Qwen failed to send message: " + retryError.message);
+            }
         }
         // 回车仍无效时退回点击发送按钮，避免整个任务卡在"输入框未清空"。
         if (await this.waitForInputClear(3000)) {
@@ -395,8 +493,18 @@ class QwenProvider extends BrowserChatProvider {
             try {
                 const button = this.page.locator(selector).first();
                 if ((await button.count()) > 0 && (await button.isVisible())) {
-                    await button.click();
-                    return true;
+                    try {
+                        await button.click({ timeout: 10000 });
+                        return true;
+                    } catch (clickError) {
+                        if (!isInterceptionError(clickError)) {
+                            continue;
+                        }
+
+                        await this.waitForSplashGone(20000);
+                        await button.click({ timeout: 10000 });
+                        return true;
+                    }
                 }
             } catch (error) {
                 // 选择器没命中或按钮被遮挡，换下一个

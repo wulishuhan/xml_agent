@@ -60,6 +60,70 @@
                     </div>
                     <!-- 插件声明的面板：宿主渲染，插件不下发任何可执行代码 -->
                     <PluginPanels />
+                    <!-- 密钥：只显示键名与长度，写入后不可回读 -->
+                    <section class="plugin-card secrets-card">
+                        <header class="plugin-card-header">
+                            <div class="plugin-title">
+                                <code class="plugin-name">secrets</code>
+                                <span class="plugin-badge">{{ secrets.length }} key(s)</span>
+                                <span class="plugin-badge">host</span>
+                            </div>
+                        </header>
+                        <p class="plugin-description">
+                            Stored in ~/.xml-agent/secrets.json. Values are write-only here —
+                            plugins read them through ctx.secrets when they declare the secrets:read
+                            permission.
+                        </p>
+                        <div class="plugin-row plugin-config-row">
+                            <span class="plugin-row-label">Keys</span>
+                            <div class="plugin-fields">
+                                <div
+                                    v-for="secret in secrets"
+                                    :key="secret.key"
+                                    class="plugin-field secret-row"
+                                >
+                                    <code class="secret-key">{{ secret.key }}</code>
+                                    <span class="secret-meta">{{ secret.length }} chars</span>
+                                    <button
+                                        type="button"
+                                        class="btn secret-delete"
+                                        :disabled="busy"
+                                        @click="removeSecret(secret.key)"
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                                <p v-if="!secrets.length" class="plugin-row-none">
+                                    No secrets stored
+                                </p>
+                                <label class="plugin-field">
+                                    <span class="plugin-field-label">Add / replace</span>
+                                    <input
+                                        v-model="newSecretKey"
+                                        type="text"
+                                        placeholder="API_KEY"
+                                        spellcheck="false"
+                                        :disabled="busy"
+                                    />
+                                    <input
+                                        v-model="newSecretValue"
+                                        type="password"
+                                        placeholder="value"
+                                        :disabled="busy"
+                                        @keyup.enter="addSecret"
+                                    />
+                                </label>
+                                <button
+                                    type="button"
+                                    class="btn"
+                                    :disabled="busy || !newSecretKey.trim() || !newSecretValue"
+                                    @click="addSecret"
+                                >
+                                    Save secret
+                                </button>
+                            </div>
+                        </div>
+                    </section>
                     <article
                         v-for="plugin in plugins"
                         :key="plugin.name"
@@ -199,10 +263,13 @@
     import { computed, onMounted, reactive, ref } from "vue";
     import PluginPanels from "./PluginPanels.vue";
     import {
+        deleteSecret,
         getPlugins,
+        getSecrets,
         grantPermission,
         reloadPlugins,
         savePluginConfig,
+        saveSecret,
         setPluginEnabled,
     } from "../services/agent-api.js";
 
@@ -211,6 +278,9 @@
     const plugins = ref([]);
     const enabled = ref(true);
     const loadErrors = ref([]);
+    const secrets = ref([]);
+    const newSecretKey = ref("");
+    const newSecretValue = ref("");
     const isLoading = ref(true);
     const busy = ref(false);
     const notice = ref("");
@@ -311,6 +381,12 @@
             enabled.value = data.enabled !== false;
             plugins.value = Array.isArray(data.plugins) ? data.plugins : [];
             loadErrors.value = Array.isArray(data.errors) ? data.errors : [];
+            // 密钥列表挂在插件系统上，但读失败不该让整个面板打不开
+            try {
+                secrets.value = await getSecrets();
+            } catch (error) {
+                secrets.value = [];
+            }
             for (const plugin of plugins.value) {
                 drafts[plugin.name] = buildDraft(plugin);
             }
@@ -361,6 +437,30 @@
         runAction(
             () => savePluginConfig(plugin.name, serializeDraft(plugin)),
             plugin.name + " configuration saved"
+        );
+    }
+
+    function addSecret() {
+        const key = newSecretKey.value.trim();
+        if (!key || !newSecretValue.value) {
+            return;
+        }
+        runAction(
+            async () => {
+                secrets.value = await saveSecret(key, newSecretValue.value);
+                newSecretKey.value = "";
+                newSecretValue.value = "";
+            },
+            "Secret " + key + " saved"
+        );
+    }
+
+    function removeSecret(key) {
+        runAction(
+            async () => {
+                secrets.value = await deleteSecret(key);
+            },
+            "Secret " + key + " deleted"
         );
     }
 
@@ -656,6 +756,7 @@
     }
     .plugin-field input[type="text"],
     .plugin-field input[type="number"],
+    .plugin-field input[type="password"],
     .plugin-field textarea {
         width: 100%;
         padding: 6px 9px;
@@ -678,6 +779,22 @@
     }
     .plugin-fields > .btn {
         align-self: flex-start;
+    }
+    .secret-row {
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
+    }
+    .secret-key {
+        color: var(--c-code);
+        font-size: 11px;
+    }
+    .secret-meta {
+        color: var(--c-text-dim);
+        font-size: 10px;
+    }
+    .secret-delete {
+        margin-left: auto;
     }
     .plugins-hint {
         margin: 4px 0 0;

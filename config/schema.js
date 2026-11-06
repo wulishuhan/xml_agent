@@ -92,6 +92,17 @@ const FIELDS = [
         message: "agent.maxProviderErrors must be a positive integer",
     },
     {
+        // 整轮任务的总时长上限（毫秒），0 表示不限制。
+        // maxSteps 约束不了时长：浏览器 provider 每步十几秒，100 步能跑半小时，
+        // 期间 UI 上没有任何兜底。超时后状态记为 timeout，产物照常落盘。
+        path: "agent.runTimeoutMs",
+        default: 30 * 60 * 1000,
+        type: INT,
+        min: 0,
+        env: ["AGENT_RUN_TIMEOUT_MS"],
+        message: "agent.runTimeoutMs must be a non-negative integer",
+    },
+    {
         path: "runtime.maxFileSize",
         default: 5 * 1024 * 1024,
         type: INT,
@@ -171,6 +182,16 @@ const FIELDS = [
         min: 1,
         env: ["XML_AGENT_PLUGIN_MAX_PROMPT_CHARS"],
         message: "plugins.maxPromptChars must be a positive integer",
+    },
+    {
+        // 插件自定义 HTTP 接口（声明式面板的数据来源）单次执行上限。
+        // handler 永不 resolve 时不能把浏览器请求一直挂着。
+        path: "plugins.apiTimeoutMs",
+        default: 15000,
+        type: INT,
+        min: 100,
+        env: ["XML_AGENT_PLUGIN_API_TIMEOUT_MS"],
+        message: "plugins.apiTimeoutMs must be an integer >= 100",
     },
     {
         // 额外插件目录；XML_AGENT_PLUGIN_DIRS（path.delimiter 分隔）由 registry 追加。

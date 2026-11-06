@@ -117,7 +117,7 @@ module.exports = {
         },
         permission: ["network:http"], // 申请的权限，必须是 manifest.permissions 子集
         terminal: null,               // "answer" | "end" | null
-        mutating: false,              // 是否改动 workspace（供 UI 提示）
+        mutating: false,              // 是否改动 workspace / 系统：会写进结果、Trace 与审计日志
         timeoutMs: 30000,             // 动作级超时，超时会 abort ctx.signal
         summary: (result) => "...",   // Trace / 报告用的统一摘要
         promptResult: (result) => {}, // 可选：回给模型的精简视图（见下）
@@ -141,7 +141,8 @@ promptResult: (result) => ({
 完整结果仍保留在 Trace 与执行报告里，只有"回给模型"的那一份被裁剪。
 
 `run` 的返回约定与内置动作完全一致：`{ ok, action, error?, ... }`。registry 会自动补上
-`plugin` 与 `durationMs` 两个字段；`ok: false` 时 `error` 会走既有的 Runtime 错误提示通道回给模型。
+`plugin`、`durationMs` 与 `mutating` 三个字段（内置动作同样带 `mutating`，两边口径一致）；
+`ok: false` 时 `error` 会走既有的 Runtime 错误提示通道回给模型。
 
 **内置动作名保留**：`read` `write` `exec` `answer` `done`。插件不得占用（加载期直接拒绝）。
 
@@ -181,10 +182,11 @@ promptResult: (result) => ({
     config,                                          // 已套用 configSchema 默认值的配置
     logger:  { debug, info, warn, error },           // 自动带 [plugin:<name>] 前缀
     storage: { ... },                                // 见 §6
-    secrets: { get(key), getAll() },                 // 见 §6
+    secrets: { get(key), getAll() },                 // 受 secrets:read 门控，见 §6
     env:     { agentVersion, storeRoot },
     actions: { register(def) },
     hooks:   { on(event, handler) },
+    onDispose(fn),                                   // 注册清理函数，重载/卸载时逆序执行
     eventFormatters: { register(type, fn) },
     providers: { register(name, factory, meta) },    // 接入 createProvider，见 §5.1
     ui: { registerPanel/settings/ComposerAction },   // 声明式 UI，见 §8
@@ -194,6 +196,30 @@ promptResult: (result) => ({
 ```
 
 setup 期**不提供** `fs` / `http`：能力只在动作执行期、且通过权限校验之后才下发。
+`secrets` 同理受权限约束——清单没声明 `secrets:read`（或策略不是 `allow`）时，
+`ctx.secrets.get()` 一律返回 `null`、`getAll()` 返回 `{}`，并打一条 warn 说明原因。
+
+### 生命周期与热重载
+
+```js
+module.exports = {
+    setup(ctx) {
+        const timer = setInterval(tick, 5000);
+        ctx.onDispose(() => clearInterval(timer)); // 重载 / 卸载时回收
+    },
+    // 也可以从模块上导出（在 ctx 之外拿不到的资源用这个）
+    dispose() {
+        /* close sockets ... */
+    },
+};
+```
+
+- `POST /api/plugins/reload` 不只是重读清单：**插件目录下所有模块的 require 缓存都会被清掉**，
+  改了被 `require` 的子模块（`lib/helper.js`）也会真正生效；
+- 重载前会先执行各插件登记的清理函数（逆序，后申请的先释放）与 `module.exports.dispose`，
+  单个清理抛错只告警、不中断重载；**没登记清理的定时器/监听器会每重载一次泄漏一份**；
+- 注册冲突（动作名、provider id、格式器重复）导致插件加载失败时，setup 里已申请的资源
+  会立即释放，不用等到下次重载。
 
 ### 5.1 注册 Provider（`kind: "provider"`）
 
@@ -226,6 +252,10 @@ ctx.providers.register(
 - 会话 URL 识别用你声明的 `conversationIdPattern`；
 - 访问地址解析顺序：`config.browser.targetUrls["my-llm"]` > 你的 `targetUrl`。
 
+**冲突处理**：provider id 与内置（`chatgpt` / `deepseek` / `qwen` / `glm` / `gemini`）或其它插件
+重名时，插件直接加载失败（`status:"error"` 并给出具体 id），不会"加载成功但永远选不到"。
+`factory` 不是函数、id 不合法的，同样在加载期拒绝。
+
 ---
 
 ## 六、运行期的 ctx（`run(node, ctx)` 的第二个参数）
@@ -239,7 +269,7 @@ ctx.providers.register(
 | `ctx.fs`                         | workspace 作用域文件访问（越界直接抛错）                          |
 | `ctx.http`                       | 受控 HTTP 客户端                                                  |
 | `ctx.storage`                    | 插件私有存储                                                      |
-| `ctx.secrets`                    | 只读密钥                                                          |
+| `ctx.secrets`                    | 只读密钥（按 `secrets:read` 门控，未授权时为 `null`）             |
 | `ctx.logger`                     | 带前缀的日志                                                      |
 | `ctx.permissions`                | `{ check(scope), policy(scope), granted }`                        |
 | `ctx.events.emit(type, payload)` | 触发插件自己的钩子事件                                            |
@@ -292,6 +322,20 @@ const response = await ctx.http.request({
 ### ctx.secrets
 
 从 `~/.xml-agent/secrets.json` 读取，日志与 Trace 中请用 `ctx.redact(text)` 脱敏。
+
+**门控规则**（两处都生效，口径一致）：
+
+| 时机     | 拿到值的条件                                                     |
+| -------- | ---------------------------------------------------------------- |
+| setup 期 | 清单 `permissions` 含 `secrets:read` **且** 策略是 `allow`       |
+| 动作执行 | 该动作的 `meta.permission` 含 `secrets:read`（此时策略已校验过） |
+
+未授权时读到的是 `null` / `{}`，同时 `ctx.secrets.denied === true`，可据此降级而不是瞎猜。
+内置插件默认 `allow`；用户插件默认 `ask`（= 未授权），需要在 Plugins 面板里授权或调用
+`POST /api/permissions/grant`。
+
+密钥本身可以直接在 Plugins 面板的 `secrets` 区块增删改（`GET/PUT/DELETE /api/plugins/secrets`）：
+接口**只回键名与长度、不回值**，避免前端一次 XSS 就等于交出全部凭据。
 
 ---
 
@@ -409,8 +453,11 @@ ctx.api.post("/do", (request) => ({ ok: true, got: request.body }));
 
 - 最终路径：`GET /api/plugins/<name>/api/summary`；
 - 方法：`GET` / `POST` / `PUT` / `DELETE`（`register(method, path, handler)` 或快捷方法）；
-- handler 收到 `{ plugin, method, path, query, body, config, storage, logger }`；
+- handler 收到 `{ plugin, method, path, query, body, config, storage, logger, signal, secrets }`；
 - 返回值会被 JSON 化；抛错返回 `500 { error }`；未注册的 method+path 返回 404；
+- **单次执行上限 15s**（`plugins.apiTimeoutMs` / `XML_AGENT_PLUGIN_API_TIMEOUT_MS`）：超时返回
+  `504 { code:"PLUGIN_API_TIMEOUT" }` 并 abort `ctx.signal`。handler 里做的自定义 I/O
+  应当监听 `ctx.signal`，否则连接会一直挂着（前端面板会永远转圈）；
 - 路径校验：必须以 `/` 开头、不含 `..`、只允许字母数字与 `_-./`；重复注册会导致插件加载失败。
 
 内置示例见 `plugins/builtin/audit-log/index.js`（hook + api + 面板三合一）。
@@ -419,15 +466,24 @@ ctx.api.post("/do", (request) => ({ ok: true, got: request.body }));
 
 ## 九、错误与隔离
 
-| 情况                                              | 表现                                                               |
-| ------------------------------------------------- | ------------------------------------------------------------------ |
-| `plugin.json` 非法 / apiVersion 或 engines 不匹配 | 该插件 `status:"error"`，`GET /api/plugins` 可见原因，其它插件照常 |
-| `setup()` 抛错                                    | 同上，且**半注册状态会被整体丢弃**（先 staging 后提交）            |
-| 动作名与内置或其它插件冲突                        | 该插件 `status:"error"`                                            |
-| 动作申请的 scope 未在清单声明                     | 加载期拒绝                                                         |
-| `run()` 抛错 / 返回非对象                         | 变成 `{ ok:false, error }` 回给模型，会话继续                      |
-| `run()` 超时                                      | `{ ok:false, timedOut:true }`，同时 abort `ctx.signal`             |
-| 钩子抛错                                          | 记 warn，主流程继续                                                |
+| 情况                                                     | 表现                                                               |
+| -------------------------------------------------------- | ------------------------------------------------------------------ |
+| `plugin.json` 缺失 / 非法 / apiVersion 或 engines 不匹配 | 该插件 `status:"error"`，`GET /api/plugins` 可见原因，其它插件照常 |
+| `setup()` 抛错                                           | 同上，且**半注册状态会被整体丢弃**（先 staging 后提交）            |
+| 动作名与内置或其它插件冲突                               | 该插件 `status:"error"`                                            |
+| provider id 与内置或其它插件冲突                         | 该插件 `status:"error"`（否则会被 provider 注册表静默丢弃）        |
+| 动作申请的 scope 未在清单声明                            | 加载期拒绝                                                         |
+| `run()` 抛错 / 返回非对象                                | 变成 `{ ok:false, error }` 回给模型，会话继续                      |
+| `run()` 超时                                             | `{ ok:false, timedOut:true }`，同时 abort `ctx.signal`             |
+| 插件接口超时                                             | `504 { code:"PLUGIN_API_TIMEOUT" }`，同时 abort `ctx.signal`       |
+| 钩子抛错                                                 | 记 warn，主流程继续                                                |
+
+清单读不出来的插件（缺 `plugin.json`、JSON 坏了）不会被"藏起来"：注册表会用目录名建一条
+`status:"error"` 的占位记录，`GET /api/plugins` 能查到它、错误原因就在 `error` 字段里，
+修好文件按 Reload 即可恢复。`GET /api/plugins` 的 `errors` 数组仍保留原始加载错误清单。
+
+状态文件（`plugins-state.json` / `plugins-config.json` / `permissions.json` / `secrets.json`）
+按 `mtime + size` 缓存：动作执行路径上不再反复读盘解析，手工编辑这些 JSON 也会立刻生效。
 
 ---
 

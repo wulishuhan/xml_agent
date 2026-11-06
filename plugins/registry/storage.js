@@ -39,15 +39,57 @@ module.exports = {
         }
     },
 
+    /**
+    带缓存的读取：这三个文件（状态 / 配置 / 权限）在"每个动作执行"路径上被反复读，
+    一次动作原先要读盘解析 3 次 JSON。按 mtime + size 判断失效，
+    外部编辑（用户手改 json）同样能立刻生效，缓存不会变陈旧。
+    返回的对象是共享引用，调用方需要修改时先浅拷贝。
+    */
+    _readJsonCached(filePath, fallback) {
+        let stat;
+        try {
+            stat = fs.statSync(filePath);
+        } catch (error) {
+            this._fileCache.delete(filePath);
+            return fallback;
+        }
+        const cached = this._fileCache.get(filePath);
+        if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+            return cached.value;
+        }
+        const value = this._readJsonFile(filePath, fallback);
+        this._fileCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, value });
+        return value;
+    },
+
     _writeJsonFile(filePath, value) {
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
         const tempPath = filePath + ".tmp";
         fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), "utf8");
         fs.renameSync(tempPath, filePath);
+        this._rememberJson(filePath);
+    },
+
+    /**
+    写盘后直接把内容放回缓存（而不是等下次 stat 比对），
+    保证"写 → 读"在同一次调用链里也拿到新值。
+    */
+    _rememberJson(filePath) {
+        try {
+            const stat = fs.statSync(filePath);
+            const value = JSON.parse(fs.readFileSync(filePath, "utf8"));
+            this._fileCache.set(filePath, {
+                mtimeMs: stat.mtimeMs,
+                size: stat.size,
+                value,
+            });
+        } catch (error) {
+            this._fileCache.delete(filePath);
+        }
     },
 
     _readState() {
-        return this._readJsonFile(this._storePath(STATE_FILE), {});
+        return this._readJsonCached(this._storePath(STATE_FILE), {});
     },
 
     _writeState(state) {
@@ -55,7 +97,7 @@ module.exports = {
     },
 
     _readConfigStore() {
-        return this._readJsonFile(this._storePath(CONFIG_FILE), {});
+        return this._readJsonCached(this._storePath(CONFIG_FILE), {});
     },
 
     _writeConfigStore(store) {
@@ -63,7 +105,7 @@ module.exports = {
     },
 
     _readPermissions() {
-        return this._readJsonFile(this._storePath(PERMISSIONS_FILE), {});
+        return this._readJsonCached(this._storePath(PERMISSIONS_FILE), {});
     },
 
     _writePermissions(value) {
@@ -72,6 +114,31 @@ module.exports = {
 
     _secretsFile() {
         return this._storePath(SECRETS_FILE);
+    },
+
+    _readSecrets() {
+        return this._readJsonCached(this._secretsFile(), {});
+    },
+
+    /**
+    写密钥文件：与其它状态文件不同，这里额外把权限收紧到 0600
+    （Windows 上 POSIX mode 不生效，属预期内的降级）。
+    */
+    _writeSecrets(value) {
+        const filePath = this._secretsFile();
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        const tempPath = filePath + ".tmp";
+        fs.writeFileSync(tempPath, JSON.stringify(value, null, 2), {
+            encoding: "utf8",
+            mode: 0o600,
+        });
+        fs.renameSync(tempPath, filePath);
+        this._rememberJson(filePath);
+        try {
+            fs.chmodSync(filePath, 0o600);
+        } catch (error) {
+            // 平台不支持（例如 Windows）就保持默认权限
+        }
     },
 
     /**
