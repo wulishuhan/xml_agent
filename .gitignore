@@ -31,4 +31,5 @@ editor
 *.sw?
 .workbuddy
 # 打包输出目录（XML_AGENT_RELEASE_DIR 可覆盖默认的 release）
-release-build*/
+# 任何 release-* 目录都是构建中间产物（release-build* / release-out-* / 探针目录）
+release-*/

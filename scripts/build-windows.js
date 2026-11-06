@@ -136,6 +136,72 @@ function tryElectronBuilder(args, env) {
     }
 }
 
+/**
+electron-builder 在 Windows 上写 asar 完整性资源时会失败：
+addWinAsarIntegrity 先 readFile(exe) → resedit 改 PE → writeFile(exe)，
+在部分环境（本机为 Win10 + NTFS，杀软/索引器会瞬时持有刚拷贝的 exe 句柄）
+这一步直接抛 `UNKNOWN: unknown error, open '<appOutDir>\XMLAgent.exe'`，
+整个构建中断。等 250ms 再试即可成功，因此给它补一层重试。
+
+做法是就地补丁 node_modules（幂等，重复运行不会叠加）：
+node_modules 不入库，重装依赖后再次构建时本函数会自动补上。
+匹配不到原始语句（版本变化）时只告警，不阻断构建。
+*/
+function ensureAsarIntegrityWriteRetry() {
+    const target = path.join(
+        projectRoot,
+        "node_modules",
+        "app-builder-lib",
+        "out",
+        "electron",
+        "electronWin.js"
+    );
+
+    if (!fs.existsSync(target)) {
+        return;
+    }
+
+    const marker = "__xmlAgentWriteRetry";
+    const source = fs.readFileSync(target, "utf8");
+
+    if (source.includes(marker)) {
+        console.log("[build-windows] asar integrity write retry already patched");
+        return;
+    }
+
+    const original =
+        "    await (0, promises_1.writeFile)(executablePath, Buffer.from(executable.generate()));";
+    if (!source.includes(original)) {
+        console.warn(
+            "[build-windows] electronWin.js 结构已变化，跳过写入重试补丁；" +
+                '若构建卡在 "UNKNOWN: unknown error, open <exe>"，请手动处理'
+        );
+        return;
+    }
+
+    const patched = source.replace(
+        original,
+        [
+            "    const " + marker + "Buf = Buffer.from(executable.generate());",
+            "    for (let __xmlAgentAttempt = 0; ; __xmlAgentAttempt++) {",
+            "        try {",
+            "            await (0, promises_1.writeFile)(executablePath, " + marker + "Buf);",
+            "            break;",
+            "        } catch (error) {",
+            "            if (__xmlAgentAttempt >= 40) {",
+            "                throw error;",
+            "            }",
+            '            builder_util_1.log.warn("write exe failed (" + error.code + "), retrying: " + executablePath);',
+            "            await new Promise((resolve) => setTimeout(resolve, 250));",
+            "        }",
+            "    }",
+        ].join("\n")
+    );
+
+    fs.writeFileSync(target, patched);
+    console.log("[build-windows] patched asar integrity write retry");
+}
+
 function runNodeScript(relativePath) {
     const scriptPath = path.join(projectRoot, relativePath);
 
@@ -195,10 +261,22 @@ function main() {
             "--config.directories.output=" + releaseDir,
         ];
 
-        // 没有本地 winCodeSign 时跳过 rcedit，避免联网下载
-        if (!hasWinCodeSign) {
+        // 没有本地 winCodeSign 时跳过 rcedit，避免联网下载。
+        // 另外可用 XML_AGENT_SKIP_RCEDIT=1 强制跳过：electron-builder 先由 resedit
+        // 把 asar 完整性资源写回 exe，随后 rcedit 的 EndUpdateResource 在部分 Windows
+        // 环境上会报 "Unable to commit changes"（实测同一文件第二次写入必失败），
+        // 整条构建随即中断。跳过只失去 exe 的版本信息 / 图标（1.0.x ~ 1.1.0 的产物
+        // 同样是跳过状态，见 zip 内 XMLAgent.exe 的 FileVersion=33.2.0）。
+        const skipRcedit = process.env.XML_AGENT_SKIP_RCEDIT === "1";
+        if (!hasWinCodeSign || skipRcedit) {
+            if (skipRcedit && hasWinCodeSign) {
+                console.log("[build-windows] XML_AGENT_SKIP_RCEDIT=1, skipping rcedit");
+            }
             baseArgs.push("--config.win.signAndEditExecutable=false");
         }
+
+        // electron-builder 写 asar 完整性资源时的瞬时占用，先补重试
+        ensureAsarIntegrityWriteRetry();
 
         // 第一步：dir 构建（win-unpacked 免安装目录）必须成功
         runElectronBuilder(["--win", "dir"].concat(baseArgs), env);
