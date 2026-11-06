@@ -1,6 +1,6 @@
 # XML Agent
 
-一个基于 Node.js 实现的工程型 AI Agent Framework（当前版本 **1.1.0**）。
+一个基于 Node.js 实现的工程型 AI Agent Framework（当前版本 **1.1.1**）。
 
 核心设计理念：
 
@@ -706,7 +706,7 @@ node test/test-config-schema.js
 | `docs/PLUGIN_API.md`                       | 插件开发契约：清单字段、动作定义、schema、ctx 能力、钩子、错误码 |
 | `docs/PLUGIN_DESIGN.md`                    | 插件化设计：现状诊断、P0 重构、四类插件、权限模型、路线图        |
 | `docs/ARCHITECTURE_FLOW.md`                | 架构与数据流：模块职责、动作分发、子进程生命周期                 |
-| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.1.0.md` | 各版本更新日志                                                   |
+| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.1.1.md` | 各版本更新日志                                                   |
 
 ---
 
