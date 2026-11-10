@@ -30,6 +30,7 @@ editor
 *.sln
 *.sw?
 .workbuddy
-# 打包输出目录（XML_AGENT_RELEASE_DIR 可覆盖默认的 release）
-# 任何 release-* 目录都是构建中间产物（release-build* / release-out-* / 探针目录）
+# 打包输出目录统一为 release/（构建脚本每次会先清空 win-unpacked，
+# 并在出包成功后删掉旧版本产物，所以不需要第二个目录）
+# release-*/ 只是兜底：手滑用了 XML_AGENT_RELEASE_DIR 产生的目录不入库
 release-*/

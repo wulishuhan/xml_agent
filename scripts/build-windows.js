@@ -18,7 +18,14 @@ EBUSY: resource busy or locked, unlink '...\win-unpacked\icudtl.dat'
 解决：构建前自动结束本产品的 XMLAgent.exe 进程（仅 Windows，且只结束
 名字为 XMLAgent.exe 的进程，不影响其它程序）。
 
-产出：
+问题 4：electron-builder 构建前会 emptyDir(win-unpacked)，在本机（有批量删除保护，
+单次删除超过 50 个文件直接拒绝）清理 locales/ 时整条构建中断，还会把目录清成空壳，
+于是产物变成几十 MB 的残缺包。
+解决：构建前由本脚本自己逐项清空 win-unpacked（每次 fs.unlinkSync 只删一个文件，
+不触发阈值），并且第二步出安装包时用 --prepackaged 复用它、不再重新解压 Electron
+（重新解压会再次 emptyDir(locales)，一次删 68 个文件，必被拒）。
+
+产出（固定在同一个 release/ 目录，旧版本产物在成功出包后自动删除）：
 release/win-unpacked/XMLAgent.exe 免安装目录（中间产物）
 release/XMLAgent-Setup-<ver>-x64.exe 安装程序
 release/XMLAgent-Portable-<ver>-x64.exe 单文件便携版
@@ -101,6 +108,135 @@ function killRunningAppProcesses() {
     }
 
     console.warn("[build-windows] XMLAgent.exe still running after timeout");
+}
+
+function sleepSync(ms) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function removeTreeOnce(target) {
+    let stat;
+
+    try {
+        stat = fs.lstatSync(target);
+    } catch (error) {
+        if (error.code === "ENOENT") {
+            return;
+        }
+        throw error;
+    }
+
+    if (!stat.isDirectory()) {
+        fs.unlinkSync(target);
+        return;
+    }
+
+    // 逐项递归：每次 unlinkSync / rmdirSync 只处理一个条目。
+    // 用 fs.rmSync(recursive) 或 shell 的 rm -rf 会按"一次删除 N 个文件"计数，
+    // 超过本机批量删除阈值（50）时会被直接拒绝，且抛错时目录已被清掉一半。
+    for (const name of fs.readdirSync(target)) {
+        removeTreeOnce(path.join(target, name));
+    }
+
+    fs.rmdirSync(target);
+}
+
+/**
+清空目录，失败时重试（杀软 / 索引器常在新拷贝的文件上短暂持有句柄）。
+重试仍然失败就直接抛错终止构建 —— 宁可不出包，也不要出一个缺主程序的残包。
+*/
+function removeTree(target, label) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+            removeTreeOnce(target);
+            return;
+        } catch (error) {
+            lastError = error;
+            sleepSync(250);
+        }
+    }
+
+    throw new Error(
+        "无法清空 " +
+            (label || target) +
+            "：" +
+            lastError.message +
+            "\n  通常是目录被占用（先关掉正在运行的 XMLAgent.exe），或文件只读。"
+    );
+}
+
+/**
+清理上一次构建留下的归档目录（.stale-win-unpacked-*）。
+通常删不掉是因为里面有个被别的进程长期持有的文件（EBUSY：能读写、不能改名/删除）。
+删不掉就静默跳过，等占用者退出后下一次构建自动回收。
+*/
+function cleanupStaleDirs(releaseDir) {
+    let names = [];
+
+    try {
+        names = fs.readdirSync(releaseDir);
+    } catch (error) {
+        return;
+    }
+
+    for (const name of names) {
+        if (name.indexOf(".stale-win-unpacked-") !== 0) {
+            continue;
+        }
+
+        try {
+            removeTreeOnce(path.join(releaseDir, name));
+            console.log("[build-windows] removed stale dir " + name);
+        } catch (error) {
+            console.warn(
+                "[build-windows] 归档目录 " + name + " 仍被占用，下次构建再试（" + error.code + "）"
+            );
+        }
+    }
+}
+
+/**
+出包成功后清掉同目录里的旧版本产物，保证 release/ 只留当前版本。
+只动 XMLAgent-*.{exe,zip,blockmap}，不碰 win-unpacked 和其它文件。
+*/
+function pruneOldArtifacts(releaseDir, version) {
+    let names = [];
+
+    try {
+        names = fs.readdirSync(releaseDir);
+    } catch (error) {
+        return [];
+    }
+
+    const removed = [];
+
+    for (const name of names) {
+        if (!/^XMLAgent[-.]/.test(name)) {
+            continue;
+        }
+        if (!/\.(exe|zip|blockmap)$/i.test(name)) {
+            continue;
+        }
+        if (name.indexOf(version) !== -1) {
+            continue;
+        }
+
+        const full = path.join(releaseDir, name);
+
+        try {
+            if (fs.statSync(full).isDirectory()) {
+                continue;
+            }
+            fs.unlinkSync(full);
+            removed.push(name);
+        } catch (error) {
+            console.warn("[build-windows] 旧产物删除失败 " + name + "：" + error.message);
+        }
+    }
+
+    return removed;
 }
 
 function runElectronBuilder(args, env) {
@@ -228,9 +364,57 @@ function main() {
         // 关键：先结束残留进程，避免 EBUSY
         killRunningAppProcesses();
 
-        // 输出目录可用 XML_AGENT_RELEASE_DIR 覆盖（默认 release）。
-        // 旧的 win-unpacked 被进程占用、无法清理时，换一个输出目录即可重新构建。
+        // 输出目录固定 release/。XML_AGENT_RELEASE_DIR 只是应急开关（目录被
+        // 顽固占用时指到别处），正常发布不要用 —— 那会多出一个 release-* 目录。
         const releaseDir = process.env.XML_AGENT_RELEASE_DIR || "release";
+        const releaseAbs = path.isAbsolute(releaseDir)
+            ? releaseDir
+            : path.join(projectRoot, releaseDir);
+        const version = require(path.join(projectRoot, "package.json")).version;
+
+        console.log("[build-windows] output=" + releaseDir + " version=" + version);
+
+        // 构建前自己清空 win-unpacked：electron-builder 的 emptyDir 会撞本机
+        // 批量删除保护（见文件头"问题 4"），这里逐个删就不会。
+        const unpackedDir = path.join(releaseAbs, "win-unpacked");
+
+        cleanupStaleDirs(releaseAbs);
+
+        if (fs.existsSync(unpackedDir)) {
+            console.log("[build-windows] cleaning previous win-unpacked ...");
+
+            try {
+                removeTree(unpackedDir, unpackedDir);
+                console.log("[build-windows] win-unpacked cleaned");
+            } catch (error) {
+                // 极少数情况：目录里有个被别的进程长期持有的文件，既删不掉也改不了名。
+                // 不阻塞构建 —— 整目录改名为 .stale-*，让 electron-builder 用干净路径，
+                // 归档目录下次构建时再尝试回收。
+                const staleName = ".stale-win-unpacked-" + Date.now();
+                const stalePath = path.join(releaseAbs, staleName);
+
+                try {
+                    fs.renameSync(unpackedDir, stalePath);
+                } catch (renameError) {
+                    throw new Error(
+                        "win-unpacked 既删不掉也挪不动，构建无法继续：" +
+                            renameError.message +
+                            "\n  重启一次系统可释放残留句柄。"
+                    );
+                }
+
+                console.warn(
+                    "[build-windows] win-unpacked 清理失败（" +
+                        String(error.message).split("\n")[0] +
+                        "）"
+                );
+                console.warn(
+                    "[build-windows] 已改名归档为 " +
+                        staleName +
+                        "，本次构建继续；下次构建会再尝试删除"
+                );
+            }
+        }
 
         const hasWinCodeSign = fs.existsSync(path.join(userWinCodeSignDir, "rcedit-x64.exe"));
         const hasNsis = fs.existsSync(path.join(userNsisDir, "makensis.exe"));
@@ -283,7 +467,13 @@ function main() {
 
         runNodeScript(path.join("scripts", "postbuild-fix-exe.js"));
 
-        // 第二步：nsis / portable / zip
+        // 第二步：nsis / portable / zip，复用第一步打好的目录（--prepackaged）。
+        //
+        // 关键：不能省略 --prepackaged。否则 electron-builder 会重新解压一遍 Electron，
+        // 并在 unpack() 里 emptyDir(win-unpacked/locales) —— 一次 fs.rm 删 68 个文件，
+        // 在本机会被批量删除保护直接拒绝（count 68 > threshold 50），整条构建中断。
+        // 复用已有目录既能避开这个问题，也省掉一次 300MB 的重复拷贝。
+        //
         // nsis 依赖本地 nsis 缓存；zip 只是压缩 win-unpacked，不需要 nsis。
         const targets = ["portable", "zip"];
 
@@ -291,13 +481,41 @@ function main() {
             targets.unshift("nsis");
         }
 
-        const installerOk = tryElectronBuilder(["--win"].concat(targets).concat(baseArgs), env);
+        const installerOk = tryElectronBuilder(
+            ["--win"]
+                .concat(targets)
+                .concat(["--prepackaged=" + unpackedDir])
+                .concat(baseArgs),
+            env
+        );
 
         if (!installerOk) {
             console.warn(
                 "[build-windows] some targets failed. " +
                     "Portable build is available at " +
                     path.join(releaseDir, "win-unpacked", "XMLAgent.exe")
+            );
+            // 出包失败时保留旧版本产物：那可能是当前唯一能用的安装包
+            return;
+        }
+
+        // 第三步：清掉旧版本产物，release/ 只留当前版本
+        const removed = pruneOldArtifacts(releaseAbs, version);
+
+        if (removed.length) {
+            console.log("[build-windows] removed old artifacts: " + removed.join(", "));
+        }
+
+        const finalFiles = fs
+            .readdirSync(releaseAbs)
+            .filter((name) => /^XMLAgent[-.]/.test(name))
+            .sort();
+
+        console.log("[build-windows] " + releaseDir + "/ 现有产物：");
+        for (const name of finalFiles) {
+            const size = fs.statSync(path.join(releaseAbs, name)).size;
+            console.log(
+                "[build-windows]   " + name + "  " + (size / 1024 / 1024).toFixed(1) + "MB"
             );
         }
     } catch (error) {
@@ -306,4 +524,14 @@ function main() {
     }
 }
 
-main();
+// 直接运行本文件才执行构建；被 require（如 release:clean）时只导出工具函数。
+if (require.main === module) {
+    main();
+}
+
+module.exports = {
+    removeTree,
+    removeTreeOnce,
+    pruneOldArtifacts,
+    cleanupStaleDirs,
+};

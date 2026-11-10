@@ -28,7 +28,8 @@
         "test:offline": "npm run test:unit && npm run test:core && npm run test:plugins",
         "test:conversation": "node test/test-electron-conversation.js",
         "test:session-conversation": "node test/test-session-conversation.js && node test/test-session-manager-conversation.js && node test/test-conversation-e2e.js",
-        "test:conversation:all": "npm run test:conversation && npm run test:session-conversation"
+        "test:conversation:all": "npm run test:conversation && npm run test:session-conversation",
+        "release:clean": "node scripts/clean-release.js"
     },
     "dependencies": {
         "express": "^5.2.1",
