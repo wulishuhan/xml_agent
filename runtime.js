@@ -16,6 +16,7 @@ const path = require("path");
 const { getBuiltinAction, getBuiltinActions } = require("./actions");
 const { getRegistrySafe } = require("./plugins/registry");
 const { createProcessRegistry } = require("./processes/registry");
+const agentConfig = require("./config/agent-config");
 const logger = require("./logger");
 
 /**
@@ -81,6 +82,43 @@ function assertWindowsSafeSegments(filePath) {
             throw new Error("Windows reserved device name is not allowed: " + segment);
         }
     }
+}
+
+/**
+动作级超时：跟随运行期配置的动作。
+
+meta.timeoutMs 已被 sdk.defineAction 归一化（缺省 30s、上限 10 分钟），
+但 exec 不能只吃这个静态值：它的命令级超时来自 agentConfig.runtime.maxExecTimeout
+（RUNTIME_MAX_EXEC_TIMEOUT 可改），meta 里的 330000 只是默认配置下的对齐值。
+用户把 maxExecTimeout 调到 10 分钟时，动作级兜底若仍按 330s 触发，
+就会把还在正常跑的命令提前判死。
+*/
+const TIMEOUT_FOLLOWS_CONFIG = {
+    exec: () => Number(agentConfig.runtime.maxExecTimeout) + 30000,
+};
+
+/** 动作的有效超时（毫秒），0 表示不限时。 */
+function resolveActionTimeout(actionName, meta) {
+    const raw = meta ? Number(meta.timeoutMs) : NaN;
+    const base = Number.isFinite(raw) && raw > 0 ? raw : 0;
+    const follow = TIMEOUT_FOLLOWS_CONFIG[actionName];
+    if (!follow) {
+        return base;
+    }
+    const dynamic = Number(follow());
+    if (!Number.isFinite(dynamic) || dynamic <= 0) {
+        return base;
+    }
+    return Math.max(base, dynamic);
+}
+
+/** 超时错误要带上动作名与毫秒数：模型知道"哪个动作超时、等了多久"才会换个做法。 */
+function createActionTimeoutError(actionName, timeoutMs) {
+    const error = new Error("动作 " + actionName + " 超时（" + timeoutMs + "ms），已中止等待");
+    error.code = "ACTION_TIMEOUT";
+    error.action = actionName;
+    error.timeoutMs = timeoutMs;
+    return error;
 }
 
 class Runtime {
@@ -211,6 +249,55 @@ class Runtime {
     }
 
     /**
+    按 meta.timeoutMs 执行内置动作，超时即中止等待。
+
+    为什么内置动作也需要兜底：插件动作在 plugins/registry/invoke.js 里已经有
+    runWithTimeout 强制超时，内置动作却只有 exec 自己靠 child_process 的 timeout
+    兜着 —— read / write / answer / done 的 meta.timeoutMs 从来没人读。
+    某个动作挂住时（慢盘上的同步 fs、将来新增却忘了设超时的异步动作），
+    整轮会一直卡到用户手动点停止。
+
+    三条限制，写在这里免得后面误判：
+    1. 同步动作打不断。定时器要等事件循环空出来才会跑，而 read / write 用的是
+       fs.*Sync，它占着事件循环时定时器根本没机会触发。这层兜底的真实作用对象
+       是异步动作（exec 及其后继）。
+    2. 定时器不能 unref：动作挂住而进程里没有别的活跃句柄时，unref 会让 Node
+       直接以 exit 0 退出，既不报错也不返回（同 plugins/registry/shared.js）。
+    3. 超时后不主动结束子进程。exec 的命令级超时会先一步杀掉 child；这里再
+       killAllProcesses 会把模型有意留在后台的服务（exec --background）一起带走。
+    */
+    async runBuiltinAction(actionName, definition, node) {
+        const context = this.createBuiltinContext();
+        const timeoutMs = resolveActionTimeout(actionName, definition.meta);
+        if (!timeoutMs) {
+            return await definition.run(node, context);
+        }
+
+        let timer = null;
+        const work = Promise.resolve().then(() => definition.run(node, context));
+        const deadline = new Promise((resolve, reject) => {
+            timer = setTimeout(() => {
+                logger.warn(
+                    "Action timed out:",
+                    actionName,
+                    "after",
+                    timeoutMs + "ms",
+                    "(still running processes:",
+                    this.processes.activeCount + ")"
+                );
+                reject(createActionTimeoutError(actionName, timeoutMs));
+            }, timeoutMs);
+        });
+        try {
+            // race 同时给 work 与 deadline 挂了结算回调，所以动作在超时之后才
+            // 抛错也不会成为 unhandledRejection。
+            return await Promise.race([work, deadline]);
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /**
     统一的动作分发：内置动作表优先，其次是插件注册表。
     screenshot 自 v1.1.0 起走插件分支，因此这里不再需要区分调用方。
     */
@@ -218,7 +305,7 @@ class Runtime {
         const definition = getBuiltinAction(actionName);
         if (definition) {
             // 兼容同步/异步 run：await 一个非 Promise 值不会有任何副作用。
-            const result = await definition.run(node, this.createBuiltinContext());
+            const result = await this.runBuiltinAction(actionName, definition, node);
             // 内置动作同样把"是否改动 workspace"暴露到结果里，
             // 让 Trace / 审计对内置与插件动作口径一致（插件侧在 registry/invoke.js 里加）。
             if (result && typeof result === "object" && !Array.isArray(result)) {
@@ -337,6 +424,8 @@ function listProcesses() {
 module.exports = {
     Runtime,
     createRuntime,
+    // 供单测直接校验超时换算（exec 跟着 maxExecTimeout 走，其余吃 meta 静态值）
+    resolveActionTimeout,
     run,
     setWorkspace,
     getWorkspace,
