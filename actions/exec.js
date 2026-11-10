@@ -253,7 +253,12 @@ module.exports = {
         prompt: {
             group: "workspace",
             usage: '<exec command="npm test"/>',
-            note: "在 Workspace 下执行命令；末尾加 --background 可后台运行（会话停止时后台进程一并结束）。",
+            // command 是 XML 属性，里面的双引号会把属性提前截断（实测模型写
+            // <exec command="python -c "print(1)""/> 时，命令只剩 "python -c "）。
+            // 这条提示必须放在模型看得到的地方，否则模型会反复踩。
+            note:
+                "在 Workspace 下执行命令；末尾加 --background 可后台运行（会话停止时后台进程一并结束）。" +
+                "命令里需要引号时用单引号；必须用双引号时写成 &quot;，否则 command 属性会被截断。",
             priority: 90,
         },
         permission: ["shell:exec"],
