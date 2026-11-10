@@ -10,7 +10,7 @@
                 <div class="skills-heading">
                     <div class="skills-icon">◆</div>
                     <div>
-                        <strong id="skills-title">Skills</strong>
+                        <strong id="skills-title">{{ t("skills.title") }}</strong>
                         <span>{{ summary }}</span>
                     </div>
                 </div>
@@ -19,17 +19,15 @@
                         type="button"
                         class="btn"
                         :disabled="busy || editing"
-                        :title="
-                            editing ? 'Finish or cancel editing first' : 'Reload skills from disk'
-                        "
+                        :title="editing ? t('skills.finishEditingFirst') : t('skills.reloadTitle')"
                         @click="reload"
                     >
-                        {{ busy ? "Working..." : "Reload" }}
+                        {{ busy ? t("skills.working") : t("skills.reload") }}
                     </button>
                     <button
                         class="icon-button"
                         type="button"
-                        aria-label="Close"
+                        :aria-label="t('skills.close')"
                         @click="$emit('close')"
                     >
                         ×
@@ -37,24 +35,18 @@
                 </div>
             </header>
             <div class="skills-body">
-                <div v-if="isLoading" class="skills-loading">Loading skills...</div>
+                <div v-if="isLoading" class="skills-loading">{{ t("skills.loading") }}</div>
                 <template v-else>
                     <div v-if="errorMessage" class="skills-alert">{{ errorMessage }}</div>
                     <div v-if="notice" class="skills-notice">{{ notice }}</div>
                     <div v-if="!workspace" class="skills-warning">
-                        <strong>No workspace selected</strong>
-                        <span>
-                            Skills live inside a workspace. Pick a workspace on the left, then come
-                            back — otherwise the agent has nothing to read.
-                        </span>
+                        <strong>{{ t("skills.noWorkspaceTitle") }}</strong>
+                        <span>{{ t("skills.noWorkspaceBody") }}</span>
                     </div>
                     <div v-if="!skills.length" class="skills-empty">
                         <div class="skills-empty-orb">◆</div>
-                        <strong>No skills found</strong>
-                        <span>
-                            Drop a Markdown file into &lt;workspace&gt;/.agent/skills/ (or
-                            ~/.xml-agent/skills/), then press Reload.
-                        </span>
+                        <strong>{{ t("skills.emptyTitle") }}</strong>
+                        <span>{{ t("skills.emptyBody") }}</span>
                     </div>
                     <div v-else class="skills-layout">
                         <aside class="skills-list">
@@ -96,7 +88,7 @@
                         </aside>
                         <section class="skills-detail">
                             <div v-if="!detail" class="skills-detail-empty">
-                                <span>Select a skill on the left to read it.</span>
+                                <span>{{ t("skills.selectHint") }}</span>
                             </div>
                             <template v-else>
                                 <header class="skills-detail-header">
@@ -114,31 +106,38 @@
                                                 v-if="!detail.active"
                                                 class="skills-badge badge-warn"
                                                 :title="
-                                                    'A higher-priority copy exists in ' +
-                                                    detail.shadowedBy
+                                                    t('skills.flag.overriddenTitle', {
+                                                        source: detail.shadowedBy,
+                                                    })
                                                 "
                                             >
-                                                overridden by {{ detail.shadowedBy }}
+                                                {{
+                                                    t("skills.badge.overridden", {
+                                                        source: detail.shadowedBy,
+                                                    })
+                                                }}
                                             </span>
                                             <span
                                                 v-else-if="!detail.enabled"
                                                 class="skills-badge badge-warn"
                                             >
-                                                disabled
+                                                {{ t("skills.badge.disabled") }}
                                             </span>
                                         </div>
                                     </div>
                                     <div class="skills-detail-actions">
                                         <template v-if="editing">
-                                            <span v-if="dirty" class="skills-dirty">unsaved</span>
+                                            <span v-if="dirty" class="skills-dirty">{{
+                                                t("skills.unsaved")
+                                            }}</span>
                                             <button
                                                 type="button"
                                                 class="btn btn-primary"
                                                 :disabled="busy || !dirty"
-                                                title="Save (Ctrl/⌘+S)"
+                                                :title="t('skills.saveTitle')"
                                                 @click="save(detail)"
                                             >
-                                                Save
+                                                {{ t("skills.save") }}
                                             </button>
                                             <button
                                                 type="button"
@@ -146,11 +145,14 @@
                                                 :disabled="busy"
                                                 @click="cancelEdit"
                                             >
-                                                Cancel
+                                                {{ t("skills.cancel") }}
                                             </button>
                                         </template>
                                         <template v-else>
-                                            <label class="skills-toggle" title="Include in prompt">
+                                            <label
+                                                class="skills-toggle"
+                                                :title="t('skills.toggleTitle')"
+                                            >
                                                 <input
                                                     type="checkbox"
                                                     :checked="detail.enabled"
@@ -158,7 +160,9 @@
                                                     @change="toggleEnabled(detail)"
                                                 />
                                                 <span>{{
-                                                    detail.enabled ? "Enabled" : "Disabled"
+                                                    detail.enabled
+                                                        ? t("skills.toggle.enabled")
+                                                        : t("skills.toggle.disabled")
                                                 }}</span>
                                             </label>
                                             <button
@@ -170,8 +174,8 @@
                                             >
                                                 {{
                                                     detail.editable === false
-                                                        ? "Copy & edit"
-                                                        : "Edit"
+                                                        ? t("skills.copyEdit")
+                                                        : t("skills.edit")
                                                 }}
                                             </button>
                                             <button
@@ -181,12 +185,12 @@
                                                 :disabled="busy || !workspace"
                                                 :title="
                                                     workspace
-                                                        ? 'Copy into <workspace>/.agent/skills/ so the agent can read it'
-                                                        : 'Select a workspace first'
+                                                        ? t('skills.installTitle')
+                                                        : t('skills.installNeedsWorkspace')
                                                 "
                                                 @click="install(detail)"
                                             >
-                                                Install to workspace
+                                                {{ t("skills.install") }}
                                             </button>
                                             <button
                                                 v-if="detail.removable"
@@ -195,31 +199,31 @@
                                                 :disabled="busy"
                                                 @click="remove(detail)"
                                             >
-                                                Remove
+                                                {{ t("skills.remove") }}
                                             </button>
                                         </template>
                                     </div>
                                 </header>
                                 <div class="skills-detail-meta">
                                     <div class="skills-meta-row">
-                                        <span>Path</span>
+                                        <span>{{ t("skills.meta.path") }}</span>
                                         <code :title="detail.path">{{ detail.path }}</code>
                                     </div>
                                     <div class="skills-meta-row">
-                                        <span>Readable by agent</span>
+                                        <span>{{ t("skills.meta.readable") }}</span>
                                         <code v-if="detail.workspacePath">{{
                                             detail.workspacePath
                                         }}</code>
                                         <em v-else class="skills-meta-warn">
-                                            not inside this workspace — install it to use it
+                                            {{ t("skills.meta.notInWorkspace") }}
                                         </em>
                                     </div>
                                     <div class="skills-meta-row">
-                                        <span>Updated</span>
+                                        <span>{{ t("skills.meta.updated") }}</span>
                                         <code>{{ formatDate(detail.modifiedAt) }}</code>
                                     </div>
                                     <div v-if="detail.tags.length" class="skills-meta-row">
-                                        <span>Tags</span>
+                                        <span>{{ t("skills.meta.tags") }}</span>
                                         <code>{{ detail.tags.join(", ") }}</code>
                                     </div>
                                 </div>
@@ -234,11 +238,13 @@
                                             @keydown.meta.s.prevent="save(detail)"
                                         ></textarea>
                                         <div class="skills-editor-bar">
-                                            <span
-                                                >{{ draftChars }} chars ·
-                                                {{ draftLines }} lines</span
-                                            >
-                                            <span>Ctrl/⌘+S saves · the whole file is replaced</span>
+                                            <span>{{
+                                                t("skills.editorStats", {
+                                                    chars: draftChars,
+                                                    lines: draftLines,
+                                                })
+                                            }}</span>
+                                            <span>{{ t("skills.editorHint") }}</span>
                                         </div>
                                     </div>
                                     <template v-else>
@@ -251,7 +257,7 @@
                                     </template>
                                 </div>
                                 <p v-if="detail.truncated" class="skills-doc-truncated">
-                                    File is larger than 1 MB — content truncated.
+                                    {{ t("skills.truncated") }}
                                 </p>
                             </template>
                         </section>
@@ -272,14 +278,20 @@
         updateSkill,
     } from "../services/agent-api.js";
     import { renderMarkdown } from "../services/markdown.mjs";
+    import { t } from "../services/i18n.js";
     const props = defineProps({
         workspace: { type: String, default: "" },
     });
     defineEmits(["close"]);
+    // 只存 i18n 键，文案在模板里取，切语言时自动跟着变
     const SOURCE_GROUPS = [
-        { source: "workspace", label: "Workspace", hint: ".agent/skills — readable" },
-        { source: "user", label: "User", hint: "~/.xml-agent/skills" },
-        { source: "builtin", label: "Built-in", hint: "shipped with the app" },
+        {
+            source: "workspace",
+            label: "skills.group.workspace",
+            hint: "skills.group.workspaceHint",
+        },
+        { source: "user", label: "skills.group.user", hint: "skills.group.userHint" },
+        { source: "builtin", label: "skills.group.builtin", hint: "skills.group.builtinHint" },
     ];
     const skills = ref([]);
     const selectedId = ref("");
@@ -294,27 +306,25 @@
     const grouped = computed(() => {
         return SOURCE_GROUPS.map((group) => ({
             source: group.source,
-            label: group.label,
-            hint: group.hint,
+            label: t(group.label),
+            hint: t(group.hint),
             items: skills.value.filter((skill) => skill.source === group.source),
         })).filter((group) => group.items.length);
     });
     const summary = computed(() => {
         if (isLoading.value) {
-            return "Loading...";
+            return t("skills.summaryLoading");
         }
         const totalCount = skills.value.length;
         if (!totalCount) {
-            return "No skills";
+            return t("skills.summaryEmpty");
         }
         const activeCount = skills.value.filter((skill) => skill.active).length;
-        return (
-            totalCount +
-            " document(s) · " +
-            activeCount +
-            " active · " +
-            (props.workspace || "no workspace")
-        );
+        return t("skills.summary", {
+            total: totalCount,
+            active: activeCount,
+            workspace: props.workspace || t("skills.noWorkspaceShort"),
+        });
     });
     const docHtml = computed(() => {
         if (!detail.value) {
@@ -342,17 +352,15 @@
             return "";
         }
         if (detail.value.editable !== false) {
-            return "Edit this document in place";
+            return t("skills.editTitle");
         }
-        return props.workspace
-            ? "Built-in skills are read-only — copy it into the workspace and edit that copy"
-            : "Select a workspace first — built-in skills are read-only";
+        return props.workspace ? t("skills.editBuiltinTitle") : t("skills.editNoWorkspaceTitle");
     });
     function flagText(skill) {
         if (!skill.active) {
-            return "overridden";
+            return t("skills.flag.overridden");
         }
-        return skill.enabled ? "active" : "disabled";
+        return skill.enabled ? t("skills.flag.active") : t("skills.flag.disabled");
     }
     function flagClass(skill) {
         if (!skill.active) {
@@ -362,9 +370,9 @@
     }
     function flagTitle(skill) {
         if (!skill.active) {
-            return "A copy in " + skill.shadowedBy + " takes precedence";
+            return t("skills.flag.overriddenTitle", { source: skill.shadowedBy });
         }
-        return skill.enabled ? "Used in the first prompt" : "Excluded from the first prompt";
+        return skill.enabled ? t("skills.flag.activeTitle") : t("skills.flag.disabledTitle");
     }
     function formatSize(bytes) {
         const value = Number(bytes) || 0;
@@ -456,8 +464,9 @@
         errorMessage.value = "";
         notice.value = "";
         try {
-            const result = await installSkill(skill.id, props.workspace);
-            notice.value = result.message || "Installed";
+            await installSkill(skill.id, props.workspace);
+            // 服务端返回的 message 是英文，界面文案统一走 i18n，不直接回显
+            notice.value = t("skills.notice.installed");
             // 安装后工作区多了一份同名副本，选中它（用户接下来要看的正是这份）
             selectedId.value = "workspace:" + skill.slug;
             await load();
@@ -473,7 +482,7 @@
         notice.value = "";
         try {
             await removeSkill(skill.id, props.workspace);
-            notice.value = "Removed from workspace";
+            notice.value = t("skills.notice.removed");
             if (selectedId.value === skill.id) {
                 selectedId.value = "";
                 detail.value = null;
@@ -498,14 +507,14 @@
         notice.value = "";
         if (skill.editable === false) {
             if (!props.workspace) {
-                errorMessage.value = "Select a workspace first — built-in skills are read-only.";
+                errorMessage.value = t("skills.error.needWorkspace");
                 return;
             }
             await install(skill);
             if (!detail.value || detail.value.source !== "workspace") {
                 return;
             }
-            notice.value = "Copied into the workspace — editing that copy";
+            notice.value = t("skills.notice.copied");
         }
         draft.value = detail.value ? detail.value.content || "" : "";
         editing.value = true;
@@ -521,7 +530,7 @@
             await updateSkill(skill.id, draft.value, props.workspace);
             editing.value = false;
             draft.value = "";
-            notice.value = "Saved — the agent reads the new version on its next turn";
+            notice.value = t("skills.notice.saved");
             await load();
         } catch (error) {
             errorMessage.value = error.message;

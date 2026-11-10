@@ -5,18 +5,22 @@
                 <div class="brand-mark"></div>
                 <div class="brand-copy"><strong>XML Agent</strong> <span>Agent Harness</span></div>
             </div>
-            <button class="icon-button" title="New workspace" @click="$emit('new-workspace')">
+            <button
+                class="icon-button"
+                :title="t('sidebar.newWorkspace')"
+                @click="$emit('new-workspace')"
+            >
                 +
             </button>
         </div>
         <div class="sidebar-toolbar">
-            <span class="sidebar-label">Workspaces</span>
+            <span class="sidebar-label">{{ t("sidebar.workspaces") }}</span>
             <span class="session-count">{{ workspaces.length }}</span>
         </div>
         <div v-if="storage && (storage.warn || storage.overLimit)" class="storage-warning">
             <div class="storage-warning-title">
                 <span>{{
-                    storage.overLimit ? "Session storage full" : "Session storage high"
+                    storage.overLimit ? t("sidebar.storageFull") : t("sidebar.storageHigh")
                 }}</span>
             </div>
             <div class="storage-warning-text">
@@ -24,13 +28,14 @@
                 {{ formatBytes(storage.bytes) }}/{{ formatBytes(storage.maxDiskBytes) }}
             </div>
             <div class="storage-warning-hint">
-                Delete old sessions to free space before creating new ones.
+                {{ t("sidebar.storageHint") }}
             </div>
         </div>
         <div class="workspace-list">
             <div v-if="!workspaces.length" class="session-list-empty">
                 <div class="empty-icon">◇</div>
-                <strong>No workspaces</strong> <span>Add a workspace to start working.</span>
+                <strong>{{ t("sidebar.noWorkspaces") }}</strong>
+                <span>{{ t("sidebar.noWorkspacesHint") }}</span>
             </div>
             <div v-for="ws in workspaces" :key="ws.path" class="workspace-group">
                 <div
@@ -43,15 +48,13 @@
                         <strong class="workspace-path" :title="ws.path">{{
                             getWorkspaceName(ws.path)
                         }}</strong>
-                        <span class="workspace-meta"
-                            >{{ ws.sessionCount }} session{{
-                                ws.sessionCount !== 1 ? "s" : ""
-                            }}</span
-                        >
+                        <span class="workspace-meta">{{
+                            t("sidebar.sessionsCount", { n: ws.sessionCount })
+                        }}</span>
                     </div>
                     <button
                         class="icon-button workspace-new-session"
-                        title="New session in this workspace"
+                        :title="t('sidebar.newSessionTitle')"
                         @click.stop="$emit('new-session', ws.path)"
                     >
                         +
@@ -82,8 +85,8 @@
                             v-if="!item.running"
                             class="session-delete"
                             type="button"
-                            title="Delete session"
-                            aria-label="Delete session"
+                            :title="t('sidebar.deleteSession')"
+                            :aria-label="t('sidebar.deleteSession')"
                             @click.stop="requestDelete(item)"
                         >
                             ×
@@ -94,7 +97,7 @@
         </div>
         <div class="sidebar-footer">
             <div class="connection-indicator">
-                <span class="connection-dot"></span> <span>Local Runtime</span>
+                <span class="connection-dot"></span> <span>{{ t("sidebar.localRuntime") }}</span>
             </div>
             <div v-if="storage" class="storage-meter" :title="storageMeterTitle">
                 <span class="storage-meter-text">
@@ -112,15 +115,17 @@
         </div>
         <div v-if="pendingDelete" class="session-confirm-backdrop" @click.self="cancelDelete">
             <div class="session-confirm">
-                <div class="session-confirm-title">Delete this session?</div>
+                <div class="session-confirm-title">{{ t("sidebar.deleteTitle") }}</div>
                 <div class="session-confirm-text">{{ getTitle(pendingDelete) }}</div>
                 <div class="session-confirm-hint">
-                    This removes its history and output from local storage. It cannot be undone.
+                    {{ t("sidebar.deleteHint") }}
                 </div>
                 <div class="session-confirm-actions">
-                    <button type="button" class="btn" @click="cancelDelete">Cancel</button>
+                    <button type="button" class="btn" @click="cancelDelete">
+                        {{ t("sidebar.cancel") }}
+                    </button>
                     <button type="button" class="btn btn-danger" @click="confirmDelete">
-                        Delete
+                        {{ t("sidebar.delete") }}
                     </button>
                 </div>
             </div>
@@ -129,6 +134,7 @@
 </template>
 <script setup>
     import { computed, ref } from "vue";
+    import { t } from "../services/i18n.js";
     const props = defineProps({
         workspaces: { type: Array, default: () => [] },
         activeId: { type: String, default: null },
@@ -156,18 +162,13 @@
         if (!storage) {
             return "";
         }
-        return (
-            "Sessions: " +
-            storage.sessions +
-            "/" +
-            storage.maxSessions +
-            " - Disk: " +
-            formatBytes(storage.bytes) +
-            "/" +
-            formatBytes(storage.maxDiskBytes) +
-            " - Location: " +
-            storage.root
-        );
+        return t("sidebar.storageTitle", {
+            sessions: storage.sessions,
+            maxSessions: storage.maxSessions,
+            bytes: formatBytes(storage.bytes),
+            maxBytes: formatBytes(storage.maxDiskBytes),
+            root: storage.root,
+        });
     });
     function toggleWorkspace(ws) {
         emit("toggle-workspace", ws);

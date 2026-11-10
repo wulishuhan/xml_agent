@@ -2,10 +2,12 @@
     <section class="agent-stream">
         <div class="stream-header">
             <div>
-                <span class="stream-title">Agent Activity</span>
-                <span class="stream-count">{{ displayOutput.length }} events</span>
+                <span class="stream-title">{{ t("console.title") }}</span>
+                <span class="stream-count">{{
+                    t("console.events", { n: displayOutput.length })
+                }}</span>
                 <span v-if="runCount > 1" class="stream-run-badge">
-                    Run {{ runCount }} · current
+                    {{ t("console.currentRunBadge", { n: runCount }) }}
                 </span>
             </div>
             <div class="stream-actions">
@@ -13,16 +15,16 @@
                     v-if="runCount > 1"
                     class="stream-clear"
                     :class="{ active: showAllRuns }"
-                    :title="showAllRuns ? 'Show only current run' : 'Show all runs'"
+                    :title="showAllRuns ? t('console.onlyCurrentTitle') : t('console.allRunsTitle')"
                     @click="toggleAllRuns"
                 >
-                    {{ showAllRuns ? "Current run" : "All runs" }}
+                    {{ showAllRuns ? t("console.currentRun") : t("console.allRuns") }}
                 </button>
                 <button v-if="collapsibleCount" class="stream-clear" @click="toggleAll">
-                    {{ allExpanded ? "Collapse all" : "Expand all" }}
+                    {{ allExpanded ? t("console.collapseAll") : t("console.expandAll") }}
                 </button>
                 <button v-if="displayOutput.length" class="stream-clear" @click="emitClear">
-                    Clear
+                    {{ t("console.clear") }}
                 </button>
             </div>
         </div>
@@ -34,8 +36,12 @@
             <div v-if="showAllRuns && runCount > 1" class="stream-runs">
                 <div v-for="run in runs" :key="run.index" class="stream-run">
                     <div class="stream-run-head">
-                        <span class="stream-run-label">Run {{ run.index }}</span>
-                        <span v-if="run.isCurrent" class="stream-run-current">current</span>
+                        <span class="stream-run-label">{{
+                            t("console.runLabel", { n: run.index })
+                        }}</span>
+                        <span v-if="run.isCurrent" class="stream-run-current">{{
+                            t("console.current")
+                        }}</span>
                     </div>
                     <article
                         v-for="(item, index) in run.items"
@@ -131,6 +137,7 @@
 </template>
 <script setup>
     import { computed, nextTick, ref, watch } from "vue";
+    import { t } from "../services/i18n.js";
     import { renderMarkdown } from "../services/markdown.mjs";
     const props = defineProps({
         output: { type: Array, default: () => [] },
@@ -191,12 +198,10 @@
         return runs.value[runs.value.length - 1].items;
     });
     const emptyTitle = computed(() =>
-        props.session ? "Waiting for agent activity" : "Start a new session"
+        props.session ? t("console.emptyWaiting") : t("console.emptyNoSession")
     );
     const emptyHint = computed(() =>
-        props.session
-            ? "Agent events, runtime actions and results will appear here."
-            : "Describe your task below and run the agent."
+        props.session ? t("console.emptyWaitingHint") : t("console.emptyNoSessionHint")
     );
     function hasDoneEvent(list) {
         return list.some((item) => {
@@ -257,14 +262,14 @@
     }
     function getLabel(item) {
         const type = item.type;
-        if (type === "system") return "System";
-        if (type === "stderr" || type === "error") return "Error";
+        if (type === "system") return t("console.label.system");
+        if (type === "stderr" || type === "error") return t("console.label.error");
         if (type === "stdout") {
             const tag = getActionTag(item);
-            if (tag === "answer") return "Answer";
-            return "Agent";
+            if (tag === "answer") return t("console.label.answer");
+            return t("console.label.agent");
         }
-        return "Event";
+        return t("console.label.event");
     }
     function getIcon(item) {
         if (item.type === "system") return "#";

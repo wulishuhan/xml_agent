@@ -19,7 +19,7 @@
                             {{ workspaceTitle }}
                         </div>
                         <div class="workspace-path" :title="workspace">
-                            {{ workspace || "Please select a workspace to begin" }}
+                            {{ workspace || t("app.selectWorkspaceHint") }}
                         </div>
                     </div>
                 </div>
@@ -35,82 +35,93 @@
                     <button
                         type="button"
                         class="btn"
-                        title="View step-by-step action trace for this session"
+                        :title="t('app.traceTitle')"
                         :disabled="!activeSessionId"
                         @click="showTrace = true"
                     >
-                        Trace
+                        {{ t("app.trace") }}
                     </button>
                     <button
                         type="button"
                         class="btn"
-                        title="View reply history for this session"
+                        :title="t('app.historyTitle')"
                         @click="showHistory = true"
                     >
-                        History
+                        {{ t("app.history") }}
                     </button>
                     <button
                         type="button"
                         class="btn"
-                        title="Manage plugins, permissions and plugin configuration"
+                        :title="t('app.pluginsTitle')"
                         @click="showPlugins = true"
                     >
-                        Plugins
+                        {{ t("app.plugins") }}
                     </button>
                     <button
                         type="button"
                         class="btn"
-                        title="Browse skill documents (and install them into this workspace)"
+                        :title="t('app.skillsTitle')"
                         @click="showSkills = true"
                     >
-                        Skills
+                        {{ t("app.skills") }}
                     </button>
                     <button
                         type="button"
                         class="btn theme-toggle"
-                        :title="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
+                        :title="theme === 'dark' ? t('app.themeToLight') : t('app.themeToDark')"
                         :aria-label="
-                            theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+                            theme === 'dark' ? t('app.themeToLight') : t('app.themeToDark')
                         "
                         @click="toggleTheme"
                     >
                         <span class="theme-toggle-icon">{{ theme === "dark" ? "☾" : "☀" }}</span>
                         <span class="theme-toggle-label">{{
-                            theme === "dark" ? "Dark" : "Light"
+                            theme === "dark" ? t("app.themeDarkLabel") : t("app.themeLightLabel")
                         }}</span>
                     </button>
                     <button
                         type="button"
+                        class="btn lang-toggle"
+                        :title="t('app.langTitle')"
+                        :aria-label="t('app.langTitle')"
+                        @click="toggleLang"
+                    >
+                        <span class="lang-toggle-icon" aria-hidden="true">文</span>
+                        <span class="lang-toggle-label">{{ t("app.langSwitchTo") }}</span>
+                    </button>
+                    <button
+                        type="button"
                         class="btn"
-                        :title="isElectron ? 'Desktop settings' : 'Browser settings'"
+                        :title="isElectron ? t('app.settingsTitle') : t('app.browserSettingsTitle')"
                         @click="showSettings = true"
                     >
-                        {{ isElectron ? "Settings" : "Browser Settings" }}
+                        {{ isElectron ? t("app.settings") : t("app.browserSettings") }}
                     </button>
                 </div>
             </header>
             <section class="workspace-body">
                 <div v-if="activeSession" class="session-context">
                     <div class="context-item">
-                        <span class="context-label">Workspace</span>
+                        <span class="context-label">{{ t("app.workspace") }}</span>
                         <code>{{ activeSession.workspace }}</code>
                     </div>
                     <div class="context-item">
-                        <span class="context-label">Provider</span>
+                        <span class="context-label">{{ t("app.provider") }}</span>
                         <span>{{ activeSession.provider }}</span>
                     </div>
                     <div class="context-item">
-                        <span class="context-label">Session</span>
+                        <span class="context-label">{{ t("app.session") }}</span>
                         <code>{{ shortId(activeSession.id) }}</code>
                     </div>
                     <div v-if="activeConversationId" class="context-item">
-                        <span class="context-label">Conversation</span>
+                        <span class="context-label">{{ t("app.conversation") }}</span>
                         <code :title="activeConversationId">{{
                             shortId(activeConversationId)
                         }}</code>
                     </div>
                     <div v-if="isElectron" class="context-item">
-                        <span class="context-label">Port</span> <code>{{ electronPort }}</code>
+                        <span class="context-label">{{ t("app.port") }}</span>
+                        <code>{{ electronPort }}</code>
                     </div>
                 </div>
                 <div ref="splitArea" class="split-area" :class="{ resizing }">
@@ -121,7 +132,8 @@
                             @clear="clearConsole"
                         />
                         <div v-if="errorMessage" class="error-banner">
-                            <strong>Agent error</strong> <span>{{ errorMessage }}</span>
+                            <strong>{{ t("app.agentError") }}</strong>
+                            <span>{{ errorMessage }}</span>
                         </div>
                     </div>
                     <div
@@ -204,6 +216,7 @@
         stopSession,
     } from "./services/agent-api.js";
     import { applyTheme, persistTheme, resolveInitialTheme } from "./services/theme.js";
+    import { t, toggleLang } from "./services/i18n.js";
     import { notifyTaskCompleted } from "./services/desktop-notify.js";
     const workspaces = ref([]);
     const activeSessionId = ref(null);
@@ -340,19 +353,19 @@
     });
     const workspaceTitle = computed(() => {
         if (!activeSession.value) {
-            return "New Agent Session";
+            return t("app.newAgentSession");
         }
         const taskValue = (activeSession.value.task || "").trim();
-        return taskValue ? sessionTitle(activeSession.value) : "New Session";
+        return taskValue ? sessionTitle(activeSession.value) : t("app.newSession");
     });
     const statusText = computed(() => {
         const labels = {
-            created: "Ready",
-            running: "Running",
-            completed: "Completed",
-            stopped: "Stopped",
-            interrupted: "Interrupted",
-            error: "Error",
+            created: t("app.status.created"),
+            running: t("app.status.running"),
+            completed: t("app.status.completed"),
+            stopped: t("app.status.stopped"),
+            interrupted: t("app.status.interrupted"),
+            error: t("app.status.error"),
         };
         return labels[sessionStatus.value] || sessionStatus.value;
     });
@@ -487,7 +500,7 @@
             if (event.data) {
                 try {
                     const result = JSON.parse(event.data);
-                    errorMessage.value = result.message || "Agent error";
+                    errorMessage.value = result.message || t("app.agentError");
                 } catch {
                     errorMessage.value = "Agent event stream error";
                 }
@@ -511,12 +524,11 @@
             return;
         }
         if (!workspace.value.trim()) {
-            errorMessage.value =
-                "Please select a workspace from the sidebar before running the agent.";
+            errorMessage.value = t("app.error.noWorkspace");
             return;
         }
         if (!task.value.trim()) {
-            errorMessage.value = "Please describe the task before running the agent.";
+            errorMessage.value = t("app.error.noTask");
             return;
         }
         errorMessage.value = "";
@@ -701,12 +713,14 @@
     onBeforeUnmount(stopResize);
 </script>
 <style scoped>
-    .theme-toggle {
+    .theme-toggle,
+    .lang-toggle {
         display: inline-flex;
         align-items: center;
         gap: 6px;
     }
-    .theme-toggle-icon {
+    .theme-toggle-icon,
+    .lang-toggle-icon {
         font-size: 13px;
         line-height: 1;
     }

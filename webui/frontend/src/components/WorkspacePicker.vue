@@ -10,25 +10,26 @@
                 <div class="workspace-picker-heading">
                     <div class="workspace-picker-icon">📁</div>
                     <div>
-                        <strong id="workspace-picker-title">Select Workspace</strong>
-                        <span>Choose a project directory</span>
+                        <strong id="workspace-picker-title">{{ t("picker.title") }}</strong>
+                        <span>{{ t("picker.subtitle") }}</span>
                     </div>
                 </div>
                 <button
                     class="icon-button"
                     type="button"
-                    aria-label="Close"
+                    :aria-label="t('picker.close')"
                     @click="$emit('close')"
                 >
                     ×
                 </button>
             </header>
-            <div class="workspace-picker-path" :title="displayPath">
-                <span>Location</span> <code>{{ displayPath || "Loading..." }}</code>
+            <div class="workspace-picker-path" :title="displayText">
+                <span>{{ t("picker.location") }}</span>
+                <code>{{ displayText || t("picker.loading") }}</code>
             </div>
             <div class="workspace-picker-toolbar">
                 <button type="button" class="btn" :disabled="!canGoUp || loading" @click="goUp">
-                    ← Up
+                    {{ t("picker.up") }}
                 </button>
                 <button
                     v-if="showDrivesButton"
@@ -37,7 +38,7 @@
                     :disabled="loading"
                     @click="goToDrives"
                 >
-                    Drives
+                    {{ t("picker.drives") }}
                 </button>
                 <button
                     type="button"
@@ -45,7 +46,7 @@
                     :disabled="!canCreateFolder || loading"
                     @click="openNewFolderPrompt"
                 >
-                    New Folder
+                    {{ t("picker.newFolder") }}
                 </button>
                 <button
                     type="button"
@@ -53,7 +54,7 @@
                     :disabled="!currentPath || loading"
                     @click="selectCurrent"
                 >
-                    Select this folder
+                    {{ t("picker.select") }}
                 </button>
             </div>
             <div v-if="newFolderOpen" class="workspace-picker-new-folder">
@@ -62,7 +63,7 @@
                     v-model="newFolderName"
                     class="workspace-picker-input"
                     type="text"
-                    placeholder="Folder name"
+                    :placeholder="t('picker.folderName')"
                     :disabled="creatingFolder"
                     @keyup.enter="confirmNewFolder"
                     @keyup.esc="cancelNewFolder"
@@ -73,7 +74,7 @@
                     :disabled="creatingFolder || !newFolderName.trim()"
                     @click="confirmNewFolder"
                 >
-                    {{ creatingFolder ? "Creating..." : "Create" }}
+                    {{ creatingFolder ? t("picker.creating") : t("picker.create") }}
                 </button>
                 <button
                     type="button"
@@ -81,20 +82,21 @@
                     :disabled="creatingFolder"
                     @click="cancelNewFolder"
                 >
-                    Cancel
+                    {{ t("picker.cancel") }}
                 </button>
             </div>
             <div v-if="errorMessage" class="error-banner">
-                <strong>Unable to browse</strong> <span>{{ errorMessage }}</span>
+                <strong>{{ t("picker.browseError") }}</strong> <span>{{ errorMessage }}</span>
             </div>
             <div class="workspace-picker-list">
                 <div v-if="loading" class="workspace-picker-state">
-                    <span class="workspace-picker-spinner"></span> <span>Loading folders...</span>
+                    <span class="workspace-picker-spinner"></span>
+                    <span>{{ t("picker.loadingFolders") }}</span>
                 </div>
                 <div v-else-if="!entries.length" class="workspace-picker-state">
                     <span class="workspace-picker-state-icon">∅</span>
-                    <strong>No subdirectories</strong>
-                    <span>This folder does not contain any directories.</span>
+                    <strong>{{ t("picker.noSubdirs") }}</strong>
+                    <span>{{ t("picker.noSubdirsHint") }}</span>
                 </div>
                 <template v-else>
                     <button
@@ -111,15 +113,16 @@
                 </template>
             </div>
             <footer class="workspace-picker-footer">
-                <span v-if="isRootList">Select a drive to browse projects</span>
-                <span v-else>Only directories are shown</span>
-                <span>Double-click navigation is not required</span>
+                <span v-if="isRootList">{{ t("picker.selectDrive") }}</span>
+                <span v-else>{{ t("picker.onlyDirs") }}</span>
+                <span>{{ t("picker.noDoubleClick") }}</span>
             </footer>
         </section>
     </div>
 </template>
 <script setup>
     import { computed, nextTick, onMounted, ref } from "vue";
+    import { t } from "../services/i18n.js";
     import { browseWorkspace, createWorkspaceFolder } from "../services/agent-api.js";
     const emit = defineEmits(["select", "close"]);
     const currentPath = ref("");
@@ -133,6 +136,14 @@
     const newFolderName = ref("");
     const newFolderInput = ref(null);
     const creatingFolder = ref(false);
+    // 后端把"驱动器列表"这一层表示成 "This PC"，界面上换成本地化文案
+    const displayText = computed(() => {
+        const value = displayPath.value;
+        if (!value) {
+            return "";
+        }
+        return value === "This PC" ? t("picker.thisPc") : value;
+    });
     const canGoUp = computed(() => {
         if (isRootList.value || !currentPath.value) {
             return false;
@@ -161,7 +172,7 @@
         try {
             const result = await browseWorkspace(targetPath);
             currentPath.value = result.path || "";
-            displayPath.value = result.displayPath || result.path || "This PC";
+            displayPath.value = result.displayPath || result.path || t("picker.drives");
             parentPath.value = result.parent || null;
             entries.value = result.entries || [];
             isRootList.value = result.isRootList === true;

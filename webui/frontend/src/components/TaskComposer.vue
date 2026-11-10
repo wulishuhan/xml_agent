@@ -2,16 +2,16 @@
     <section class="composer">
         <div class="composer-header">
             <div>
-                <span class="composer-label">Task</span>
+                <span class="composer-label">{{ t("composer.task") }}</span>
                 <span class="composer-hint">
-                    Describe what the agent should do in this workspace
+                    {{ t("composer.hint") }}
                 </span>
             </div>
             <span class="composer-provider">{{ provider }}</span>
         </div>
         <div class="composer-conversation-row">
             <label class="composer-conversation-label" for="conversation-input">
-                Continue from conversation (optional)
+                {{ t("composer.continueLabel") }}
             </label>
             <input
                 id="conversation-input"
@@ -19,7 +19,7 @@
                 type="text"
                 :disabled="running"
                 :value="conversationId"
-                placeholder="Paste an existing conversation URL or id to keep memory in sync"
+                :placeholder="t('composer.continuePlaceholder')"
                 @input="$emit('update:conversationId', $event.target.value)"
             />
             <button
@@ -29,7 +29,7 @@
                 :disabled="running"
                 @click="$emit('update:conversationId', '')"
             >
-                Clear
+                {{ t("composer.clear") }}
             </button>
         </div>
         <div v-if="conversationIdHint" class="composer-conversation-hint">
@@ -40,7 +40,7 @@
             :value="task"
             :disabled="running"
             rows="4"
-            placeholder="Ask the agent to inspect, modify, test, or explain your project..."
+            :placeholder="t('composer.placeholder')"
             @input="$emit('update:task', $event.target.value)"
             @keydown.enter.ctrl="submit"
             @keydown.enter.meta="submit"
@@ -59,7 +59,7 @@
                         type="button"
                         class="composer-image-remove"
                         :disabled="running"
-                        title="Remove image"
+                        :title="t('composer.removeImage')"
                         @click="removeImage(index)"
                     >
                         ×
@@ -69,17 +69,18 @@
         </div>
         <div class="composer-footer">
             <span class="composer-shortcut">
-                <kbd>Ctrl</kbd> <span>+</span> <kbd>Enter</kbd> <span>to run</span>
+                <kbd>Ctrl</kbd> <span>+</span> <kbd>Enter</kbd>
+                <span>{{ t("composer.shortcutRun") }}</span>
             </span>
             <div class="composer-actions">
                 <button
                     type="button"
                     class="composer-attach"
                     :disabled="running || uploading"
-                    :title="isElectron ? 'Attach images from disk' : 'Upload images to workspace'"
+                    :title="isElectron ? t('composer.attachFromDisk') : t('composer.attachUpload')"
                     @click="attachImages"
                 >
-                    {{ uploading ? "Uploading..." : "Attach images" }}
+                    {{ uploading ? t("composer.uploading") : t("composer.attach") }}
                 </button>
                 <!-- file input 始终渲染：桌面端在原生对话框不可用（例如旧版 Electron）时
                      会降级到 file input + 上传接口，避免用户以为选了图却什么都没发生。 -->
@@ -104,8 +105,8 @@
                         :disabled="running"
                         :title="
                             execScope === 'workspace'
-                                ? 'Exec restricted to workspace (safe)'
-                                : 'Exec allowed everywhere (unsafe)'
+                                ? t('composer.scopeWorkspaceTitle')
+                                : t('composer.scopeAllTitle')
                         "
                         @click="togglePermissionMenu"
                     >
@@ -124,7 +125,8 @@
                             :class="{ active: execScope === 'workspace' }"
                             @click="setExecScope('workspace')"
                         >
-                            <span class="option-icon">🔒</span> WORKSPACE (Safe)
+                            <span class="option-icon">🔒</span>
+                            {{ t("composer.scopeWorkspaceOption") }}
                         </button>
                         <button
                             type="button"
@@ -132,7 +134,8 @@
                             :class="{ active: execScope === 'all' }"
                             @click="setExecScope('all')"
                         >
-                            <span class="option-icon">⚠️</span> ALL (Unsafe)
+                            <span class="option-icon">⚠️</span>
+                            {{ t("composer.scopeAllOption") }}
                         </button>
                     </div>
                 </div>
@@ -142,7 +145,7 @@
                     type="button"
                     @click="$emit('stop')"
                 >
-                    Stop
+                    {{ t("composer.stop") }}
                 </button>
                 <button
                     v-else
@@ -151,7 +154,7 @@
                     :disabled="!canRun"
                     @click="submit"
                 >
-                    Run Agent
+                    {{ t("composer.run") }}
                 </button>
             </div>
         </div>
@@ -159,6 +162,7 @@
 </template>
 <script setup>
     import { computed, ref } from "vue";
+    import { t } from "../services/i18n.js";
     import {
         extractConversationId,
         pickImages,
@@ -198,7 +202,9 @@
         return props.task.trim().length > 0;
     });
     const permissionLabel = computed(() => {
-        return props.execScope === "workspace" ? "WORKSPACE" : "ALL";
+        return props.execScope === "workspace"
+            ? t("composer.permissionWorkspace")
+            : t("composer.permissionAll");
     });
     // 用户可能粘贴完整会话 URL 或纯 conversation id；这里只做轻量提示，
     // 真正的 URL -> id 解析由 provider 端在 Agent 内部负责。
@@ -208,9 +214,9 @@
         }
         const parsed = extractConversationId(props.provider, props.conversationId.trim());
         if (parsed) {
-            return "Will continue conversation: " + parsed;
+            return t("composer.willContinue", { id: parsed });
         }
-        return "Will continue conversation: " + props.conversationId.trim();
+        return t("composer.willContinue", { id: props.conversationId.trim() });
     });
     function submit() {
         if (props.running || !canRun.value) {
