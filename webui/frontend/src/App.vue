@@ -59,6 +59,14 @@
                     </button>
                     <button
                         type="button"
+                        class="btn"
+                        title="Browse skill documents (and install them into this workspace)"
+                        @click="showSkills = true"
+                    >
+                        Skills
+                    </button>
+                    <button
+                        type="button"
                         class="btn theme-toggle"
                         :title="theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'"
                         :aria-label="
@@ -168,6 +176,7 @@
             @close="showTrace = false"
         />
         <PluginsPanel v-if="showPlugins" @close="showPlugins = false" />
+        <SkillsPanel v-if="showSkills" :workspace="workspace" @close="showSkills = false" />
     </div>
 </template>
 <script setup>
@@ -180,6 +189,7 @@
     import AnswerHistory from "./components/AnswerHistory.vue";
     import AgentTrace from "./components/AgentTrace.vue";
     import PluginsPanel from "./components/PluginsPanel.vue";
+    import SkillsPanel from "./components/SkillsPanel.vue";
     import {
         createPlaceholderSession,
         deleteSession,
@@ -231,6 +241,7 @@
     const showHistory = ref(false);
     const showTrace = ref(false);
     const showPlugins = ref(false);
+    const showSkills = ref(false);
     const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
     const MIN_RATIO = 0.2;
     const MAX_RATIO = 0.85;

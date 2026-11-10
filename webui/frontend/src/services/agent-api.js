@@ -489,3 +489,73 @@ export async function grantPermission(scope, policy) {
     }
     return result;
 }
+
+// ---- 技能（Skill）：工作区里的 Markdown 指令文档，模型按需 read ----
+function skillPath(id, suffix, workspace) {
+    const query = workspace ? "?workspace=" + encodeURIComponent(workspace) : "";
+    return api("/api/skills/" + encodeURIComponent(id) + (suffix || "") + query);
+}
+export async function getSkills(workspace) {
+    const query = workspace ? "?workspace=" + encodeURIComponent(workspace) : "";
+    const response = await fetch(api("/api/skills" + query));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read skills");
+    }
+    return result;
+}
+export async function getSkill(id, workspace) {
+    const response = await fetch(skillPath(id, "", workspace));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read skill");
+    }
+    return result;
+}
+export async function updateSkill(id, content, workspace) {
+    const response = await fetch(skillPath(id, "", workspace), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, workspace: workspace || "" }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to save skill");
+    }
+    return result;
+}
+export async function setSkillEnabled(id, enabled, workspace) {
+    const response = await fetch(skillPath(id, "/enabled"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: enabled !== false, workspace: workspace || "" }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to update skill state");
+    }
+    return result;
+}
+export async function installSkill(id, workspace) {
+    const response = await fetch(skillPath(id, "/install"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace: workspace || "" }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to install skill");
+    }
+    return result;
+}
+export async function removeSkill(id, workspace) {
+    const query = workspace ? "?workspace=" + encodeURIComponent(workspace) : "";
+    const response = await fetch(api("/api/skills/" + encodeURIComponent(id) + query), {
+        method: "DELETE",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to remove skill");
+    }
+    return result;
+}

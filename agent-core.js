@@ -10,6 +10,7 @@ const { runStep } = require("./agent/step");
 const { getBuiltinAction } = require("./actions");
 const { getRegistrySafe } = require("./plugins/registry");
 const { buildWorkspaceManifest } = require("./workspace/manifest");
+const { listSkills: scanSkills } = require("./skills");
 const { createHistory } = require("./workspace/history");
 const { EventEmitter } = require("events");
 const agentConfig = require("./config/agent-config");
@@ -201,6 +202,19 @@ class Agent extends EventEmitter {
         return null;
     }
 
+    /**
+     * 扫描工作区里的技能（builtin / user / workspace 三处合并）。
+     * 扫描本身是只读的，出问题只降级成"没有技能提示"，不影响任务本身。
+     */
+    collectSkills(workspace) {
+        try {
+            return scanSkills({ workspace: workspace });
+        } catch (error) {
+            this.emitEvent("skills.scan.failed", { message: error.message });
+            return [];
+        }
+    }
+
     toAbsolutePath(relativeOrAbsolute) {
         if (path.isAbsolute(relativeOrAbsolute)) {
             return relativeOrAbsolute;
@@ -243,6 +257,8 @@ class Agent extends EventEmitter {
         try {
             const currentWorkspace = this.runtime.getWorkspace();
             const manifest = buildWorkspaceManifest(currentWorkspace);
+            // 工作区里的技能清单：扫描失败不该让整轮任务起不来（只失去技能提示）。
+            const skills = this.collectSkills(currentWorkspace);
             this.emitEvent("agent.started", {
                 workspace: currentWorkspace,
                 provider: this.providerName,
@@ -283,6 +299,7 @@ class Agent extends EventEmitter {
             }
             let prompt = getFirstPrompt(currentWorkspace, manifest, this.task, {
                 registry: this.plugins,
+                skills: skills,
                 // 少数平台（如 Gemini）的渲染器会把裸 XML 标签整块丢掉，
                 // 需要 provider 自己声明"输出格式怎么适配"。
                 providerHint:

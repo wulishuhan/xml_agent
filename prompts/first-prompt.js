@@ -1,5 +1,6 @@
 const { SYSTEM_PROMPT } = require("./system-prompt");
 const { buildPluginPromptSection } = require("./plugin-prompt");
+const { buildSkillPromptSection } = require("./skill-prompt");
 
 function getFirstPrompt(currentWorkspace, manifest, task, options = {}) {
     // 插件动作文档自动生成；没有任何启用的插件动作时返回空字符串，
@@ -15,6 +16,18 @@ function getFirstPrompt(currentWorkspace, manifest, task, options = {}) {
     }
     const pluginBlock = pluginSection ? "\n\n" + pluginSection : "";
 
+    // 工作区里可用技能的清单（只有模型真读得到的才会列出来）。
+    // 没有任何技能时返回空字符串，提示词保持与旧版一致。
+    let skillSection = "";
+    try {
+        skillSection = buildSkillPromptSection(options.skills, {
+            maxSkills: options.maxSkills,
+        });
+    } catch (error) {
+        skillSection = "";
+    }
+    const skillBlock = skillSection ? "\n\n" + skillSection : "";
+
     // provider 声明的输出格式约束（例如 Gemini 会吞掉裸 XML 标签，
     // 必须把动作放进代码块）。没有声明时提示词与原来完全一致。
     const providerHint =
@@ -27,7 +40,7 @@ function getFirstPrompt(currentWorkspace, manifest, task, options = {}) {
         : "";
 
     let prompt = `
-${SYSTEM_PROMPT}${pluginBlock}${providerBlock}
+${SYSTEM_PROMPT}${pluginBlock}${skillBlock}${providerBlock}
 
 ============================================================
 Workspace

@@ -9,6 +9,7 @@ v1.1.0 起路由按领域拆到 webui/routes/：
     browser.js       浏览器设置与 CDP 切换
     agent-config.js  agent / runtime / session 运行参数
     plugins.js       插件管理与插件自定义接口
+    skills.js        技能（Skill）列表、文档读取与安装
     providers.js     provider 列表
     upload-api.js    用户附件上传（前端在用）
 
@@ -34,6 +35,7 @@ const { registerStorageRoutes } = require("./routes/storage");
 const { registerBrowserRoutes } = require("./routes/browser");
 const { registerAgentConfigRoutes } = require("./routes/agent-config");
 const { registerPluginRoutes } = require("./routes/plugins");
+const { registerSkillRoutes } = require("./routes/skills");
 const { registerProviderRoutes } = require("./routes/providers");
 const { getRegistry } = require("../plugins/registry");
 
@@ -114,8 +116,10 @@ app.use(express.json());
 
 // 用户附件上传（Web 版与桌面版共用同一份本地 Node 实现）。
 registerUploadRoutes(app);
-// 插件管理 + 插件自定义接口；provider 列表。
+// 插件管理 + 插件自定义接口；技能文档；provider 列表。
 registerPluginRoutes(app);
+// 技能：扫描/读取/安装到工作区。纯只读文件操作，不依赖插件系统。
+registerSkillRoutes(app);
 registerProviderRoutes(app);
 
 // 前端静态资源

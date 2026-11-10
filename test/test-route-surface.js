@@ -32,6 +32,7 @@ const EXPECTED = [
     "MOUNT pluginApi",
     "DELETE /api/plugins/secrets/:key",
     "DELETE /api/sessions/:id",
+    "DELETE /api/skills/:id",
     "GET /api/agent/config",
     "GET /api/browser/detect",
     "GET /api/browser/settings",
@@ -46,6 +47,8 @@ const EXPECTED = [
     "GET /api/sessions/:id",
     "GET /api/sessions/:id/events",
     "GET /api/sessions/:id/output",
+    "GET /api/skills",
+    "GET /api/skills/:id",
     "GET /api/storage",
     "GET /api/workspace/browse",
     "GET /api/workspaces",
@@ -60,11 +63,14 @@ const EXPECTED = [
     "POST /api/plugins/reload",
     "POST /api/run",
     "POST /api/sessions/:id/stop",
+    "POST /api/skills/:id/enabled",
+    "POST /api/skills/:id/install",
     "POST /api/sessions/new",
     "POST /api/storage/clean",
     "POST /api/uploads",
     "POST /api/workspace/mkdir",
     "PUT /api/plugins/secrets/:key",
+    "PUT /api/skills/:id",
 ];
 
 function collectRoutes(app) {

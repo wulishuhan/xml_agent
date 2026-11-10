@@ -63,6 +63,20 @@ npm run webui:dev
 
 浏览器路径配置见[浏览器选择与切换](#浏览器选择与切换)。
 
+### 技能（Skills）
+
+右上角的 **Skills** 面板用来管理"技能文档"——一份自包含的 Markdown 指令，模型按需 `read` 进来照着做
+（写作规范、流程约定这类知识适合这么做：不占系统提示词，也不需要注册新动作）。面板里能直接读全文、
+**就地编辑并保存**、启用/禁用，以及把内置或用户级技能**安装到当前工作区**（`read` 被沙箱限制在工作区内，
+不安装模型读不到）。
+
+内置技能（随安装包分发，在 `app.asar` 里）是只读的——点 **Copy & edit** 会先复制一份到工作区，之后改的是
+那份副本：内置文件改了下次升级也会被覆盖。保存是整篇覆盖，`Ctrl/⌘+S` 也可以。
+单次保存受请求体大小限制（100 KB 左右），技能文档本来该精简，超过 1 MB 的会直接报错。
+
+工作区里可用且启用的技能，会在首轮提示词里列成一小段清单（名称 + 相对路径 + 一句话用途）。
+细节见 [`skills/README.md`](skills/README.md)。
+
 ## 命令行调用
 
 参数：
@@ -514,6 +528,14 @@ GET  /api/plugins/secrets         密钥键名清单（只回 key 与长度，�
 PUT  /api/plugins/secrets/:key    写入 / 覆盖一个密钥（{ value }，落盘权限 0600）
 DELETE /api/plugins/secrets/:key  删除一个密钥
 GET  /api/providers               可用模型后端（内置 + 插件），供前端下拉使用
+
+# 技能（Skill）：builtin / user / workspace 三处合并，id 形如 workspace:novel-writing
+GET    /api/skills                技能列表（来源 / 启用状态 / 是否有工作区可读路径）
+GET    /api/skills/:id            读取完整文档
+PUT    /api/skills/:id            保存文档（{ content }，内置只读，整篇覆盖）
+POST   /api/skills/:id/enabled    启用 / 禁用（{ enabled }，只影响提示词）
+POST   /api/skills/:id/install    复制到工作区 .agent/skills/（{ workspace }）
+DELETE /api/skills/:id            从工作区移除（内置 / 用户级不可删）
 
 # 插件自定义接口（由插件用 ctx.api.* 注册，路径固定在其命名空间下）
 GET  /api/plugins/<name>/api/<path>
