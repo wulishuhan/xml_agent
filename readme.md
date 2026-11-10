@@ -252,6 +252,21 @@ npm run electron:build
 - 收不到通知时检查：是否最新打包的 exe；系统"通知"设置是否对该应用开启；是否处于专注助手 / 勿扰模式。
 - 回归测试：`node test/test-desktop-notify.js`
 
+## 日志与排查
+
+桌面版与 `node webui/server.js` 会把运行日志写到：
+
+```
+~/.xml-agent/logs/xml-agent.log
+```
+
+- 启动信息、插件加载、命令执行、provider 关闭、子进程清理这些关键路径都在里面。打包后的 exe 没有终端，这是唯一的排查入口。
+- 入口启动时会接管 `console.*`，所以既有代码里的 `console.log` 同样会落盘，不必逐处改成 logger。
+- 单文件上限 2MB，写满后轮转为 `xml-agent.1.log`，最多保留 3 个（合计约 6MB），不会无限增长。
+- 级别用环境变量 `LOG_LEVEL` 控制（`error` / `warn` / `info` / `debug` / `trace`，默认 `info`），运行期可用 `logger.setLogLevel("debug")` 调整。
+- 只有 `electron/main.js` 与 `node webui/server.js` 这两个真实入口会启用；单测与 CLI 不会往主目录写文件。
+- 回归测试：`node test/unit/test-logger-file.js`
+
 ---
 
 # 项目架构

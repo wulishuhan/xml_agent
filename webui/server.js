@@ -38,6 +38,15 @@ const { registerPluginRoutes } = require("./routes/plugins");
 const { registerSkillRoutes } = require("./routes/skills");
 const { registerProviderRoutes } = require("./routes/providers");
 const { getRegistry } = require("../plugins/registry");
+const logger = require("../logger");
+
+// 直接 `node webui/server.js` 时才落盘。判断放在文件顶部（而不是末尾的启动块），
+// 是为了连模块加载期那些日志（会话恢复、插件加载）也能被接住；
+// 测试 require 本模块时 require.main 不是它，因此不会往用户主目录写文件。
+if (require.main === module) {
+    logger.enableFileLogging();
+    logger.captureConsole();
+}
 
 const app = express();
 

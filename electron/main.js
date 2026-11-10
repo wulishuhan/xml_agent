@@ -18,6 +18,19 @@ const {
     resolveCdpUrl,
     DEFAULT_CDP_URLS,
 } = require("./settings");
+const logger = require("../logger");
+
+// 尽早打开日志落盘：打包后没有终端，控制台输出谁也看不到。
+// 顺手接管 console，让既有的 40 处 console 调用一起进文件。
+// 失败（目录不可写）时返回 null，不影响启动。
+logger.enableFileLogging();
+logger.captureConsole();
+logger.info("[main] XML Agent starting", {
+    platform: process.platform,
+    electron: process.versions.electron,
+    logPath: logger.getLogFilePath(),
+});
+
 const HOST = "127.0.0.1";
 const PORT_START = 3000;
 const PORT_END = 3999;
