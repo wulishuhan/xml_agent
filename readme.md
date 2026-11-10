@@ -681,23 +681,28 @@ npm run format        # 格式化代码
 npm run format:check  # 检查格式
 ```
 
-测试（按场景分层，`test:offline` 不需要浏览器与大模型）：
+测试按「能不能在没有浏览器、没有大模型的情况下跑」分层。**CI 只跑 `test:offline`**：
 
 ```bash
-npm run test:offline             # 离线全量 = unit + core + plugins
-npm run test:unit                # 纯离线单测（含停止语义、审计清理等回归）
-npm run test:core                # 核心动作 / 配置 / 路由面
-npm run test:plugins             # 插件系统
-npm run test:electron            # Electron 相关测试
-npm run test:conversation:all    # 全量会话测试
+npm run test:offline    # 离线全量 = unit + core + plugins + api + desktop
+npm run test:unit       # 纯离线单测（停止语义、审计清理、日志落盘、动作超时、测试清单守卫…）
+npm run test:core       # 内置动作 / 配置 / 路由面 / XML 解析
+npm run test:plugins    # 插件系统
+npm run test:api        # 起真实 HTTP 服务的接口测试（随机端口，临时 workspace）
+npm run test:desktop    # 桌面端：设置读写、通知、exe 修补、图片路径
+npm run test:ui         # Vue 单文件组件能否编译
 
-node test/test-desktop-notify.js # 桌面任务完成通知测试
-node test/test-edge-cdp.js       # Edge CDP 支持测试
-node test/test-edge-settings-io.js
-node test/test-edge-agent-config.js
-node test/test-provider-registry.js
-node test/test-config-schema.js
+npm run test:live       # ⚠️ 需要真实 Chrome/Edge + 已登录的 DeepSeek/Qwen/GLM/ChatGPT
+npm run test:electron   # 需要 Electron 运行时
 ```
+
+关于 `test:live`：这 33 个脚本会真的打开浏览器、真的发消息给模型，跑一轮几分钟到几十分钟，
+还会消耗额度。**它们不属于 CI**，只在改动 provider / 截图 / 上传链路后手工跑。
+改坏了要第一时间发现，请把断言写进 `test/unit`（用录制好的响应做夹具），而不是加 live 脚本。
+
+`test/unit/test-test-inventory.js` 会检查 `test/` 下的每个文件：要么被某个 npm script 引用，
+要么在脚本的白名单里写明「为什么是手工探针 / 辅助模块」。以后新增测试忘了挂脚本会直接失败，
+避免再次出现「51 个测试从没被跑过」的情况。
 
 ---
 
