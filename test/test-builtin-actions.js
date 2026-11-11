@@ -36,8 +36,9 @@ const { getFirstPrompt } = require("../prompts/first-prompt");
 // edit 是新增的：write 负责新建/整体重写，edit 负责局部替换。
 const EXPECTED_NAMES = ["read", "write", "edit", "exec", "answer", "done"];
 
-// 系统提示词指纹（v1.1.0 + edit）。改动 SYSTEM_PROMPT 时必须重新评估模型行为并更新此值。
-const SYSTEM_PROMPT_SHA1 = "fbcf4c4691dc677725345fbfe43c0628268c4193";
+// 系统提示词指纹（v1.2.1：去掉"角色设定 + 重复示例"的瘦身版，语义不变）。
+// 改动 SYSTEM_PROMPT 时必须重新评估模型行为并更新此值。
+const SYSTEM_PROMPT_SHA1 = "07739d1c8bb064c0fd5a2959cb66fe7223912c76";
 
 // 迁移前的校验错误文案（逐字节冻结）。
 // screenshot 的用例仍然保留 —— 它们验证的是"协议层校验没有因为搬家而变化"，
