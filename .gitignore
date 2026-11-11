@@ -34,3 +34,6 @@ editor
 # 并在出包成功后删掉旧版本产物，所以不需要第二个目录）
 # release-*/ 只是兜底：手滑用了 XML_AGENT_RELEASE_DIR 产生的目录不入库
 release-*/
+
+# 会话记忆摘要（memory-transfer 插件自动生成）
+.xml-agent-memory

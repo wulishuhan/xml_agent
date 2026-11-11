@@ -500,7 +500,7 @@ plugins/                     内置插件（随包分发）
         fetch/               action 插件（HTTP 请求，域名白名单）
         audit-log/           hook 插件（JSONL 审计日志，按保留期自动清理）
         screenshot/          action 插件（截屏，引擎随插件自带）
-        memory-transfer/     action 插件（会话记忆转移：记录 + 模型对话线程）
+        memory-transfer/     action 插件（会话记忆压缩+摘要后转移：记录 + 模型对话线程）
 
 ~/.xml-agent/plugins/<name>/ 用户插件
     plugin.json
@@ -524,18 +524,99 @@ plugins/                     内置插件（随包分发）
 | 记录       | `output` / `task`     | 界面上能不能回看之前发生了什么   |
 | 模型上下文 | `info.conversationId` | 下一句话模型记不记得之前聊过什么 |
 
-三种模式（`mode`）：`full`（默认，两层都搬）/ `records`（只搬记录，模型从新对话开始）/ `link`（只接续模型上下文）。
+**记录不会进模型上下文**：`output` 只被前端渲染，agent 每轮发给模型的只有首轮的
+`task` 加本轮的增量结果。真正的"记忆"是 `conversationId` 指向的 provider 对话线程 ——
+转移时复用它，模型就等于回到原对话继续聊。
+
+四种模式（`mode`）：
+
+| 模式      | 搬什么                 | 模型记得历史 | 界面能看到历史 | 适用                         |
+| --------- | ---------------------- | ------------ | -------------- | ---------------------------- |
+| `full`    | 记录 + 线程（默认）    | ✅           | ✅             | 换会话接着做，上下文还宽裕   |
+| `records` | 只搬记录               | 靠摘要       | ✅             | 想留档，但新开一段干净对话   |
+| `link`    | 只接续线程             | ✅           | ❌ 一行说明    | 上下文重要，但不想界面变长   |
+| `digest`  | 只搬 `task` + 一页摘要 | 靠摘要       | ❌ 一行说明    | **上下文满了换会话**（推荐） |
+
+上下文快满时用 `digest`：那个场景下旧记录正是把窗口塞满的东西，一并搬过去只是让界面
+再长一遍；模型真正需要的只有"做过什么、改过哪些文件、还差什么"，也就是摘要本身。
+Web 端上下文横幅的「转移并新开」按钮走的就是这个模式。
+`digest` 只搬摘要，所以拒绝 `digest=off`（`MEMORY_DIGEST_REQUIRED`），
+摘要也写不进工作区时整体失败（`MEMORY_DIGEST_WRITE_FAILED`），不会留一个只有 task 的空会话。
+
+搬记录时（`full` / `records`）默认会先压缩（`compress`）：真实会话里体积几乎全花在对"接着做"没帮助的地方 ——
+每条记录的 `event` 是 `content` 的原始副本（实测比 `content` 还大 1~2 倍），
+外加几千条 `Agent step 42` / `Provider request (step 42)` 过程噪声。
+
+| 档位     | 做什么                                                        | 实测（3.7MB 会话） |
+| -------- | ------------------------------------------------------------- | ------------------ |
+| `off`    | 原样搬                                                        | 0%                 |
+| `auto`   | 默认：不超预算不动手，超了先 `light`，仍超再 `strong`         | 省 87%             |
+| `light`  | 去 `event` 副本 + 截断超长单条（头 60%/尾 20%）+ 折叠连续噪声 | 省 70~87%          |
+| `strong` | `light` + 合并连续重复 + 按字符预算省略中段（保留开头与结尾） | 省 80~90%          |
+
+#### 摘要：让模型真的读到历史
+
+压缩只解决"界面回看"的体积，模型那边什么都没变。所以当模型拿不到线程时
+（`digest` / `records` 模式，或源会话压根没有 `conversationId`），插件会把流水账压成
+**一页 markdown**，落到工作区的 `.xml-agent-memory/<to>.md`，并在新会话的 `task`
+末尾写明「开工前先 read 这个文件」：
+
+```markdown
+# 会话记忆摘要
+
+> 从会话 `aaa` 转到 `bbb` · 2026-11-11 10:56 · 源记录 2227 条
+
+## 任务 / 会话状态 ← 任务原话、provider、工作区、运行起止时间（按记录算，不是文件时间）
+
+## 改过的文件（76） ← 从 runtime.result 里聚合，带写入次数；只列前 40，尾行写明"另有 36 个未列出"
+
+## 读过的文件或目录（8） ← 失败的 read 不进这里，它只在报错里出现
+
+## 执行过的命令（142） ← 剥掉 `cmd /c chcp 65001 >nul &&` 这类壳，同一条合并计数、标出失败次数
+
+## 报错（23） ← 去重后的条数（同一句报错出现 7 次只算一条），文件类失败带路径
+
+## 动作统计 / 最后几个动作
+
+                        ← 最后几个动作是"做了什么"，不是原始日志：
+                          `write src/ch3.md` / `✗ exec npm test（退出码 1）` /
+                          `answer …` / `⏹ Agent stopped by user`
+```
+
+| 档位     | 什么时候生成                                              |
+| -------- | --------------------------------------------------------- |
+| `off`    | 从不                                                      |
+| `auto`   | 默认：只在模型拿不到历史时生成（`full` 且接上线程则跳过） |
+| `always` | 总是生成（想留一份能给人看的复盘时用）                    |
+
+- 摘要读的是**压缩前**的记录：`action` / `path` / `command` 都在 `event` 里，压完就没了；
+- 字符预算 `maxDigestChars`（默认 8000），超了按「尾部 → 读过 → 命令 → 报错」的顺序裁列表，
+  "改过的文件"与总数最后才动；
+- 目标会话的 `workspace` 与当前工作区不同时**不落盘**（写到别处模型也 read 不到），
+  只在 `warnings` 里说明，转移本身照常成功；
+- 摘要目录已加进工作区清单的忽略表：不占提示词预算，但按 task 里给的相对路径仍能 `read` 到；
+- 只读预览：`POST /api/plugins/memory-transfer/api/digest {"from":"aaa"}` 直接返回这份 markdown。
 
 ```xml
-<memory-transfer from="aaa" to="bbb" mode="full"/>
+<!-- 上下文满了换会话：只带任务 + 一页摘要，省略 to 会自动新开一个 -->
+<memory-transfer from="aaa" mode="digest"/>
+
+<!-- 想把过程记录也带过去 -->
+<memory-transfer from="aaa" to="bbb" mode="records" compress="auto" digest="auto"/>
 ```
 
 ```bash
 curl -X POST http://127.0.0.1:3000/api/plugins/memory-transfer/api/transfer \
   -H "Content-Type: application/json" \
-  -d '{"from":"aaa","to":"bbb","mode":"full"}'
+  -d '{"from":"aaa","to":"bbb","mode":"records","compress":"auto","digest":"auto"}'
 
-curl "http://127.0.0.1:3000/api/plugins/memory-transfer/api/sessions?limit=20"   # 会话摘要列表
+curl "http://127.0.0.1:3000/api/plugins/memory-transfer/api/sessions?limit=20"   # 会话摘要列表（含 outputChars）
+
+# 只读预览：先看能省多少 / 模型会读到什么，不写任何会话与文件
+curl -X POST http://127.0.0.1:3000/api/plugins/memory-transfer/api/preview \
+  -H "Content-Type: application/json" -d '{"from":"aaa","compress":"strong"}'
+curl -X POST http://127.0.0.1:3000/api/plugins/memory-transfer/api/digest \
+  -H "Content-Type: application/json" -d '{"from":"aaa"}'
 ```
 
 - 目标会话不存在时，按源会话的 `workspace` / `provider` 自动新建（状态 `completed`，**不会自动开始运行**）；
@@ -543,12 +624,91 @@ curl "http://127.0.0.1:3000/api/plugins/memory-transfer/api/sessions?limit=20"  
 - 会拒绝的三种情况：`from === to`、源会话正在运行、目标会话正在运行；
 - `provider` 不一致时不复用 `conversationId`（那是 provider 侧的 id），`full` 会降级成 `records` 并在结果里回 `warnings`；
 - 记录条数有上限（插件配置 `maxOutputRecords`，默认 2000），超出保留最近的部分并插入一行说明；
+- 压缩是有损的，代价说清楚：去掉 `event` 后，搬过去的历史在 Trace 面板里只能看到摘要（Console 不受影响）；
+  省略的中段不会消失，原始记录仍在源会话里，目标会话只留一行说明；
+- HTTP 接口没有 `host.workspace`，因此 `/transfer` 不写摘要文件，摘要正文在 `result.digest.markdown` 里返回，由调用方自己落盘；
 - 图片（`images`）不搬：那是一次性上传的运行时状态，恢复时会话也不还原；
 - `full` / `link` 之后两个会话共用同一条 provider 对话线程，在任一边继续聊都会影响另一边。
 
-权限上是两个独立 scope：`sessions:read`（列会话、读摘要）与 `sessions:write`（执行转移）。
-插件不直接读写 `~/.xml-agent/webui-sessions`：WebUI 启动时把 `SessionManager` 注入注册表，
-插件通过 `ctx.sessions` 调用，内存与磁盘由宿主统一同步。
+权限上是三个独立 scope：`sessions:read`（列会话、读摘要）、`sessions:write`（执行转移）、
+`workspace:write`（把摘要 md 写进工作区）。插件不直接读写 `~/.xml-agent/webui-sessions`：
+WebUI 启动时把 `SessionManager` 注入注册表，插件通过 `ctx.sessions` 调用，内存与磁盘由宿主统一同步。
+
+### 上下文快满的提醒（context-budget）
+
+模型平台的上下文是有限窗口（主流 1M）。满了以后平台会自己截断早期内容，模型「突然忘事」，
+而本地原本没有任何提示。现在 WebUI 会把占用算出来，快满时在界面上提醒并支持一键转移。
+
+估算口径（`webui/session/context-budget.js`）：
+
+| 组成        | 怎么算                                                            | 精度 |
+| ----------- | ----------------------------------------------------------------- | ---- |
+| 首轮提示词  | 系统提示词（精确）+ task + 工作区清单（经验值 8K 字符）           | 近似 |
+| 每轮 prompt | 拿 `runtime.result` 里的 result 跑一遍真实的 `getRuntimeOkPrompt` | 精确 |
+| 模型回复    | 累加 `provider.response.length`                                   | 精确 |
+| 图片        | 每张按 1200 token                                                 | 近似 |
+
+token 折算：中文 1 字 ≈ 1 token、英文 4 字符 ≈ 1 token、其他 2 字符。
+对中文偏高估（实际约 1.5 字/token），偏高估意味着**早一点提醒**，这个场景偏保守是安全的。
+
+阈值：80% 提醒（`warn`）、92% 标红（`critical`）。窗口默认 1000000，可用环境变量覆盖：
+
+```bash
+XML_AGENT_CONTEXT_LIMIT=200000 npm run webui
+```
+
+```bash
+curl http://127.0.0.1:3000/api/sessions/<id>/context
+# { limit, used, ratio, remaining, level, chars, steps, degraded }
+```
+
+SSE 的 `context` 事件在**连接建立时**推一次、之后**跨阈值时**再推，
+所以打开一个已经 86% 的旧会话，横幅会立刻出现，不用等下一步。
+
+前端横幅在会话信息栏下方：显示比例与 token 数，两个按钮 ——
+「转移并新开」（源会话还在跑就先停，因为 transfer 拒绝运行中的会话）与「稍后」
+（同一会话不再重复打扰，切换会话后重新生效）。转移固定走 `mode=records`：
+`full` 会复用那条已经满了的 provider 线程，等于没换。
+
+已知限制：
+
+- 已结束的会话若被 `memory-compress` 压缩过（`event` 被删），prompt 重建不了，
+  只能用记录 content 当上下界，结果里 `degraded: true`；
+- 首轮提示词里的工作区清单是经验值、不扫盘：为 3% 的精度同步读几千个文件不划算；
+- 估的是 provider 侧「历史文本」的量，平台自己的系统包装与工具调用格式不计入。
+
+## 记忆能力的边界：哪些在核心，哪些在插件
+
+判断标准只有一条：**没有这个插件时，这个能力还该不该存在**。
+
+| 能力                                        | 位置                                                   | 为什么                                                   |
+| ------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------- |
+| 会话存储（读写 json、内存/磁盘同步）        | `webui/session/session-store.js`、`session-manager.js` | 宿主基础设施，任何入口都依赖                             |
+| 上下文占用估算（used / limit / ratio）      | `webui/session/context-budget.js`                      | 驱动界面横幅与 SSE，不做转移也必须存在                   |
+| 摘要生成（一页 markdown）                   | `webui/session/memory-digest.js`                       | 纯函数，只读记录；预览、脚本、单测都能直接调             |
+| 记录压缩（去 `event`、折叠噪声）            | `webui/session/memory-compress.js`                     | 同上，确定性规则                                         |
+| 转移编排（四种模式、拒绝条件、降级）        | `webui/session/memory-transfer.js`                     | 要同时操作 store + manager + provider 语义，只有宿主能做 |
+| 权限判定（`sessions:*`、`workspace:write`） | `plugins/sdk.js`、`plugins/registry/settings.js`       | 权限模型属于框架                                         |
+| 摘要落盘（到底写到哪个工作区）              | `plugins/registry/shared.js`                           | 框架适配层：把相对路径映射进工作区沙箱                   |
+| 动作 `<memory-transfer/>`、`/api/...`、面板 | `plugins/builtin/memory-transfer/`                     | 纯插件：禁用或换掉它，上面这些都还成立                   |
+| 上下文横幅 + 一键转移按钮                   | `webui/frontend`                                       | 界面属于核心，只通过插件接口调用                         |
+
+三条边界规则：
+
+1. **插件不碰 `~/.xml-agent/webui-sessions`**：宿主通过 `registry.setHostSessions` 注入 `SessionManager`，
+   插件只拿 `ctx.sessions` 门面。卸载、降权、并发写入因此都由宿主统一管。
+2. **框架不做业务判断**：`registry/shared.js` 只回答"这个相对路径落在哪个工作区、能不能写"，
+   不认识 `mode=digest` 是什么；模式语义留在 `memory-transfer.js`。
+3. **界面不散落插件内部路径**：需要调插件接口时，路径常量集中放在
+   `webui/frontend/src/services/agent-api.js` 顶部；插件被禁用（接口 404）时给一句人话，
+   而不是把 `Plugin API not found` 丢给用户。
+
+一个已经踩过的坑：`createDigestWriter` 原本把"当前工作区"绑死在动作上下文里，
+而接口路径（HTTP 面板 / 脚本）拿不到 `host.workspace` —— 于是 `mode=digest` 走 HTTP 时
+**摘要永远写不出去，整个转移直接失败**，Web 的一键转移按钮必然报错。现在分成两个场景：
+动作路径绑定 workspace 走插件沙箱；接口路径按目标会话自己记录的 workspace 解析
+（路径分量由 `memory-digest` 生成：固定目录 + 已白名单校验的会话 id），
+并且仍然显式拒绝绝对路径与 `..`。
 
 ## 界面：Plugins 面板
 

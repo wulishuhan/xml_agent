@@ -48,6 +48,9 @@ const ignoredDirs = new Set([
     "tmp",
     "temp",
     ".electron-builder-cache",
+    // 会话记忆摘要（memory-transfer 插件写）：清单里不列，免得占预算；
+    // 模型按 task 里给出的相对路径仍可以直接 read 到。
+    ".xml-agent-memory",
 ]);
 
 const ignoredFiles = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
