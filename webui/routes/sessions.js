@@ -6,6 +6,7 @@ POST   /api/run                 启动 / 复用 / 续跑一次 Agent 运行
 GET    /api/sessions            会话列表（附带存储统计）
 GET    /api/sessions/:id        单个会话信息
 GET    /api/sessions/:id/output 当前输出（轮询兜底）
+GET    /api/sessions/:id/context 上下文占用估算（窗口用了多少）
 GET    /api/sessions/:id/events SSE 实时输出
 POST   /api/sessions/:id/stop   停止运行
 DELETE /api/sessions/:id        删除会话
@@ -215,6 +216,21 @@ function registerSessionRoutes(app, deps = {}) {
         });
     });
 
+    /**
+    上下文占用。
+    单独成接口而不是塞进 getInfo：估算要全量扫一遍记录，
+    会话列表一次返回几十个会话，塞进去会把列表拖到秒级。
+    */
+    app.get("/api/sessions/:id/context", (req, res) => {
+        const session = getSession(req, res);
+        if (!session) return;
+        try {
+            res.json(session.getContextUsage());
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     app.get("/api/sessions/:id/events", (req, res) => {
         const session = getSession(req, res);
         if (!session) return;
@@ -234,6 +250,7 @@ function registerSessionRoutes(app, deps = {}) {
         const sendFinished = (info) => send("finished", info);
         const sendError = (error) => send("error", { message: error.message });
         const sendConversation = (info) => send("conversation", info);
+        const sendContext = (usage) => send("context", usage);
         let replaying = true;
         const pendingOutputs = [];
         const handleOutput = (output) => {
@@ -247,6 +264,7 @@ function registerSessionRoutes(app, deps = {}) {
         session.on("finished", sendFinished);
         session.on("session.error", sendError);
         session.on("conversation", sendConversation);
+        session.on("context", sendContext);
         const existingOutput = session.getOutput();
         for (const output of existingOutput) {
             sendOutput(output);
@@ -261,6 +279,13 @@ function registerSessionRoutes(app, deps = {}) {
                 conversationId: session.conversationId,
             });
         }
+        // 连上就把当前占用发一次：打开一个「已经 86%」的旧会话时，
+        // 横幅要立刻显示，不能等下一次跨阈值（那时已经在截断了）
+        try {
+            sendContext(session.getContextUsage());
+        } catch (error) {
+            // 估算失败只是少一个提示，不该让事件流建不起来
+        }
         if (!session.isRunning()) {
             sendFinished(session.getInfo());
         }
@@ -274,6 +299,7 @@ function registerSessionRoutes(app, deps = {}) {
             session.removeListener("finished", sendFinished);
             session.removeListener("session.error", sendError);
             session.removeListener("conversation", sendConversation);
+            session.removeListener("context", sendContext);
         });
     });
 

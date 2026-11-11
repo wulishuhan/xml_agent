@@ -1,12 +1,12 @@
 {
     "name": "memory-transfer",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "kind": "action",
     "apiVersion": 1,
     "engines": { "xmlAgent": ">=1.2.0" },
     "author": "xml-agent",
-    "description": "把会话 A 的记忆（过程记录 + 模型对话线程）转到会话 B，用于「换个会话接着做」",
-    "permissions": ["sessions:read", "sessions:write"],
+    "description": "把会话 A 的记忆（过程记录 + 模型对话线程）压缩后转到会话 B，并生成一份摘要让模型 read",
+    "permissions": ["sessions:read", "sessions:write", "workspace:write"],
     "activation": "always",
     "configSchema": {
         "maxOutputRecords": {
@@ -14,6 +14,30 @@
             "default": 2000,
             "min": 0,
             "description": "单次最多搬多少条过程记录；超出保留最近的（0 表示用默认值 2000）"
+        },
+        "compress": {
+            "type": "string",
+            "enum": ["off", "auto", "light", "strong"],
+            "default": "auto",
+            "description": "压缩档位：off 原样搬；auto 超预算才压；light 去事件副本+截断长记录+折叠过程噪声；strong 再加合并重复与省略中段"
+        },
+        "maxChars": {
+            "type": "integer",
+            "default": 300000,
+            "min": 1000,
+            "description": "字符预算（content + 事件副本）；auto 超过它才压缩，strong 按它裁剪中段"
+        },
+        "digest": {
+            "type": "string",
+            "enum": ["off", "auto", "always"],
+            "default": "auto",
+            "description": "摘要档位：auto 只在模型拿不到历史（records 模式或没有对话线程）时生成；always 总是生成"
+        },
+        "maxDigestChars": {
+            "type": "integer",
+            "default": 8000,
+            "min": 500,
+            "description": "摘要 md 的字符上限，超了按优先级裁剪列表"
         }
     }
 }

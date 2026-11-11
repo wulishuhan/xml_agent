@@ -38,6 +38,11 @@ options:
     canRead      是否允许列会话 / 读摘要
     canWrite     是否允许转移
     maxRecords   单次搬运的 output 条数上限（插件配置 maxOutputRecords）
+    compress     压缩档位 off/auto/light/strong（插件配置 compress）
+    maxChars     字符预算（插件配置 maxChars）
+    digest       摘要档位 off/auto/always（插件配置 digest）
+    maxDigestChars 摘要字符预算（插件配置 maxDigestChars）
+    writeDigest  写摘要的回调 (relativePath, markdown) => { path }；不传则摘要只回给调用方
     logger       插件作用域日志
 */
 function createSessionMemory(options = {}) {
@@ -48,6 +53,11 @@ function createSessionMemory(options = {}) {
     const canWrite = options.canWrite === true;
     const canRead = options.canRead === true || canWrite;
     const maxRecords = options.maxRecords;
+    const compress = options.compress;
+    const maxChars = options.maxChars;
+    const digest = options.digest;
+    const maxDigestChars = options.maxDigestChars;
+    const writeDigest = options.writeDigest;
     const logger = options.logger || null;
 
     if (!canRead) {
@@ -64,6 +74,27 @@ function createSessionMemory(options = {}) {
         describe(id) {
             return memoryTransfer.describeById(id, { manager, store });
         },
+        /** 只读预览：搬之前先看压缩能省多少。 */
+        preview(params) {
+            return memoryTransfer.previewCompression({
+                from: params && params.from,
+                compress: (params && params.compress) || compress,
+                maxChars: (params && params.maxChars) || maxChars,
+                maxRecords,
+                manager,
+                store,
+            });
+        },
+        /** 只读预览：模型将会读到的那份摘要长什么样。 */
+        previewDigest(params) {
+            return memoryTransfer.previewDigest({
+                from: params && params.from,
+                to: params && params.to,
+                maxChars: (params && params.maxChars) || maxDigestChars,
+                manager,
+                store,
+            });
+        },
         transfer(params) {
             if (!canWrite) {
                 throw sdk.createError(
@@ -75,6 +106,11 @@ function createSessionMemory(options = {}) {
                 from: params && params.from,
                 to: params && params.to,
                 mode: params && params.mode,
+                compress: (params && params.compress) || compress,
+                maxChars: (params && params.maxChars) || maxChars,
+                digest: (params && params.digest) || digest,
+                maxDigestChars: (params && params.maxDigestChars) || maxDigestChars,
+                writeDigest,
                 maxRecords,
                 manager,
                 store,
@@ -91,6 +127,16 @@ function createSessionMemory(options = {}) {
                         result.copied.records +
                         " 条，" +
                         (result.created ? "新建目标" : "覆盖目标") +
+                        (result.compression
+                            ? "，压缩 " +
+                              result.compression.level +
+                              " 省 " +
+                              result.compression.savedPercent +
+                              "%"
+                            : "") +
+                        (result.digest && result.digest.file
+                            ? "，摘要 " + result.digest.file
+                            : "") +
                         "）"
                 );
             }

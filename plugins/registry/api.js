@@ -8,7 +8,7 @@
 const capabilities = require("../capabilities");
 const { createSessionMemory } = require("../session-memory");
 
-const { createScopedLogger, runWithTimeout } = require("./shared");
+const { createScopedLogger, createDigestWriter, runWithTimeout } = require("./shared");
 
 module.exports = {
     /**
@@ -38,6 +38,8 @@ module.exports = {
         }
         const verb = String(method || "GET").toUpperCase();
         const pathText = String(subPath || "/") || "/";
+        // 读一次配置：ctx 与 sessions 门面都要用，重复读盘没必要
+        const pluginConfig = this.getConfig(record.name);
         const route = record.apiRoutes.filter(
             (item) => item.method === verb && item.path === pathText
         )[0];
@@ -62,7 +64,7 @@ module.exports = {
             path: pathText,
             query: options.query || {},
             body: options.body,
-            config: this.getConfig(record.name),
+            config: pluginConfig,
             logger: createScopedLogger(this.logger, record.name),
             storage: capabilities.createStorage({ dir: this.storageDir(record.name) }),
             // 接口调用不经过 invoke 的权限校验，这里要自己判：清单声明 + 策略 allow。
@@ -71,7 +73,17 @@ module.exports = {
                 manager: this.hostSessions,
                 canRead: this._hasPluginScope(record, "sessions:read"),
                 canWrite: this._hasPluginScope(record, "sessions:write"),
-                maxRecords: this.getConfig(record.name).maxOutputRecords,
+                maxRecords: pluginConfig.maxOutputRecords,
+                compress: pluginConfig.compress,
+                maxChars: pluginConfig.maxChars,
+                digest: pluginConfig.digest,
+                maxDigestChars: pluginConfig.maxDigestChars,
+                // 接口路径没有"当前工作区"（不知道请求来自哪个工作区），
+                // 写入口按目标会话自己记录的 workspace 解析（见 shared.createDigestWriter）。
+                // 没有 workspace:write 就不给：否则知道接口路径就能往任意工作区落文件。
+                writeDigest: this._hasPluginScope(record, "workspace:write")
+                    ? createDigestWriter({})
+                    : null,
                 logger: createScopedLogger(this.logger, record.name),
             }),
             secrets: this._secretsFor(record, this._canReadSecrets(record)),

@@ -46,6 +46,7 @@ const EXPECTED = [
     "GET /api/sessions",
     "GET /api/sessions/:id",
     "GET /api/sessions/:id/events",
+    "GET /api/sessions/:id/context",
     "GET /api/sessions/:id/output",
     "GET /api/skills",
     "GET /api/skills/:id",

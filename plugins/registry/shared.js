@@ -7,6 +7,8 @@ const os = require("os");
 const path = require("path");
 
 const sdk = require("../sdk");
+// 单向依赖：capabilities 只用内置模块，不会回头 require 注册表
+const capabilities = require("../capabilities");
 
 // 本文件在 plugins/registry/ 下，内置插件目录在上一层 plugins/builtin。
 const BUILTIN_DIR = path.join(__dirname, "..", "builtin");
@@ -109,6 +111,93 @@ function runWithTimeout(factory, timeoutMs, controller) {
     });
 }
 
+/**
+摘要文件的写入口。
+
+为什么要包一层：`ctx.fs` 只能写**当前会话**的 workspace，而会话记忆转移的目标
+可能是另一个工作区的会话。真写到别人那儿，模型在新会话里根本 read 不到，
+还会在无关目录里留下垃圾 —— 所以工作区不一致时直接抛错，
+由 memory-transfer 降级成一条 warning（记录已经搬好，不该因此整体失败）。
+
+两种调用场景，行为不同（这是有意的）：
+- 动作路径（Runtime 调插件）：宿主知道"当前工作区"，于是绑定 workspaceFs，
+  写入走插件沙箱，继承 Runtime 的越界保护（junction、真实路径都查过）；
+  目标会话在别的工作区时拒绝，因为模型在新会话里 read 不到。
+- 接口路径（HTTP 面板 / 脚本）：调用时没有"当前工作区"，只能按目标会话自己记录的
+  workspace 解析。摘要路径的每一段都由 memory-digest 生成（固定目录 + 已白名单校验的
+  会话 id），不含用户可控的穿越片段，因此用只拒绝对路径与 `..` 的轻量解析就够了 ——
+  但绝不能让这条路径变成"任意路径写入"，所以这里仍然显式做前缀校验。
+*/
+function createDigestWriter(options = {}) {
+    const boundWorkspace = options.workspace || null;
+    const boundFs = options.workspaceFs || null;
+    const normalize = (value) =>
+        path
+            .resolve(String(value || ""))
+            .replace(/[\\/]+$/, "")
+            .toLowerCase();
+
+    return (relativePath, markdown, meta = {}) => {
+        const relative = String(relativePath || "");
+        if (!relative) {
+            throw new Error("摘要路径为空");
+        }
+        // 绑定了工作区（动作路径）就必须一致；未绑定（接口路径）时用会话自己记录的那个
+        if (
+            boundWorkspace &&
+            meta.workspace &&
+            normalize(meta.workspace) !== normalize(boundWorkspace)
+        ) {
+            throw new Error(
+                "目标会话的工作区（" +
+                    meta.workspace +
+                    "）与当前工作区（" +
+                    boundWorkspace +
+                    "）不同"
+            );
+        }
+        if (boundFs) {
+            const outcome = boundFs.writeText(relative, markdown, { maxBytes: 1024 * 1024 });
+            return { path: outcome.path };
+        }
+        const targetWorkspace = normalize(meta.workspace || boundWorkspace || "");
+        if (!targetWorkspace) {
+            throw new Error("不知道摘要该写到哪个工作区（会话没有记录 workspace）");
+        }
+        const fsForTarget = capabilities.createWorkspaceFs({
+            workspace: targetWorkspace,
+            resolvePath: createWorkspaceResolver(targetWorkspace),
+        });
+        const outcome = fsForTarget.writeText(relative, markdown, { maxBytes: 1024 * 1024 });
+        return { path: outcome.path };
+    };
+}
+
+/**
+只允许"工作区内的相对路径"的解析器。
+刻意比 Runtime.resolvePath 轻：这里没有 Runtime 实例（接口调用不经过 agent 循环），
+而调用方（memory-digest）生成的路径分量本身受控。仍然保留前缀校验，
+避免以后有人把外部输入接到这里。
+*/
+function createWorkspaceResolver(workspace) {
+    const root = path.resolve(workspace);
+    const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+    return (target) => {
+        const text = String(target || "");
+        if (!text) {
+            throw new Error("路径不能为空");
+        }
+        if (path.isAbsolute(text)) {
+            throw new Error("不允许绝对路径：" + text);
+        }
+        const full = path.resolve(root, text);
+        if (full !== root && !full.startsWith(prefix)) {
+            throw new Error("路径逃出工作区：" + text);
+        }
+        return full;
+    };
+}
+
 module.exports = {
     BUILTIN_DIR,
     DEFAULT_STORE_ROOT,
@@ -123,5 +212,7 @@ module.exports = {
     VALID_POLICIES,
     readPackageVersion,
     createScopedLogger,
+    createDigestWriter,
+    createWorkspaceResolver,
     runWithTimeout,
 };

@@ -2,6 +2,14 @@ const crypto = require("crypto");
 const { EventEmitter } = require("events");
 const { Agent } = require("../../agent-core");
 const { getRegistrySafe } = require("../../plugins/registry");
+const contextBudget = require("./context-budget");
+
+/**
+上下文预算的采样间隔（步）。
+measure 是 O(记录数)、2000 条约 30ms，每步都算会变成 O(n²)；
+每 5 步采一次，阈值判断的滞后最多 5 步，对「快满了」这种趋势判断足够。
+*/
+const CONTEXT_CHECK_EVERY = 5;
 class AgentSession extends EventEmitter {
     constructor({
         workspace,
@@ -39,6 +47,11 @@ class AgentSession extends EventEmitter {
         this.finishedAt = null;
         // 记录本 session 内运行的次数（同一会话可多次运行，复用同一个 session）。
         this.runCount = 0;
+        // 上下文窗口：默认 1M，可用 XML_AGENT_CONTEXT_LIMIT 覆盖
+        this.contextLimit = contextBudget.normalizeLimit(process.env.XML_AGENT_CONTEXT_LIMIT);
+        this.contextLevel = "normal";
+        this.contextCheckedAt = 0;
+        this.contextCache = null;
     }
     /**
 从持久化数据恢复一个已经存在的会话实例。
@@ -108,6 +121,11 @@ class AgentSession extends EventEmitter {
         return record;
     }
     handleAgentEvent(event) {
+        // 每步动作执行完是一轮上下文的自然边界：在这里采样预算占用，
+        // 跨过提醒阈值时向下游广播一次（不是每步都推）。
+        if (event.type === "runtime.result") {
+            this.checkContextBudget(event.step);
+        }
         // provider.conversation 事件用于同步 provider 页面的会话 id，
         // 不写入控制台，只更新 session 状态并广播给前端。
         if (event.type === "provider.conversation") {
@@ -244,6 +262,9 @@ class AgentSession extends EventEmitter {
         this.exitCode = null;
         this.error = null;
         this.runCount += 1;
+        // 新一轮的 step 从 0 重新数，采样节流的游标也要跟着归零，
+        // 否则续跑后的头几步会因为「step 比上次小」被跳过
+        this.contextCheckedAt = 0;
         this.agent = new Agent({
             workspace: this.workspace,
             provider: this.provider,
@@ -298,6 +319,8 @@ class AgentSession extends EventEmitter {
             }
             this.exitCode = this.status === "error" ? 1 : 0;
             this.finishedAt = Date.now();
+            // 收尾强制采样：界面上看到的必须是最终占用，不是最后一次间隔采样的旧值
+            this.checkContextBudget(0, true);
             this.emit("finished", this.getInfo());
             return result;
         } catch (error) {
@@ -309,6 +332,7 @@ class AgentSession extends EventEmitter {
                 this.emit("session.error", error);
             }
             this.finishedAt = Date.now();
+            this.checkContextBudget(0, true);
             this.emit("finished", this.getInfo());
             throw error;
         } finally {
@@ -340,6 +364,51 @@ class AgentSession extends EventEmitter {
     }
     getOutput() {
         return this.output;
+    }
+    /**
+    当前上下文占用（相对 provider 的窗口）。
+    带缓存：记录条数没变就直接返回上次结果，避免 getInfo / 接口轮询时反复全量扫描。
+    */
+    getContextUsage() {
+        const cached = this.contextCache;
+        if (cached && cached.length === this.output.length) {
+            return cached.usage;
+        }
+        const usage = contextBudget.measure({
+            info: { task: this.task, images: this.images },
+            output: this.output,
+            limit: this.contextLimit,
+        });
+        this.contextCache = { length: this.output.length, usage };
+        return usage;
+    }
+    /**
+    采样一次占用，跨阈值时广播。
+    force=true 用于收尾（停止 / 出错 / 正常结束），保证界面上看到的是最终值。
+    返回本次的 usage，被节流跳过时返回 null。
+    */
+    checkContextBudget(step, force = false) {
+        try {
+            if (!force) {
+                const current = Number(step) || 0;
+                if (
+                    this.contextCheckedAt &&
+                    current - this.contextCheckedAt < CONTEXT_CHECK_EVERY
+                ) {
+                    return null;
+                }
+                this.contextCheckedAt = current;
+            }
+            const usage = this.getContextUsage();
+            if (force || usage.level !== this.contextLevel) {
+                this.contextLevel = usage.level;
+                this.emit("context", Object.assign({ id: this.id }, usage));
+            }
+            return usage;
+        } catch (error) {
+            // 预算估算只是个提示功能，任何异常都不该影响会话本身
+            return null;
+        }
     }
     getInfo() {
         return {

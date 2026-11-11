@@ -9,7 +9,7 @@ const sdk = require("../sdk");
 const capabilities = require("../capabilities");
 const { createSessionMemory } = require("../session-memory");
 
-const { createScopedLogger } = require("./shared");
+const { createScopedLogger, createDigestWriter } = require("./shared");
 
 /**
 未授权时的密钥门面：形状与真的一样，但拿不到任何值。
@@ -174,6 +174,12 @@ module.exports = {
         // 能被插件读到值的，只有自己动作声明并通过权限校验的 secrets:read
         const canReadSecrets = entry.def.meta.permission.indexOf("secrets:read") !== -1;
         const workspace = host.workspace || "";
+        const workspaceFs = capabilities.createWorkspaceFs({
+            workspace,
+            resolvePath: host.resolvePath,
+        });
+        // 摘要要落到工作区里才读得到，因此写入口也走同一份 fs 能力
+        const canWriteWorkspace = entry.def.meta.permission.indexOf("workspace:write") !== -1;
         return {
             plugin: {
                 name: record.name,
@@ -186,10 +192,7 @@ module.exports = {
             workspace,
             signal,
             config,
-            fs: capabilities.createWorkspaceFs({
-                workspace,
-                resolvePath: host.resolvePath,
-            }),
+            fs: workspaceFs,
             http: capabilities.createHttpClient({
                 allowHosts: Array.isArray(config.allowHosts) ? config.allowHosts : [],
                 defaultTimeoutMs: config.httpTimeoutMs,
@@ -203,6 +206,13 @@ module.exports = {
                 canRead: entry.def.meta.permission.indexOf("sessions:read") !== -1,
                 canWrite: entry.def.meta.permission.indexOf("sessions:write") !== -1,
                 maxRecords: config.maxOutputRecords,
+                compress: config.compress,
+                maxChars: config.maxChars,
+                digest: config.digest,
+                maxDigestChars: config.maxDigestChars,
+                writeDigest: canWriteWorkspace
+                    ? createDigestWriter({ workspace, workspaceFs })
+                    : null,
                 logger: createScopedLogger(this.logger, record.name),
             }),
             secrets: canReadSecrets

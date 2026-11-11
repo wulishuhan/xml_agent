@@ -5,10 +5,15 @@
 - 记录：output（过程日志）+ task（任务描述）—— 决定界面上能不能回看之前发生了什么；
 - 模型上下文：info.conversationId —— provider 侧的对话线程 id，决定下一句话模型记不记得。
 
-三种模式（mode）：
+四种模式（mode）：
 - full（默认）：两层都搬，换会话接着做；
 - records：只搬记录，模型从新对话开始（安全，不会串味）；
-- link：只接续模型线程，界面保持空白（除了一行来源说明）。
+- link：只接续模型线程，界面保持空白（除了一行来源说明）；
+- digest：只搬任务 + 一页摘要，不搬记录也不接续线程。
+
+digest 是"上下文满了就换会话"的推荐模式：那个场景下新会话本来就不该继承旧的
+过程记录（旧记录已经把 provider 的窗口塞满了，搬过去只会让界面又臭又长），
+模型需要的只是"做过什么、改过哪些文件、还差什么"这类概要 —— 也就是摘要本身。
 
 为什么有这些约束（每条都对应一个真实的坏结果）：
 - from === to 直接拒绝：只会把 output 自己乘一遍，条目翻倍。
@@ -19,19 +24,43 @@
 - output 有上限：会话可能有上万条输出，整包搬进另一个会话会同时撑大磁盘和前端渲染。
   超出时保留尾部（最近的更有用）并插一行说明。
 - 图片不搬：images 是一次性上传的运行时状态，恢复时不还原（见 AgentSession.restore）。
+- 搬之前先压缩：真实会话里 event 字段是 content 的副本、过程噪声又占掉大半条数，
+  原样搬过去等于把浪费也复制一份。压缩规则与档位见 memory-compress.js。
+- 记录不进模型上下文：真正让模型"记得"的是 conversationId 那条 provider 线程。
+  所以 records 模式（或源会话本来就没有线程）下，新会话对历史一无所知 ——
+  这时额外生成一份 markdown 摘要，落到工作区让模型自己 read 一次（memory-digest.js）。
 */
 
+const crypto = require("crypto");
 const defaultStore = require("./session-store");
+const memoryCompress = require("./memory-compress");
+const memoryDigest = require("./memory-digest");
 
 /** 一次最多搬多少条 output；超出保留尾部。 */
 const DEFAULT_MAX_RECORDS = 2000;
 
-const MODES = ["full", "records", "link"];
+const MODES = ["full", "records", "link", "digest"];
+
+/** 摘要档位：off 不生成；auto 只在"模型不会记得历史"时生成；always 总是生成。 */
+const DIGEST_MODES = ["off", "auto", "always"];
 
 function createError(code, message) {
     const error = new Error(message);
     error.code = code;
     return error;
+}
+
+function normalizeDigestMode(value) {
+    const mode = String(value === undefined || value === null || value === "" ? "auto" : value)
+        .trim()
+        .toLowerCase();
+    if (DIGEST_MODES.indexOf(mode) === -1) {
+        throw createError(
+            "MEMORY_DIGEST_INVALID",
+            "digest 只能是 " + DIGEST_MODES.join(" / ") + "，收到：" + value
+        );
+    }
+    return mode;
 }
 
 function normalizeMode(value) {
@@ -51,9 +80,17 @@ function normalizeMode(value) {
 会话 id 校验：这里只做"能不能当文件名"的检查，不查存在性。
 长度上限与 sessionStore 的路径安全处理保持一致，避免出现两张不同的白名单。
 */
-function normalizeId(value, label) {
+/**
+id 归一化。
+generate=true 时缺省值不报错，直接生成一个新 id —— 供「上下文快满了，
+一键开个新会话接着干」这种场景用：调用方不该被迫先想一个 id。
+*/
+function normalizeId(value, label, options = {}) {
     const id = String(value === undefined || value === null ? "" : value).trim();
     if (!id) {
+        if (options.generate) {
+            return crypto.randomUUID();
+        }
         throw createError("MEMORY_ID_REQUIRED", label + " 不能为空");
     }
     if (id.length > 128) {
@@ -94,6 +131,7 @@ function describeMemory(memory) {
         return { exists: false };
     }
     const info = memory.info || {};
+    const size = memoryCompress.measure(memory.output);
     return {
         exists: true,
         id: info.id,
@@ -102,7 +140,8 @@ function describeMemory(memory) {
         task: String(info.task || ""),
         status: info.status || null,
         running: memory.running === true,
-        outputCount: Array.isArray(memory.output) ? memory.output.length : 0,
+        outputCount: size.count,
+        outputChars: size.chars,
         hasConversation: Boolean(info.conversationId),
         conversationId: info.conversationId || null,
         createdAt: info.createdAt || null,
@@ -197,20 +236,32 @@ function copyOutput(output, maxRecords, warnings, sourceId) {
     {
       ok, from, to, mode, created, warnings,
       source: 会话摘要, target: 会话摘要,
-      copied: { records, task, conversationId }
+      copied: { records, task, conversationId },
+      compression: { level, beforeCount, afterCount, beforeChars, afterChars, savedPercent },
+      digest: { file, path, chars, lines, calls, files, commands, errors, markdown }
     }
 失败时抛错，error.code 以 MEMORY_ 开头，便于插件映射成给模型看的文案。
+
+摘要相关选项（都不传也能跑）：
+    digest          off / auto（默认）/ always
+    maxDigestChars  摘要字符预算，默认 8000
+    writeDigest     (relativePath, markdown) => { path }，由宿主提供写入口；
+                    写成功才会把"先 read 摘要"追加进 task
 */
 function transfer(options = {}) {
     const store = options.store || defaultStore;
     const manager = options.manager || null;
     const from = normalizeId(options.from, "from");
-    const to = normalizeId(options.to, "to");
+    // to 省略时自动生成：Web 端的「转移并新开」按钮就是这么用的
+    const to = normalizeId(options.to, "to", { generate: true });
     const mode = normalizeMode(options.mode);
     const maxRecords =
         Number(options.maxRecords) > 0
             ? Math.trunc(Number(options.maxRecords))
             : DEFAULT_MAX_RECORDS;
+    const compressLevel = memoryCompress.normalizeLevel(options.compress, "auto");
+    const maxChars = options.maxChars;
+    const digestMode = normalizeDigestMode(options.digest);
 
     if (from === to) {
         throw createError("MEMORY_SAME_ID", "from 与 to 不能是同一个会话：" + from);
@@ -284,17 +335,46 @@ function transfer(options = {}) {
     let output = targetExisting ? copyOutput(targetExisting.output, Infinity, [], from) : [];
     let conversationId = base.conversationId || null;
     const copied = { records: 0, task: false, conversationId: false };
+    let compression = null;
 
-    if (mode !== "link") {
-        if (sourceInfo.task) {
-            task = String(sourceInfo.task);
-            copied.task = true;
+    // 三件事分开决定：任务描述 / 过程记录 / 模型线程。
+    // digest 只要任务 + 摘要，所以任务照搬、记录和线程都不动。
+    const wantsTask = mode !== "link";
+    const wantsRecords = mode === "full" || mode === "records";
+    const wantsThread = mode === "full" || mode === "link";
+
+    if (wantsTask && sourceInfo.task) {
+        task = String(sourceInfo.task);
+        copied.task = true;
+    }
+
+    if (wantsRecords) {
+        // 先压再截：压缩能保住更多"有信息量"的记录，尾部截断只是兜底
+        const packed = memoryCompress.compressRecords(source.output, {
+            level: compressLevel,
+            maxChars,
+            maxRecords,
+        });
+        compression = packed.stats;
+        if (compression.level !== "off") {
+            const note = memoryCompress.describeCompression(compression);
+            if (note) {
+                warnings.push(note);
+            }
+            if (compression.strippedEvents > 0) {
+                // 有损的地方要说清楚，别让人以为搬过去还能看回放
+                warnings.push(
+                    "已去掉 " +
+                        compression.strippedEvents +
+                        " 条记录的事件原始副本：目标会话的 Trace 面板只能看到摘要（Console 不受影响）"
+                );
+            }
         }
-        output = copyOutput(source.output, maxRecords, warnings, from);
+        output = copyOutput(packed.records, maxRecords, warnings, from);
         copied.records = output.length;
     }
 
-    if (mode !== "records") {
+    if (wantsThread) {
         if (sourceInfo.conversationId) {
             if (base.provider && sourceInfo.provider && base.provider !== sourceInfo.provider) {
                 // conversationId 是 provider 侧的 id，跨 provider 无意义
@@ -322,6 +402,87 @@ function transfer(options = {}) {
         copied.task = true;
     }
 
+    /**
+    摘要：只有"模型拿不到历史"时才有意义。
+    full 且接上了线程时不做 —— 模型本来就记得，再塞一份摘要是噪音。
+    生成用的是压缩前的 source.output：摘要要从 event 里取 action / path / command，
+    压缩会把 event 删掉。
+    */
+    if (mode === "digest" && digestMode === "off") {
+        // digest 的全部内容就是这份摘要，关掉它等于转了一个空会话
+        throw createError(
+            "MEMORY_DIGEST_REQUIRED",
+            "mode=digest 只搬摘要，digest=off 就什么都没搬；要留记录请用 mode=records"
+        );
+    }
+    let digest = null;
+    const digestNeeded =
+        digestMode === "always" || (digestMode === "auto" && !copied.conversationId);
+    if (digestNeeded) {
+        const built = memoryDigest.buildDigest(source.output, {
+            from,
+            to,
+            info: sourceInfo,
+            maxChars: options.maxDigestChars,
+            now,
+        });
+        const relativePath = memoryDigest.digestPath(to);
+        let savedPath = null;
+        let failure = null;
+        if (typeof options.writeDigest === "function") {
+            try {
+                const outcome = options.writeDigest(relativePath, built.markdown, {
+                    workspace: base.workspace || null,
+                });
+                savedPath = (outcome && outcome.path) || relativePath;
+            } catch (error) {
+                // 写不进去不该让整个转移失败：记录已经搬好了，只是模型少了那份摘要
+                failure = (error && error.message) || String(error);
+                warnings.push(
+                    "摘要写入失败（" +
+                        failure +
+                        "）：目标会话只能靠过程记录回看，模型不会知道之前做过什么"
+                );
+            }
+        } else {
+            failure = "没有提供摘要写入口（writeDigest）";
+            warnings.push("没有提供摘要写入口（writeDigest）：摘要已生成但没有落盘，模型读不到");
+        }
+        if (mode === "digest" && !savedPath) {
+            // 这个模式下摘要没落盘就等于白转（连记录都没有），宁可在写盘前报错，
+            // 也不留一个只有 task 一句话的空会话。此时还没 writeRecord，没有副作用。
+            throw createError(
+                "MEMORY_DIGEST_WRITE_FAILED",
+                "摘要没能落到工作区（" + failure + "），mode=digest 已取消本次转移"
+            );
+        }
+        digest = {
+            file: savedPath,
+            path: relativePath,
+            chars: built.chars,
+            lines: built.lines,
+            calls: built.calls,
+            files: built.files,
+            commands: built.commands,
+            errors: built.errors,
+            // 未落盘时把正文带回去，调用方（脚本 / preview）还能自己处理
+            markdown: savedPath ? null : built.markdown,
+        };
+        if (savedPath) {
+            // 提示必须进 task：新会话首轮提示词里唯一能带过去的文字就是它
+            task =
+                task +
+                "\n\n---\n" +
+                "接手提示：这是一次记忆转移，之前的工作发生在会话 " +
+                from +
+                "。开工前先 read `" +
+                savedPath +
+                "`，" +
+                "那里有任务原话、改过哪些文件、跑过什么命令、报了哪些错。" +
+                "读完再决定下一步，不要从头重做。";
+        }
+    }
+
     if (mode === "link") {
         output = [
             {
@@ -340,10 +501,12 @@ function transfer(options = {}) {
                 from +
                 " 转移（模式 " +
                 mode +
-                "，记录 " +
-                copied.records +
-                " 条" +
+                (mode === "digest" ? "，只带摘要" : "，记录 " + copied.records + " 条") +
                 (copied.conversationId ? "，已接续模型上下文" : "") +
+                (compression && compression.level !== "off"
+                    ? "，压缩 " + compression.level + " 省 " + compression.savedPercent + "%"
+                    : "") +
+                (digest && digest.file ? "，摘要 " + digest.file : "") +
                 "）",
             timestamp: now,
         });
@@ -375,18 +538,97 @@ function transfer(options = {}) {
         created,
         warnings,
         copied,
+        compression: memoryCompress.summarize(compression),
+        digest,
         source: describeMemory(source),
         target: describeMemory({ info, output, running: false }),
     };
 }
 
+/**
+预览压缩效果：只读，不写任何会话。
+
+先看能省多少再决定要不要搬 —— 面板和脚本都需要这个"后悔药"。
+返回 { ok, from, requested, stats, summary }；stats 是完整统计。
+*/
+function previewCompression(options = {}) {
+    const store = options.store || defaultStore;
+    const manager = options.manager || null;
+    const from = normalizeId(options.from, "from");
+    const requested = memoryCompress.normalizeLevel(options.compress, "auto");
+    const maxRecords =
+        Number(options.maxRecords) > 0
+            ? Math.trunc(Number(options.maxRecords))
+            : DEFAULT_MAX_RECORDS;
+
+    const source = readMemory(from, { store, manager });
+    if (!source) {
+        throw createError("MEMORY_SOURCE_NOT_FOUND", "会话 " + from + " 不存在");
+    }
+    const packed = memoryCompress.compressRecords(source.output, {
+        level: requested,
+        maxChars: options.maxChars,
+        maxRecords,
+    });
+    return {
+        ok: true,
+        from,
+        requested,
+        stats: packed.stats,
+        summary: memoryCompress.describeCompression(packed.stats),
+    };
+}
+
+/**
+预览摘要：只读，不写任何文件、不改会话。
+
+给人（和面板）先看一眼"模型将会读到什么"，再决定要不要真的转移。
+返回 { ok, from, path, chars, lines, markdown, counts }。
+*/
+function previewDigest(options = {}) {
+    const store = options.store || defaultStore;
+    const manager = options.manager || null;
+    const from = normalizeId(options.from, "from");
+    const to = options.to ? normalizeId(options.to, "to") : from;
+    const maxChars = options.maxChars;
+
+    const source = readMemory(from, { store, manager });
+    if (!source) {
+        throw createError("MEMORY_SOURCE_NOT_FOUND", "会话 " + from + " 不存在");
+    }
+    const built = memoryDigest.buildDigest(source.output, {
+        from,
+        to,
+        info: source.info || {},
+        maxChars,
+    });
+    return {
+        ok: true,
+        from,
+        path: memoryDigest.digestPath(to),
+        chars: built.chars,
+        lines: built.lines,
+        counts: {
+            calls: built.calls,
+            files: built.files,
+            commands: built.commands,
+            errors: built.errors,
+        },
+        markdown: built.markdown,
+    };
+}
+
 module.exports = {
     MODES,
+    DIGEST_MODES,
     DEFAULT_MAX_RECORDS,
     transfer,
+    previewCompression,
+    previewDigest,
     listMemories,
     describeById,
     describeMemory,
     normalizeMode,
     normalizeId,
+    normalizeDigestMode,
 };
