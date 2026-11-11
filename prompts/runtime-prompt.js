@@ -1,3 +1,67 @@
+/**
+每轮回给模型的结果 + 下一步提示
+
+一轮任务里这段文本会重复发送几十次，所以它必须短。旧版每轮都把 <read> / <write>
+/ <edit> / <exec> / <screenshot> 的用法和示例重抄一遍（约 700 字符），实际信息量
+只有"上一轮结果 + 继续"；而几十轮高度重复的模板文本，正是网页平台判定"脚本在
+批量调用"的典型特征。语法说明只放在首轮（prompts/system-prompt.js）就够了。
+
+结果本身也做了收敛：旧的 `JSON.stringify(x, null, 2)` 会把一个 20000 字符的
+响应体原样铺开成上百行，既撑上下文又让整条消息看起来像日志倾倒。现在用紧凑
+JSON，并对超长字符串 / 超长数组做截断并标注，模型仍能看出"这里被截了"。
+*/
+
+/** 单个字符串值超过这个长度就截断（字符）。 */
+const MAX_STRING_CHARS = 4000;
+/** 数组最多保留这么多项。 */
+const MAX_ARRAY_ITEMS = 200;
+/** 递归深度上限，防止插件返回的自引用结构把栈打爆。 */
+const MAX_DEPTH = 6;
+
+function truncateText(text) {
+    if (text.length <= MAX_STRING_CHARS) {
+        return text;
+    }
+    return (
+        text.slice(0, MAX_STRING_CHARS) +
+        "\n... (truncated, " +
+        text.length +
+        " chars in total; read again with a narrower path or use exec for the rest)"
+    );
+}
+
+/**
+把结果收敛成"能读懂但不啰嗦"的普通对象：长字符串截断、长数组截断、深度设限。
+只处理 JSON 可表达的类型，其余（函数、Symbol）直接丢弃——它们本来也 stringify 不出来。
+*/
+function compactValue(value, depth) {
+    if (typeof value === "string") {
+        return truncateText(value);
+    }
+    if (value === null || typeof value !== "object") {
+        return value;
+    }
+    if (depth >= MAX_DEPTH) {
+        return Array.isArray(value) ? "[...]" : "{...}";
+    }
+    if (Array.isArray(value)) {
+        const kept = value.slice(0, MAX_ARRAY_ITEMS).map((item) => compactValue(item, depth + 1));
+        if (value.length > MAX_ARRAY_ITEMS) {
+            kept.push("... (" + value.length + " items in total)");
+        }
+        return kept;
+    }
+    const output = {};
+    for (const key of Object.keys(value)) {
+        const child = value[key];
+        if (typeof child === "function" || typeof child === "symbol") {
+            continue;
+        }
+        output[key] = compactValue(child, depth + 1);
+    }
+    return output;
+}
+
 // 回给模型的结果视图：插件动作可能返回很大的结果（例如 HTTP 响应体），
 // registry 会提供 promptView 精简视图，完整结果只留在 Trace / 报告里。
 function promptView(result) {
@@ -7,66 +71,30 @@ function promptView(result) {
     return result;
 }
 
+function stringifyResult(result) {
+    return JSON.stringify(compactValue(promptView(result), 0));
+}
+
 function getRuntimeOkPrompt(result) {
     return `
-上一轮 Runtime 已经执行完成。
-Runtime 返回：
-${JSON.stringify(promptView(result), null, 2)}
-请根据这个真实结果继续完成用户任务。
-如果还需要读取文件：
-使用 <read>
-如果需要修改已有文件里的几处：
-使用 <edit>（old 必须与文件原文一致且唯一，出现多次就多写上下文或用 all="true"；<new> 留空表示删除）
-例如：
-<edit path="src/example.js"><old><![CDATA[const a = 1;]]></old><new><![CDATA[const a = 2;]]></new></edit>
-如果需要新建文件或者整体重写：
-使用 <write>
-例如：
-<write path="src/example.js"><![CDATA[
-console.log("hello");
-]]></write>
-注意：之后请你进行语法和运行的验证，可以创建test文件进行验证然后使用 <exec> 进行验证，验证完成之后可以删除验证文件，避免语法错误，如果是文档则不需要验证。
-完成之后再进行下一步。
-如果需要运行命令：
-使用 <exec>
-如果需要截图（桌面/指定窗口/浏览器页面）：
-使用 <screenshot>
-例如：
-<screenshot source="screen" path="screenshots/desktop.png"/>
-<screenshot source="window" windowTitle="Visual Studio Code" path="screenshots/vscode.png"/>
-<screenshot source="browser_page" url="https://example.com" path="screenshots/page.png"/>
-注意：path 必须是相对 Workspace 的路径；省略时默认保存到 screenshots/screenshot-<时间戳>.png。
-如果已经可以回答用户：
-使用：
-<answer><![CDATA[
-最终答案
-]]></answer>
-注意：
-本轮只能输出 <answer>。
-输出 <answer> 后，不要同时输出 <done/>。
-Agent 会在下一轮单独要求你输出 <done/>。
-如果已经完成并且不需要回答：
-使用：
-<done/>只输出一个 XML Action。
+上一轮执行完了，结果：
+${stringifyResult(result)}
+
+继续下一步，动作按第一条消息里的格式写（read / write / edit / exec / screenshot；只改几处就用 <edit>，不要整篇重写）。
+能回答用户了就只回 <answer><![CDATA[最终答案]]></answer>（这一轮不要带 <done/>）；任务结束且无需多说就回 <done/>。每次只发一段动作。
 `;
 }
 function getRuntimeErrorPrompt(result) {
     return `
-Runtime 执行失败。
-下面是 Runtime 的真实返回结果：
-${JSON.stringify(promptView(result), null, 2)}
-请分析这个错误。
-如果可以修复：
-- 修复问题
-- 必要时再次执行验证
+这一轮执行失败，真实返回：
+${stringifyResult(result)}
 
-如果不能修复：
-使用 <answer> 告诉用户真实错误。
-不要编造 Runtime 结果。
-只输出一个 XML Action。
+看错误自己修：缺依赖就装，路径或语法错了就改，必要时重跑验证。修不好就回 <answer><![CDATA[错误原因]]></answer>，如实说清楚。每次只发一段动作。
 `;
 }
 module.exports = {
     getRuntimeOkPrompt,
     getRuntimeErrorPrompt,
+    compactValue,
+    stringifyResult,
 };

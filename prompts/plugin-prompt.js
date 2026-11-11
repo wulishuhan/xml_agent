@@ -52,15 +52,9 @@ function buildPluginPromptSection(registry, options = {}) {
     const maxChars = resolveMaxChars(activeRegistry, options);
     const sorted = contributions.slice().sort(compareContribution);
 
-    const lines = [
-        "============================================================",
-        "插件能力（Plugin Actions）",
-        "============================================================",
-        "以下能力由插件提供，用法与内置 XML Action 完全一致：",
-        "- 一次只能输出一个 XML Action，不要输出 Action 之外的说明。",
-        "- 参数写错会被拒绝，错误信息里会列出允许的属性。",
-        "",
-    ];
+    // 头部只保留必要信息：系统提示词里已经交代过"每次只发一段动作"和报错会被拒绝，
+    // 这里再抄一遍只会让首轮消息更长（网页平台按"用户消息"读，越长越像脚本）。
+    const lines = ["插件能力（Plugin Actions）", "以下动作由插件提供，写法和上面的一样：", ""];
 
     let used = lines.join("\n").length;
     let skipped = 0;
