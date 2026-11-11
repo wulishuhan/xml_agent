@@ -484,6 +484,8 @@ const provider = createProvider("chatgpt");
 
 整轮任务另有墙钟上限 `agent.runTimeoutMs`（默认 30 分钟，`AGENT_RUN_TIMEOUT_MS` 覆盖，`0` 表示不限制）：`maxSteps` 只管步数，浏览器 provider 每步十几秒，没有这个上限时单任务可能跑半小时而界面上毫无反馈。超时后状态记为 `timeout`，已产生的历史与报告照常落盘。这个上限是**硬**的：除了两步之间检查，还有一个看门狗在到点时直接关掉 provider —— 浏览器那边的 CDP 调用挂住时自身没有超时，只靠"两步之间检查"会让单步无限拖下去。
 
+> ChatGPT 网页端（2026 版）换成了虚拟列表，旧的 `[data-message-author-role]`、`.markdown` 已经不存在，消息按 `data-chatgpt-search-unit-key="…:assistant"` 定位、正文从 `MarkdownRoot` 读（整条读会把隐藏的"ChatGPT 说："当成回复）。写入同样有坑：编辑区是 ProseMirror，直接改 `textContent` 只有短文本正常，长提示词会被提交成空消息 —— 界面显示"回答已完成"、正文一个字都没有，所以 ChatGPT provider 一律用键盘 `Input.insertText` 输入。
+
 > Gemini 用的是独立浏览器配置目录（`%TEMP%/edge-agent-profile-9223`），**首次使用需要在弹出的浏览器窗口里登录一次 Google 账号**，之后保持登录状态。
 
 ### 新增一个 provider（不需要改 server / 前端）
