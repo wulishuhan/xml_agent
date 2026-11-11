@@ -7,6 +7,11 @@ const os = require("os");
 const { SessionManager } = require("../webui/session/session-manager");
 function run() {
     const manager = new SessionManager();
+    // 这个测试只验证 images 透传，不需要真的写盘。不拦住 persist 的话，
+    // 每跑一次都会在 ~/.xml-agent/webui-sessions 里留下 test/test2/test3 三个假会话，
+    // 用户下次打开界面就会在侧边栏看到它们。
+    manager.persist = () => {};
+    manager.schedulePersist = () => {};
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-sm-images-"));
     fs.mkdirSync(path.join(workspace, "uploads"), { recursive: true });
     const img1 = path.join(workspace, "uploads", "a.png");
