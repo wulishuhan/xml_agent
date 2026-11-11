@@ -76,6 +76,7 @@ class SessionManager extends EventEmitter {
             throw new Error("absorbRecord requires info.id");
         }
         const output = Array.isArray(payload.output) ? payload.output : [];
+        const restored = Object.assign({}, info, { output });
         let session = this.sessions.get(info.id);
 
         if (!session) {
@@ -85,11 +86,17 @@ class SessionManager extends EventEmitter {
                 task: info.task,
                 conversationId: info.conversationId || null,
             });
+            // 顺序不能换：目标 id 是调用方给的，而构造函数会自己生成一个随机 id。
+            // 必须先 restore 把 id 改过来再入表，否则 sessions 的 key 是那个随机 id，
+            // 而 session.id 已经是 info.id —— GET /api/sessions/<info.id> 直接 404，
+            // 界面就会在刚转移完的时候弹「会话不存在」，侧栏点进去也一样。
+            session.restore(restored);
             this.attachListeners(session);
             this.sessions.set(session.id, session);
+        } else {
+            session.restore(restored);
         }
 
-        session.restore(Object.assign({}, info, { output }));
         this.persist(session);
         return session;
     }
