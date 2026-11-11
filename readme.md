@@ -685,7 +685,7 @@ npm run format:check  # 检查格式
 
 ```bash
 npm run test:offline    # 离线全量 = unit + core + plugins + api + desktop
-npm run test:unit       # 纯离线单测（停止语义、审计清理、日志落盘、动作超时、测试清单守卫…）
+npm run test:unit       # 纯离线单测（停止语义、审计清理、日志落盘、动作超时、测试清单与依赖声明守卫…）
 npm run test:core       # 内置动作 / 配置 / 路由面 / XML 解析
 npm run test:plugins    # 插件系统
 npm run test:api        # 起真实 HTTP 服务的接口测试（随机端口，临时 workspace）
