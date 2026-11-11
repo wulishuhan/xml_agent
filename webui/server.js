@@ -101,6 +101,9 @@ try {
 // 加载插件（失败只记录，不影响服务启动）
 try {
     const registry = getRegistry();
+    // 把会话管理器交给插件系统：memory-transfer 这类插件要读/写会话记忆，
+    // 走注入而不是让插件自己碰 ~/.xml-agent/webui-sessions。
+    registry.setHostSessions(sessionManager);
     const failed = registry.errors.length;
     console.log(
         "[WebUI] Plugins: " +

@@ -36,19 +36,48 @@ function saveSession(session) {
 
     ensureStoreRoot();
 
-    const payload = {
+    return atomicWrite(sessionFilePath(session.id), {
         version: 1,
         savedAt: Date.now(),
         info: session.getInfo(),
         output: session.getOutput(),
-    };
+    });
+}
 
-    const filePath = sessionFilePath(session.id);
+/**
+写一条会话记录（不经过 AgentSession 实例）。
+
+"把记忆从一个会话搬到另一个会话"这类操作需要落地一个可能还没被创建过的会话 id，
+那时没有实例可以调 saveSession。payload 形状与 saveSession 写盘的一致，
+version / savedAt 在这里统一补齐，调用方只需给 info 与 output。
+
+info.id 以参数 id 为准：避免调用方拼错对象导致文件内容和文件名对不上。
+*/
+function writeRecord(id, payload) {
+    const recordId = String(id || "").trim();
+    if (!recordId) {
+        throw new Error("Session id is required");
+    }
+    const info = payload && payload.info ? payload.info : null;
+    if (!info) {
+        throw new Error("Session record requires info");
+    }
+
+    ensureStoreRoot();
+
+    return atomicWrite(sessionFilePath(recordId), {
+        version: 1,
+        savedAt: Date.now(),
+        info: Object.assign({}, info, { id: recordId }),
+        output: Array.isArray(payload.output) ? payload.output : [],
+    });
+}
+
+/** 原子写：先写 .tmp 再 rename，避免写一半崩溃留下半个 JSON。 */
+function atomicWrite(filePath, payload) {
     const tmpPath = filePath + ".tmp";
-
     fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf8");
     fs.renameSync(tmpPath, filePath);
-
     return filePath;
 }
 
@@ -204,6 +233,7 @@ function cleanOrphanTmpFiles() {
 module.exports = {
     STORE_ROOT,
     saveSession,
+    writeRecord,
     deleteSession,
     listSavedSessions,
     loadSession,

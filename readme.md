@@ -500,6 +500,7 @@ plugins/                     内置插件（随包分发）
         fetch/               action 插件（HTTP 请求，域名白名单）
         audit-log/           hook 插件（JSONL 审计日志，按保留期自动清理）
         screenshot/          action 插件（截屏，引擎随插件自带）
+        memory-transfer/     action 插件（会话记忆转移：记录 + 模型对话线程）
 
 ~/.xml-agent/plugins/<name>/ 用户插件
     plugin.json
@@ -513,6 +514,41 @@ plugins/                     内置插件（随包分发）
 - 内置 `audit-log` 插件把动作执行、权限拒绝、会话结束写成 JSONL，落在
   `~/.xml-agent/plugin-data/audit-log/audit-YYYYMMDD.jsonl`（插件私有数据目录，不进 workspace）。
   配置 `keepDays`（默认 14）控制保留期：超出窗口的整日日志在启动或跨天时自动删除，设为 0 表示不清理。
+
+### 会话记忆转移（memory-transfer）
+
+把一个会话的"记忆"写到另一个会话 id 上。记忆分两层，来源不同：
+
+| 层         | 存在哪                | 决定什么                         |
+| ---------- | --------------------- | -------------------------------- |
+| 记录       | `output` / `task`     | 界面上能不能回看之前发生了什么   |
+| 模型上下文 | `info.conversationId` | 下一句话模型记不记得之前聊过什么 |
+
+三种模式（`mode`）：`full`（默认，两层都搬）/ `records`（只搬记录，模型从新对话开始）/ `link`（只接续模型上下文）。
+
+```xml
+<memory-transfer from="aaa" to="bbb" mode="full"/>
+```
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/plugins/memory-transfer/api/transfer \
+  -H "Content-Type: application/json" \
+  -d '{"from":"aaa","to":"bbb","mode":"full"}'
+
+curl "http://127.0.0.1:3000/api/plugins/memory-transfer/api/sessions?limit=20"   # 会话摘要列表
+```
+
+- 目标会话不存在时，按源会话的 `workspace` / `provider` 自动新建（状态 `completed`，**不会自动开始运行**）；
+- 目标已存在时保留它自己的 `workspace` / `createdAt`，只覆盖记忆相关字段；
+- 会拒绝的三种情况：`from === to`、源会话正在运行、目标会话正在运行；
+- `provider` 不一致时不复用 `conversationId`（那是 provider 侧的 id），`full` 会降级成 `records` 并在结果里回 `warnings`；
+- 记录条数有上限（插件配置 `maxOutputRecords`，默认 2000），超出保留最近的部分并插入一行说明；
+- 图片（`images`）不搬：那是一次性上传的运行时状态，恢复时会话也不还原；
+- `full` / `link` 之后两个会话共用同一条 provider 对话线程，在任一边继续聊都会影响另一边。
+
+权限上是两个独立 scope：`sessions:read`（列会话、读摘要）与 `sessions:write`（执行转移）。
+插件不直接读写 `~/.xml-agent/webui-sessions`：WebUI 启动时把 `SessionManager` 注入注册表，
+插件通过 `ctx.sessions` 调用，内存与磁盘由宿主统一同步。
 
 ## 界面：Plugins 面板
 
@@ -559,12 +595,14 @@ POST /api/plugins/<name>/api/<path>
 
 ## 权限模型
 
-插件在 `plugin.json` 里声明需要的 scope（`network:http`、`workspace:write`、`shell:exec` …），动作的 `meta.permission` 必须是它的子集，否则**加载期直接拒绝**。
+插件在 `plugin.json` 里声明需要的 scope（`network:http`、`workspace:write`、`shell:exec`、`sessions:read`/`sessions:write` …），动作的 `meta.permission` 必须是它的子集，否则**加载期直接拒绝**。
 
 - 内置插件声明的 scope 默认 `allow`；
 - 用户插件默认 `ask`，v1 中等同于"未授权即拒绝"，拒绝原因会回给模型；
 - `secrets:read` 有两道门：清单声明 + 策略 `allow`。setup 期与动作执行期口径一致，
   未授权时 `ctx.secrets.get()` 返回 `null`（`ctx.secrets.denied === true`），不会静默泄漏；
+- `sessions:read` / `sessions:write` 同样两道门：动作由 `invoke` 校验，**插件接口**由
+  `callPluginApi` 自己校验（接口不经过动作那套校验，只靠路径限制的话，知道 URL 就能绕过权限）。
 - 所有插件动作的调用都会带 `plugin` / `durationMs` / `mutating` 写入 Trace 与审计日志，便于回放。
 
 ## 插件生命周期

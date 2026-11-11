@@ -63,6 +63,38 @@ class SessionManager extends EventEmitter {
     }
 
     /**
+    把一条外部构造的会话记录并入管理器：存在就覆盖状态，不存在就建一个空转的实例。
+
+    用于"会话记忆转移"——目标会话 id 可能还不存在（用户只给了个新 id），
+    直接写盘的话界面上看不到它，要重启才会被 restore() 发现。这里同时更新内存与磁盘。
+
+    注意：只用 restore() 恢复元信息与输出，不会触发 provider，也不会开始运行。
+    */
+    absorbRecord(payload) {
+        const info = payload && payload.info ? payload.info : null;
+        if (!info || !info.id) {
+            throw new Error("absorbRecord requires info.id");
+        }
+        const output = Array.isArray(payload.output) ? payload.output : [];
+        let session = this.sessions.get(info.id);
+
+        if (!session) {
+            session = new AgentSession({
+                workspace: info.workspace,
+                provider: info.provider,
+                task: info.task,
+                conversationId: info.conversationId || null,
+            });
+            this.attachListeners(session);
+            this.sessions.set(session.id, session);
+        }
+
+        session.restore(Object.assign({}, info, { output }));
+        this.persist(session);
+        return session;
+    }
+
+    /**
 - 节流写盘：短时间内多次调用只写一次。
 */
     schedulePersist(session) {

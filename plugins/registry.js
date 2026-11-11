@@ -68,6 +68,15 @@ class PluginRegistry {
         this._fileCache = new Map();
         this.ui = { panels: [], settings: [], actions: [] };
         this.errors = [];
+        // 宿主注入的服务：WebUI 启动后把 SessionManager 放进来，插件才能通过
+        // ctx.sessions 读写会话记忆（CLI 模式下为空，插件退化为只操作磁盘）。
+        this.hostSessions = null;
+    }
+
+    /** 注入会话管理器（WebUI 启动时调用；不注入不算错误，只是能力受限）。 */
+    setHostSessions(manager) {
+        this.hostSessions = manager || null;
+        return this;
     }
 
     get userDirs() {

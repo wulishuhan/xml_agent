@@ -6,10 +6,25 @@
 */
 
 const capabilities = require("../capabilities");
+const { createSessionMemory } = require("../session-memory");
 
 const { createScopedLogger, runWithTimeout } = require("./shared");
 
 module.exports = {
+    /**
+    清单声明了该 scope 且策略放行，才算拿到这个能力。
+    与 context.js 里动作路径的判据保持一致（那边靠 invoke 先做校验，这里要自己判）。
+    */
+    _hasPluginScope(record, scope) {
+        if (!record || !record.manifest) {
+            return false;
+        }
+        if (record.manifest.permissions.indexOf(scope) === -1) {
+            return false;
+        }
+        return this.getPolicy(scope, record) === "allow";
+    },
+
     /**
     调用插件注册的 HTTP 接口（声明式面板的数据来源）。
     路由层已把路径限定在 /api/plugins/<name>/api 之下，这里仍按 method + path 精确匹配注册表，
@@ -50,6 +65,15 @@ module.exports = {
             config: this.getConfig(record.name),
             logger: createScopedLogger(this.logger, record.name),
             storage: capabilities.createStorage({ dir: this.storageDir(record.name) }),
+            // 接口调用不经过 invoke 的权限校验，这里要自己判：清单声明 + 策略 allow。
+            // 否则只要知道插件接口路径，就能绕过权限直接搬会话记录。
+            sessions: createSessionMemory({
+                manager: this.hostSessions,
+                canRead: this._hasPluginScope(record, "sessions:read"),
+                canWrite: this._hasPluginScope(record, "sessions:write"),
+                maxRecords: this.getConfig(record.name).maxOutputRecords,
+                logger: createScopedLogger(this.logger, record.name),
+            }),
             secrets: this._secretsFor(record, this._canReadSecrets(record)),
             // handler 超时会被 abort；用了自定义 I/O 的插件应监听这个信号
             signal: controller.signal,

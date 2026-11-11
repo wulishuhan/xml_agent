@@ -7,6 +7,7 @@ setup 与 run 两个上下文的装配。能力（fs / http / storage / secrets�
 
 const sdk = require("../sdk");
 const capabilities = require("../capabilities");
+const { createSessionMemory } = require("../session-memory");
 
 const { createScopedLogger } = require("./shared");
 
@@ -195,6 +196,15 @@ module.exports = {
                 maxBytes: config.httpMaxBytes,
             }),
             storage: capabilities.createStorage({ dir: this.storageDir(record.name) }),
+            // 会话记忆：动作声明了 sessions:* 才会拿到写权限（invoke 已先做过权限校验，
+            // 能跑到这里说明清单声明与策略都通过了）
+            sessions: createSessionMemory({
+                manager: this.hostSessions,
+                canRead: entry.def.meta.permission.indexOf("sessions:read") !== -1,
+                canWrite: entry.def.meta.permission.indexOf("sessions:write") !== -1,
+                maxRecords: config.maxOutputRecords,
+                logger: createScopedLogger(this.logger, record.name),
+            }),
             secrets: canReadSecrets
                 ? {
                       get: (key) => {

@@ -20,6 +20,7 @@ const GROUP_TITLES = {
     system: "系统",
     data: "数据",
     quality: "质量",
+    session: "会话",
     plugin: "插件",
 };
 

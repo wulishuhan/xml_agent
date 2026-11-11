@@ -1,0 +1,19 @@
+{
+    "name": "memory-transfer",
+    "version": "1.0.0",
+    "kind": "action",
+    "apiVersion": 1,
+    "engines": { "xmlAgent": ">=1.2.0" },
+    "author": "xml-agent",
+    "description": "把会话 A 的记忆（过程记录 + 模型对话线程）转到会话 B，用于「换个会话接着做」",
+    "permissions": ["sessions:read", "sessions:write"],
+    "activation": "always",
+    "configSchema": {
+        "maxOutputRecords": {
+            "type": "integer",
+            "default": 2000,
+            "min": 0,
+            "description": "单次最多搬多少条过程记录；超出保留最近的（0 表示用默认值 2000）"
+        }
+    }
+}

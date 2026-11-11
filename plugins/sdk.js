@@ -21,6 +21,11 @@ const PERMISSION_SCOPES = [
     "system:screen",
     "system:window",
     "secrets:read",
+    // 会话记忆：读写 ~/.xml-agent/webui-sessions 下的会话记录。
+    // 单独成 scope 是因为它既不属于 workspace（在用户主目录），
+    // 也不是文件写入权限能覆盖的：它决定"这个会话记不记得之前发生过什么"。
+    "sessions:read",
+    "sessions:write",
 ];
 
 const PLUGIN_KINDS = ["action", "hook", "provider", "ui"];
