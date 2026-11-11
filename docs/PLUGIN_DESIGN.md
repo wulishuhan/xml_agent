@@ -469,7 +469,7 @@ xml_agent/
 ├─ agent-core.js                 ← 编排，仅依赖 registry 抽象（无具体动作知识）
 ├─ runtime.js                    ← 查表 + 鉴权 + 超时 + 执行 + 记录
 ├─ agent.js                      ← CLI 入口（不变）
-├─ actions/                      ← P0：内置动作定义（read/write/exec/answer/done）
+├─ actions/                      ← P0：内置动作定义（read/write/edit/exec/answer/done）
 ├─ plugins/                      ← 插件系统（registry / sdk / builtin）
 ├─ config/
 │   ├─ schema.js                 ← P1：配置单源

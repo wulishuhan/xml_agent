@@ -144,7 +144,7 @@ promptResult: (result) => ({
 `plugin`、`durationMs` 与 `mutating` 三个字段（内置动作同样带 `mutating`，两边口径一致）；
 `ok: false` 时 `error` 会走既有的 Runtime 错误提示通道回给模型。
 
-**内置动作名保留**：`read` `write` `exec` `answer` `done`。插件不得占用（加载期直接拒绝）。
+**内置动作名保留**：`read` `write` `edit` `exec` `answer` `done`。插件不得占用（加载期直接拒绝）。
 
 `screenshot` **不在保留名里**——它本身就是插件动作（`plugins/builtin/screenshot`）。
 但它同样不能和别人重名：任何两个插件注册同名动作时，后加载的那个会整体加载失败，

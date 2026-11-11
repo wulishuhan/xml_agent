@@ -143,7 +143,7 @@ LLM 通过输出特定的 XML 标签来指令 Agent 执行操作。每次只能�
 ## 6. 项目结构概览
 
 xml_agent/
-├── actions/ # 内置动作定义 (read/write/exec/answer/done)
+├── actions/ # 内置动作定义 (read/write/edit/exec/answer/done)
 ├── plugins/ # 插件系统内核及内置插件
 ├── providers/ # 模型后端适配器
 ├── config/ # 配置管理 (schema.js 为单一来源)

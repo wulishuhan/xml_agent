@@ -284,7 +284,7 @@ npm run electron:build
 ## 目录结构
 
 ```
-actions/            内置动作定义（read/write/exec/answer/done）
+actions/            内置动作定义（read/write/edit/exec/answer/done）
 agent/              单步闭环拆分（step / artifacts / inputs / retry）
 processes/          子进程登记表（停止会话时按进程树结束）
 plugins/            插件系统（registry / sdk / capabilities / builtin）
@@ -355,7 +355,7 @@ Agent Continue
 ## Runtime
 
 - 编排与沙箱：`runtime.js`（Workspace 路径校验 + 动作分发）
-- 动作实现：`actions/`（read / write / exec / answer / done，v1.1.0 起由动作定义对象承载）
+- 动作实现：`actions/`（read / write / edit / exec / answer / done，v1.1.0 起由动作定义对象承载）
 - 截图动作：`plugins/builtin/screenshot`（v1.1.0 起是内置插件，不是内置动作）
 - 子进程登记：`processes/registry.js`
 
@@ -385,6 +385,28 @@ console.log("hello");
 ```
 
 路径里的 XML 实体（`&amp;`、`&lt;`…）会被解码，与 `read` 的行为一致；目标是已存在的目录时返回明确错误，不会抛出底层 `EPERM`。Windows 下的保留设备名（`CON`、`NUL`、`COM1`…）与 `file.txt:stream` 这类数据流写法会被拒绝——它们不会真正落盘，却会让写入"看似成功"。
+
+### edit
+
+局部修改已存在的文件：给出"要替换的原文"和"改成什么"，其余内容逐字节保留。
+
+```xml
+<edit path="src/app.js">
+  <change>
+    <old><![CDATA[const port = 3000;]]></old>
+    <new><![CDATA[const port = process.env.PORT || 3000;]]></new>
+  </change>
+</edit>
+```
+
+- 一次可以带多个 `<change>`（上限 20），按顺序执行；`<new>` 留空表示删除这段内容。
+- `old` 必须在文件里出现且唯一。出现多次时报错并给出行号，可以多写几行上下文收窄，或用 `all="true"` 全部替换。
+- 匹配分两档：先精确匹配；不中再忽略行首缩进与行尾空白找一次。后者命中会按原位置的缩进差补齐 `new` 的缩进，并在结果里标 `matched: "loose"`；锚点归一化后不足 16 字符时不启用，避免短串误命中别处。
+- 任何一处 `<change>` 失败就整体不落盘（与 `write` 同样的原子写：临时文件 + 改名），不会留下改了一半的文件；JSON 改坏会被拒绝。
+- 结果带 `diff`，只列被替换的行（超过 40 行 / 2000 字符截断），模型据此自检，不必再整篇 `read`。
+- 文件不存在时返回 `File does not exist; use <write> to create it`——新建与整体重写仍然归 `write`。
+
+为什么需要它：同一个改动用 `write` 表达，模型得重新生成整个文件。token 花在复述没变的代码上，更要紧的是任何一处手误都会改到本来没问题的地方，而 diff 里根本看不出来。
 
 ### exec
 
