@@ -123,6 +123,64 @@
                         <span class="context-label">{{ t("app.port") }}</span>
                         <code>{{ electronPort }}</code>
                     </div>
+                    <!--
+                        手动转移入口：横幅只在 80%/92% 才出现，但用户可能只用了两成
+                        就想换条线（拆任务、换个 provider、把这条线先放着）。所以这里常驻
+                        一个百分比 + 一个入口，任何时候都能转。
+                    -->
+                    <div v-if="activeSession" class="context-item context-usage-item">
+                        <span class="context-label">{{ t("context.usageLabel") }}</span>
+                        <span
+                            class="context-usage"
+                            :class="'context-usage-' + contextLevel"
+                            :title="t('context.usageHint')"
+                            >{{ contextPercent }}%</span
+                        >
+                        <div class="context-transfer">
+                            <button
+                                type="button"
+                                class="btn context-transfer-btn"
+                                :disabled="transferring"
+                                :title="t('context.manualTitle')"
+                                @click.stop="toggleTransferMenu"
+                            >
+                                {{ transferring ? t("context.transferring") : t("context.manual") }}
+                                <span class="context-transfer-caret" aria-hidden="true">▾</span>
+                            </button>
+                            <div v-if="transferMenuOpen" class="transfer-menu" @click.stop>
+                                <div class="transfer-menu-title">
+                                    {{ t("context.manualTitle") }}
+                                </div>
+                                <!-- 手动点菜单不该悄悄停掉正在跑的任务，先说清楚 -->
+                                <div v-if="running" class="transfer-menu-hint">
+                                    {{ t("context.manualRunning") }}
+                                </div>
+                                <button
+                                    type="button"
+                                    class="transfer-menu-item"
+                                    @click="transferToNewSession('digest')"
+                                >
+                                    <strong>{{ t("context.manualDigest") }}</strong>
+                                    <span>{{ t("context.manualDigestBody") }}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="transfer-menu-item"
+                                    @click="transferToNewSession('records')"
+                                >
+                                    <strong>{{ t("context.manualRecords") }}</strong>
+                                    <span>{{ t("context.manualRecordsBody") }}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="transfer-menu-cancel"
+                                    @click="closeTransferMenu"
+                                >
+                                    {{ t("context.manualCancel") }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <!-- 上下文快满：提示把记忆转到新会话 -->
                 <div
@@ -308,6 +366,19 @@
         }
         return contextDismissed.value !== activeSessionId.value;
     });
+    // 常驻百分比用的档位：还没采到数时按 normal 上色，别一上来就变红
+    const contextLevel = computed(() => (contextUsage.value ? contextUsage.value.level : "normal"));
+    // 手动转移菜单：与横幅无关，任何占用比例都能打开
+    const transferMenuOpen = ref(false);
+    function toggleTransferMenu() {
+        if (transferring.value) {
+            return;
+        }
+        transferMenuOpen.value = !transferMenuOpen.value;
+    }
+    function closeTransferMenu() {
+        transferMenuOpen.value = false;
+    }
     const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
     const MIN_RATIO = 0.2;
     const MAX_RATIO = 0.85;
@@ -465,29 +536,35 @@
     上下文快满时的一键转移。
     源会话还在跑就先停：transfer 会拒绝运行中的会话，而「快满了」的时候
     往往正是它还在跑。停完再转，用户只需要点一次。
+
+    mode 由调用方给：横幅走 digest（只带摘要）；手动入口可以选 digest 或 records。
+    两种都不接旧的 provider 线程 —— 换会话的目的就是换一条干净的线程。
     */
-    async function transferToNewSession() {
+    async function transferToNewSession(mode = "digest") {
         const sessionId = activeSessionId.value;
         if (!sessionId || transferring.value) {
             return;
         }
+        closeTransferMenu();
         transferring.value = true;
         errorMessage.value = "";
         try {
             if (activeSession.value && activeSession.value.running === true) {
                 await stopSession(sessionId);
             }
-            // mode=digest：只把 task 和一页摘要带过去，不搬旧的几千条记录。
-            // 这个场景下旧记录本来就是把上下文塞满的元凶，搬过去毫无意义；
+            // digest：只把 task 和一页摘要带过去，不搬旧的几千条记录。
+            // 上下文满了的场景下旧记录本来就是把窗口塞满的元凶，搬过去毫无意义；
             // 模型需要的是"做过什么、改过哪些文件、还差什么"，也就是摘要本身。
-            const payload = await transferMemory(sessionId, { mode: "digest" });
+            // records：手动转移时用户可能确实要把流水账带过去，由摘要换成全量记录。
+            const payload = await transferMemory(sessionId, { mode });
             if (!payload || payload.ok === false) {
                 throw new Error((payload && payload.error) || t("context.transferFailed"));
             }
             const targetId = payload.result && payload.result.to;
             await loadWorkspaces();
             if (targetId) {
-                // 目标会话是全新的空壳，不会自动开始运行：用户在那里点运行即可
+                // 目标会话是全新的空壳，不会自动开始运行：用户在那里点运行即可。
+                // 任务已被回填到输入框，切过去就能看到，不再额外弹提示。
                 await selectSession(targetId);
             }
         } catch (error) {
@@ -525,6 +602,7 @@
         // 上下文占用与「稍后」都是按会话计的，跟着切换一起重置
         contextUsage.value = null;
         contextDismissed.value = "";
+        closeTransferMenu();
         closeEventSource();
         try {
             const [sessionResult, outputResult] = await Promise.all([
@@ -820,6 +898,8 @@
         loadRatio();
         loadWorkspaces();
         refreshStorage();
+        // 点空白处收起转移菜单；触发按钮自己 stop 了冒泡，不会被这次监听关掉
+        document.addEventListener("click", closeTransferMenu);
         // provider 列表（含插件 provider）由后端提供，失败时保持内置兜底表
         loadProviders().then((list) => {
             if (!Array.isArray(list) || list.length === 0) {
@@ -835,7 +915,10 @@
             }
         });
     });
-    onUnmounted(closeEventSource);
+    onUnmounted(() => {
+        document.removeEventListener("click", closeTransferMenu);
+        closeEventSource();
+    });
     onBeforeUnmount(stopResize);
 </script>
 <style scoped>

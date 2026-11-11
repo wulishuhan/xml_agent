@@ -907,6 +907,123 @@ kbd {
     gap: 6px;
 }
 
+/* 手动转移入口：常驻在会话信息条右侧，没到阈值也能用 */
+.context-usage-item {
+    position: relative;
+    margin-left: auto;
+}
+
+.context-usage {
+    color: var(--c-text-body);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+}
+
+.context-usage-warn {
+    color: var(--c-warning-text);
+}
+
+.context-usage-critical {
+    color: var(--c-danger-text);
+}
+
+.context-transfer {
+    position: relative;
+}
+
+.context-transfer-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 9px;
+}
+
+.context-transfer-caret {
+    color: var(--c-text-dim);
+    font-size: 9px;
+}
+
+.transfer-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    display: flex;
+    width: 262px;
+    max-width: calc(100vw - 40px);
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px;
+    border: 1px solid var(--c-border);
+    border-radius: 8px;
+    background: var(--c-elevated-bg);
+    box-shadow: 0 12px 28px var(--c-shadow-strong);
+}
+
+.transfer-menu-title {
+    padding: 3px 8px 5px;
+    color: var(--c-text-soft);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.transfer-menu-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 7px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--c-text-body);
+    cursor: pointer;
+    text-align: left;
+}
+
+.transfer-menu-hint {
+    margin-bottom: 2px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    background: var(--c-required-bg);
+    color: var(--c-warning-text);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.transfer-menu-item:hover {
+    background: var(--c-hover-bg);
+}
+
+.transfer-menu-item strong {
+    color: var(--c-text-strong);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.transfer-menu-item span {
+    color: var(--c-text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.transfer-menu-cancel {
+    margin-top: 4px;
+    padding: 6px 8px;
+    border: 0;
+    border-top: 1px solid var(--c-border-soft);
+    background: transparent;
+    color: var(--c-text-soft);
+    font-size: 11px;
+    cursor: pointer;
+    text-align: center;
+}
+
+.transfer-menu-cancel:hover {
+    color: var(--c-text-body);
+}
+
 /* New-session welcome */
 
 .welcome {

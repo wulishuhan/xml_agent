@@ -61,6 +61,17 @@ const DICT = {
         "context.transferFailed": "记忆转移失败",
         "context.pluginDisabled":
             "记忆转移插件未启用：到 Plugins 面板启用 memory-transfer 后可用。",
+        // 没到阈值也想换会话时的手动入口
+        "context.usageLabel": "上下文",
+        "context.usageHint": "这个会话在平台窗口里用掉了多少",
+        "context.manual": "转移会话",
+        "context.manualTitle": "转到新会话",
+        "context.manualDigest": "只带摘要",
+        "context.manualDigestBody": "任务、改过的文件、关键命令，最轻",
+        "context.manualRecords": "带上完整记录",
+        "context.manualRecordsBody": "旧记录全搬过去，新会话从新对话开始",
+        "context.manualRunning": "会话正在运行，转移会先把它停掉",
+        "context.manualCancel": "取消",
         "app.newSession": "新建会话",
         "app.newAgentSession": "新建 Agent 会话",
         "app.selectWorkspaceHint": "请先在左侧选择一个工作区",
@@ -263,6 +274,18 @@ const DICT = {
         "context.transferFailed": "Memory transfer failed",
         "context.pluginDisabled":
             "The memory-transfer plugin is not enabled. Turn it on in the Plugins panel.",
+        // 没到阈值也想换会话时的手动入口
+        "context.usageLabel": "Context",
+        "context.usageHint": "How much of the platform window this session has used",
+        "context.manual": "Move session",
+        "context.manualTitle": "Move to a new session",
+        "context.manualDigest": "Summary only",
+        "context.manualDigestBody": "Task, touched files, key commands — the lightest option",
+        "context.manualRecords": "With full records",
+        "context.manualRecordsBody":
+            "Copy every record over; the new session starts a fresh conversation",
+        "context.manualRunning": "This session is running — moving it stops it first",
+        "context.manualCancel": "Cancel",
         "app.newSession": "New Session",
         "app.newAgentSession": "New Agent Session",
         "app.selectWorkspaceHint": "Please select a workspace to begin",
