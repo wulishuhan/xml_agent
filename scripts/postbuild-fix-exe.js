@@ -25,8 +25,10 @@ const path = require("path");
 const projectRoot = path.join(__dirname, "..");
 // 打包输出目录可用 XML_AGENT_RELEASE_DIR 覆盖（与 scripts/build-windows.js 一致），
 // 默认 release。目录被占用或需要并行构建时，换一个输出目录即可，不必清理旧产物。
+// 兜底构建会传绝对路径进来，所以这里不能直接 path.join(projectRoot, releaseDir)。
 const releaseDir = process.env.XML_AGENT_RELEASE_DIR || "release";
-const unpackedDir = path.join(projectRoot, releaseDir, "win-unpacked");
+const releaseAbs = path.isAbsolute(releaseDir) ? releaseDir : path.join(projectRoot, releaseDir);
+const unpackedDir = path.join(releaseAbs, "win-unpacked");
 const srcExe = path.join(projectRoot, "node_modules", "electron", "dist", "electron.exe");
 const dstExe = path.join(unpackedDir, "XMLAgent.exe");
 

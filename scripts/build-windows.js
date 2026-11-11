@@ -25,11 +25,20 @@ EBUSY: resource busy or locked, unlink '...\win-unpacked\icudtl.dat'
 不触发阈值），并且第二步出安装包时用 --prepackaged 复用它、不再重新解压 Electron
 （重新解压会再次 emptyDir(locales)，一次删 68 个文件，必被拒）。
 
+问题 5：上一次的 win-unpacked 里可能有文件被别的进程长期独占（实测是 0 字节的
+app.asar：独占打开报 "being used by another process"，rm / rd / ren 全部
+Access denied，只有重启才释放）。这时删不掉、也改不了名，原来的实现直接 throw，
+整条构建中断。
+解决：改到 release/.fallback-build-<ts>/ 里构建，成功后把安装包、blockmap 和
+latest.yml 拷回 release/ 才算出包；解包目录留在兜底目录里（zip 里本来就有一份），
+由下一次构建的 cleanupStaleDirs() 回收。构建不再需要人工介入。
+
 产出（固定在同一个 release/ 目录，旧版本产物在成功出包后自动删除）：
 release/win-unpacked/XMLAgent.exe 免安装目录（中间产物）
 release/XMLAgent-Setup-<ver>-x64.exe 安装程序
 release/XMLAgent-Portable-<ver>-x64.exe 单文件便携版
 release/XMLAgent-<ver>-x64.zip zip 免安装压缩包
+（走兜底时上面三个安装包照旧落在 release/，解包目录在 release/.fallback-build-<ts>/ 下）
 
 使用方式：node scripts/build-windows.js
 */
@@ -57,6 +66,10 @@ const userCacheRoot = path.join(
 );
 const userWinCodeSignDir = path.join(userCacheRoot, "winCodeSign", "winCodeSign-2.6.0");
 const userNsisDir = path.join(userCacheRoot, "nsis", "nsis-3.0.4.1");
+
+// win-unpacked 被锁死（既删不掉也改不了名）时的兜底输出目录前缀。
+// 目录建在 release/ 下，同一个卷、就近可见，出包后由下一次构建回收。
+const FALLBACK_PREFIX = ".fallback-build-";
 
 /**
 结束残留的 XMLAgent.exe 进程，避免 release/win-unpacked 下的文件被占用
@@ -168,7 +181,7 @@ function removeTree(target, label) {
 }
 
 /**
-清理上一次构建留下的归档目录（.stale-win-unpacked-*）。
+清理上一次构建留下的归档目录（.stale-win-unpacked-*）和兜底目录（.fallback-build-*）。
 通常删不掉是因为里面有个被别的进程长期持有的文件（EBUSY：能读写、不能改名/删除）。
 删不掉就静默跳过，等占用者退出后下一次构建自动回收。
 */
@@ -182,7 +195,7 @@ function cleanupStaleDirs(releaseDir) {
     }
 
     for (const name of names) {
-        if (name.indexOf(".stale-win-unpacked-") !== 0) {
+        if (name.indexOf(".stale-win-unpacked-") !== 0 && name.indexOf(FALLBACK_PREFIX) !== 0) {
             continue;
         }
 
@@ -195,6 +208,63 @@ function cleanupStaleDirs(releaseDir) {
             );
         }
     }
+}
+
+/**
+建兜底输出目录。用于 win-unpacked 既删不掉也改不了名的情况 ——
+那说明有进程长期持有目录里的文件（实测：0 字节 app.asar 被独占，
+rm / rd / ren 全部 Access denied，重启才能释放）。
+这时改到 release/.fallback-build-<ts> 里构建，出包后把安装包拷回 release/。
+*/
+function makeFallbackOutput(releaseAbs) {
+    const base = path.join(releaseAbs, FALLBACK_PREFIX + Date.now());
+    let dir = base;
+
+    // 同一毫秒内连续调用（或并行构建）时退到 -2、-3……
+    for (let n = 2; fs.existsSync(dir); n++) {
+        dir = base + "-" + n;
+    }
+
+    fs.mkdirSync(dir, { recursive: true });
+
+    return dir;
+}
+
+/**
+把兜底目录里的产物拷回 release/。只拷安装包、校验文件和 latest.yml，
+不拷 win-unpacked（那是中间目录，zip 里已经有一份，而且目标位置正是被锁住的那个）。
+*/
+function copyArtifacts(fromDir, toDir) {
+    let names = [];
+
+    try {
+        names = fs.readdirSync(fromDir);
+    } catch (error) {
+        return [];
+    }
+
+    const copied = [];
+
+    for (const name of names) {
+        // latest.yml 每次构建都会重写，不拷回去就会指向上一版
+        if (name !== "latest.yml") {
+            if (!/^XMLAgent[-.]/.test(name)) {
+                continue;
+            }
+            if (!/\.(exe|zip|blockmap)$/i.test(name)) {
+                continue;
+            }
+        }
+
+        try {
+            fs.copyFileSync(path.join(fromDir, name), path.join(toDir, name));
+            copied.push(name);
+        } catch (error) {
+            console.warn("[build-windows] 产物拷贝失败 " + name + "：" + error.message);
+        }
+    }
+
+    return copied;
 }
 
 /**
@@ -338,7 +408,7 @@ function ensureAsarIntegrityWriteRetry() {
     console.log("[build-windows] patched asar integrity write retry");
 }
 
-function runNodeScript(relativePath) {
+function runNodeScript(relativePath, env) {
     const scriptPath = path.join(projectRoot, relativePath);
 
     console.log("[build-windows] node " + relativePath);
@@ -346,6 +416,7 @@ function runNodeScript(relativePath) {
     const result = spawnSync(process.execPath, [scriptPath], {
         cwd: projectRoot,
         stdio: "inherit",
+        env: env || process.env,
     });
 
     if (result.error) {
@@ -374,47 +445,78 @@ function main() {
 
         console.log("[build-windows] output=" + releaseDir + " version=" + version);
 
+        // 实际输出目录：正常就是 release/；win-unpacked 被锁死时换成兜底目录。
+        let outputDir = releaseDir;
+        let outputAbs = releaseAbs;
+        let fallbackUsed = false;
+
         // 构建前自己清空 win-unpacked：electron-builder 的 emptyDir 会撞本机
         // 批量删除保护（见文件头"问题 4"），这里逐个删就不会。
-        const unpackedDir = path.join(releaseAbs, "win-unpacked");
+        const lockedUnpacked = path.join(releaseAbs, "win-unpacked");
 
         cleanupStaleDirs(releaseAbs);
 
-        if (fs.existsSync(unpackedDir)) {
+        if (fs.existsSync(lockedUnpacked)) {
             console.log("[build-windows] cleaning previous win-unpacked ...");
 
             try {
-                removeTree(unpackedDir, unpackedDir);
+                removeTree(lockedUnpacked, lockedUnpacked);
                 console.log("[build-windows] win-unpacked cleaned");
             } catch (error) {
                 // 极少数情况：目录里有个被别的进程长期持有的文件，既删不掉也改不了名。
-                // 不阻塞构建 —— 整目录改名为 .stale-*，让 electron-builder 用干净路径，
-                // 归档目录下次构建时再尝试回收。
+                // 先尝试整目录改名归档，让 electron-builder 用干净路径。
                 const staleName = ".stale-win-unpacked-" + Date.now();
                 const stalePath = path.join(releaseAbs, staleName);
 
                 try {
-                    fs.renameSync(unpackedDir, stalePath);
+                    fs.renameSync(lockedUnpacked, stalePath);
+                    console.warn(
+                        "[build-windows] win-unpacked 清理失败（" +
+                            String(error.message).split("\n")[0] +
+                            "）"
+                    );
+                    console.warn(
+                        "[build-windows] 已改名归档为 " +
+                            staleName +
+                            "，本次构建继续；下次构建会再尝试删除"
+                    );
                 } catch (renameError) {
-                    throw new Error(
-                        "win-unpacked 既删不掉也挪不动，构建无法继续：" +
-                            renameError.message +
-                            "\n  重启一次系统可释放残留句柄。"
+                    // 改名也失败：有进程独占着目录里的文件（实测是 0 字节 app.asar，
+                    // 独占打开报 "being used by another process"，rm/rd/ren 全是
+                    // Access denied，只能重启释放）。不再中断构建 —— 换到兜底目录
+                    // 构建，出包后把安装包拷回 release/，解包目录留在兜底目录里，
+                    // 由下一次构建回收（那时锁多半已经释放）。
+                    console.warn(
+                        "[build-windows] win-unpacked 既删不掉也挪不动（" +
+                            renameError.code +
+                            "）；改用兜底目录构建"
+                    );
+
+                    try {
+                        outputAbs = makeFallbackOutput(releaseAbs);
+                    } catch (mkdirError) {
+                        throw new Error(
+                            "win-unpacked 被占用且兜底目录也建不出来：" +
+                                mkdirError.message +
+                                "\n  重启一次系统可释放残留句柄。"
+                        );
+                    }
+
+                    outputDir = outputAbs;
+                    fallbackUsed = true;
+
+                    console.warn(
+                        "[build-windows] 本次输出到 " +
+                            outputDir +
+                            "，产物会拷回 " +
+                            releaseDir +
+                            "/；旧目录的占用者退出后，下次构建自动回收"
                     );
                 }
-
-                console.warn(
-                    "[build-windows] win-unpacked 清理失败（" +
-                        String(error.message).split("\n")[0] +
-                        "）"
-                );
-                console.warn(
-                    "[build-windows] 已改名归档为 " +
-                        staleName +
-                        "，本次构建继续；下次构建会再尝试删除"
-                );
             }
         }
+
+        const unpackedDir = path.join(outputAbs, "win-unpacked");
 
         const hasWinCodeSign = fs.existsSync(path.join(userWinCodeSignDir, "rcedit-x64.exe"));
         const hasNsis = fs.existsSync(path.join(userNsisDir, "makensis.exe"));
@@ -442,7 +544,7 @@ function main() {
 
         const baseArgs = [
             "--config.electronDist=" + ELECTRON_DIST_REL,
-            "--config.directories.output=" + releaseDir,
+            "--config.directories.output=" + outputDir,
         ];
 
         // 没有本地 winCodeSign 时跳过 rcedit，避免联网下载。
@@ -465,7 +567,12 @@ function main() {
         // 第一步：dir 构建（win-unpacked 免安装目录）必须成功
         runElectronBuilder(["--win", "dir"].concat(baseArgs), env);
 
-        runNodeScript(path.join("scripts", "postbuild-fix-exe.js"));
+        // postbuild-fix-exe 按 XML_AGENT_RELEASE_DIR 定位 win-unpacked，
+        // 兜底构建时必须把它指到实际输出目录，否则它去找 release/win-unpacked。
+        runNodeScript(
+            path.join("scripts", "postbuild-fix-exe.js"),
+            Object.assign({}, env, { XML_AGENT_RELEASE_DIR: outputDir })
+        );
 
         // 第二步：nsis / portable / zip，复用第一步打好的目录（--prepackaged）。
         //
@@ -493,10 +600,26 @@ function main() {
             console.warn(
                 "[build-windows] some targets failed. " +
                     "Portable build is available at " +
-                    path.join(releaseDir, "win-unpacked", "XMLAgent.exe")
+                    path.join(outputDir, "win-unpacked", "XMLAgent.exe")
             );
             // 出包失败时保留旧版本产物：那可能是当前唯一能用的安装包
             return;
+        }
+
+        // 兜底构建：产物落在兜底目录，拷回 release/ 才算真正出包。
+        if (fallbackUsed) {
+            const copied = copyArtifacts(outputAbs, releaseAbs);
+
+            if (!copied.length) {
+                throw new Error(
+                    "兜底构建成功但产物拷回 " + releaseDir + "/ 失败，请看 " + outputDir
+                );
+            }
+
+            console.log("[build-windows] 已从兜底目录拷回：" + copied.join(", "));
+            console.log(
+                "[build-windows] 解包目录仍留在 " + unpackedDir + "，占用释放后由下次构建回收"
+            );
         }
 
         // 第三步：清掉旧版本产物，release/ 只留当前版本
@@ -534,4 +657,6 @@ module.exports = {
     removeTreeOnce,
     pruneOldArtifacts,
     cleanupStaleDirs,
+    copyArtifacts,
+    makeFallbackOutput,
 };

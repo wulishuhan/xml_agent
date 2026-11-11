@@ -251,6 +251,16 @@ npm run electron:build
 
 产物位于 `release/` 目录。
 
+两个打包时才会遇到、但脚本已经接管的情况（不用人工处理）：
+
+- **`release/win-unpacked` 被占用**：删不掉也改不了名（典型是里面的 `app.asar` 被某个进程独占，
+  `rm` / `rd` / `ren` 全报 Access denied，只有重启才释放）。脚本会自动改到
+  `release/.fallback-build-<时间戳>/` 构建，成功后把安装包、blockmap 与 `latest.yml` 拷回
+  `release/`；解包目录留在兜底目录里，下一次构建自动回收。
+- **`rcedit` 写版本资源失败**（`Unable to commit changes`）：脚本按既有约定跳过，
+  解包后的 `XMLAgent.exe` 属性里会显示 Electron 的版本号，安装包自身仍是真实版本。
+  插件里需要强制跳过时设 `XML_AGENT_SKIP_RCEDIT=1`。
+
 ## 任务完成通知（Windows）
 
 桌面版在任务**正常完成**（status 为 `completed`）后发送系统通知，最小化或后台时也能收到反馈。
