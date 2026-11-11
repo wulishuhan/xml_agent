@@ -860,6 +860,53 @@ kbd {
     color: var(--c-danger);
 }
 
+/* 上下文预算提醒：warn 用警示色，critical 换成危险色 */
+
+.context-banner {
+    display: flex;
+    max-width: 940px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 0 auto 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--c-required-border);
+    border-radius: 7px;
+    background: var(--c-required-bg);
+    font-size: 11px;
+}
+
+.context-banner-critical {
+    border-color: var(--c-danger);
+}
+
+.context-banner-text {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.context-banner-text strong {
+    color: var(--c-warning-text);
+    font-size: 12px;
+}
+
+.context-banner-critical .context-banner-text strong {
+    color: var(--c-danger-text);
+}
+
+.context-banner-text span {
+    color: var(--c-text-muted);
+    line-height: 1.5;
+}
+
+.context-banner-actions {
+    display: flex;
+    flex-shrink: 0;
+    gap: 6px;
+}
+
 /* New-session welcome */
 
 .welcome {

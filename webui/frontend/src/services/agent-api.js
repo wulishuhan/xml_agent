@@ -94,6 +94,55 @@ export async function getSessionOutput(sessionId) {
     }
     return result;
 }
+// 上下文占用：会话在 provider 那边用掉了多少窗口。
+export async function getSessionContext(sessionId) {
+    const response = await fetch(api("/api/sessions/" + sessionId + "/context"));
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to read context usage");
+    }
+    return result;
+}
+/**
+记忆转移的实现挂在内置插件 memory-transfer 上（动作 + 接口 + 面板都在插件里）。
+Web 核心只提供"上下文快满了"的判断与横幅，转移动作本身属于插件能力 ——
+所以这里必然会出现一个插件路径常量，把它集中在这里，别散到各个组件。
+插件被禁用时接口是 404，要给出能看懂的提示，而不是把 404 文案丢给用户。
+*/
+const MEMORY_TRANSFER_API = "/api/plugins/memory-transfer/api/transfer";
+/**
+把记忆转移到新会话。
+to 省略时由后端生成新 id，返回值里的 result.to 就是新会话 id。
+注意插件接口出错时仍返回 200，错误在 body.ok=false + body.error 里。
+*/
+export async function transferMemory(from, options = {}) {
+    const body = {
+        from,
+        // 默认只带摘要：这个接口的典型用法是"上下文满了换个会话接着干"
+        mode: options.mode || "digest",
+    };
+    if (options.to) {
+        body.to = options.to;
+    }
+    if (options.compress) {
+        body.compress = options.compress;
+    }
+    const response = await fetch(api(MEMORY_TRANSFER_API), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    if (response.status === 404) {
+        const error = new Error("memory-transfer plugin is not enabled");
+        error.code = "PLUGIN_DISABLED";
+        throw error;
+    }
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to transfer memory");
+    }
+    return result;
+}
 export async function stopSession(sessionId) {
     const response = await fetch(api("/api/sessions/" + sessionId + "/stop"), {
         method: "POST",

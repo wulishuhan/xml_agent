@@ -124,6 +124,42 @@
                         <code>{{ electronPort }}</code>
                     </div>
                 </div>
+                <!-- 上下文快满：提示把记忆转到新会话 -->
+                <div
+                    v-if="showContextBanner"
+                    class="context-banner"
+                    :class="'context-banner-' + contextUsage.level"
+                >
+                    <div class="context-banner-text">
+                        <strong>{{ t("context.bannerTitle", { percent: contextPercent }) }}</strong>
+                        <span>
+                            {{
+                                t("context.bannerBody", {
+                                    used: formatTokens(contextUsage.used),
+                                    limit: formatTokens(contextUsage.limit),
+                                })
+                            }}
+                        </span>
+                    </div>
+                    <div class="context-banner-actions">
+                        <button
+                            type="button"
+                            class="btn btn-primary"
+                            :disabled="transferring"
+                            @click="transferToNewSession"
+                        >
+                            {{ contextActionLabel }}
+                        </button>
+                        <button
+                            type="button"
+                            class="btn"
+                            :disabled="transferring"
+                            @click="dismissContextBanner"
+                        >
+                            {{ t("context.later") }}
+                        </button>
+                    </div>
+                </div>
                 <div ref="splitArea" class="split-area" :class="{ resizing }">
                     <div class="console-region" :style="consoleStyle">
                         <AgentConsole
@@ -214,6 +250,7 @@
         loadProviders,
         runAgent as apiRunAgent,
         stopSession,
+        transferMemory,
     } from "./services/agent-api.js";
     import { applyTheme, persistTheme, resolveInitialTheme } from "./services/theme.js";
     import { t, toggleLang } from "./services/i18n.js";
@@ -255,6 +292,22 @@
     const showTrace = ref(false);
     const showPlugins = ref(false);
     const showSkills = ref(false);
+    // ---- 上下文预算提醒 ----
+    // 会话在 provider 那边用掉了多少窗口，来自 SSE 的 context 事件（服务端在跨阈值时推）
+    const contextUsage = ref(null);
+    // 用户点过「稍后」的会话 id：同一会话不再重复打扰，切换会话后重新生效
+    const contextDismissed = ref("");
+    const transferring = ref(false);
+    const contextPercent = computed(() => {
+        return contextUsage.value ? Math.round(contextUsage.value.ratio * 100) : 0;
+    });
+    const showContextBanner = computed(() => {
+        const usage = contextUsage.value;
+        if (!usage || !activeSessionId.value || usage.level === "normal") {
+            return false;
+        }
+        return contextDismissed.value !== activeSessionId.value;
+    });
     const SPLIT_STORAGE_KEY = "xml-agent:split-ratio";
     const MIN_RATIO = 0.2;
     const MAX_RATIO = 0.85;
@@ -369,6 +422,13 @@
         };
         return labels[sessionStatus.value] || sessionStatus.value;
     });
+    // 运行中要先停才能转移（transfer 拒绝运行中的会话），按钮文案要如实反映这一点
+    const contextActionLabel = computed(() => {
+        if (transferring.value) {
+            return t("context.transferring");
+        }
+        return running.value ? t("context.transferStop") : t("context.transfer");
+    });
     async function refreshStorage() {
         try {
             storage.value = await getStorage();
@@ -401,6 +461,59 @@
             errorMessage.value = error.message;
         }
     }
+    /**
+    上下文快满时的一键转移。
+    源会话还在跑就先停：transfer 会拒绝运行中的会话，而「快满了」的时候
+    往往正是它还在跑。停完再转，用户只需要点一次。
+    */
+    async function transferToNewSession() {
+        const sessionId = activeSessionId.value;
+        if (!sessionId || transferring.value) {
+            return;
+        }
+        transferring.value = true;
+        errorMessage.value = "";
+        try {
+            if (activeSession.value && activeSession.value.running === true) {
+                await stopSession(sessionId);
+            }
+            // mode=digest：只把 task 和一页摘要带过去，不搬旧的几千条记录。
+            // 这个场景下旧记录本来就是把上下文塞满的元凶，搬过去毫无意义；
+            // 模型需要的是"做过什么、改过哪些文件、还差什么"，也就是摘要本身。
+            const payload = await transferMemory(sessionId, { mode: "digest" });
+            if (!payload || payload.ok === false) {
+                throw new Error((payload && payload.error) || t("context.transferFailed"));
+            }
+            const targetId = payload.result && payload.result.to;
+            await loadWorkspaces();
+            if (targetId) {
+                // 目标会话是全新的空壳，不会自动开始运行：用户在那里点运行即可
+                await selectSession(targetId);
+            }
+        } catch (error) {
+            // 转移的实现放在 memory-transfer 插件里，插件被禁用时给一句人话
+            errorMessage.value =
+                error && error.code === "PLUGIN_DISABLED"
+                    ? t("context.pluginDisabled")
+                    : (error && error.message) || t("context.transferFailed");
+        } finally {
+            transferring.value = false;
+        }
+    }
+    function dismissContextBanner() {
+        contextDismissed.value = activeSessionId.value || "";
+    }
+    /** token 数按 K/M 缩写：横幅里不该出现七位数字。 */
+    function formatTokens(value) {
+        const number = Number(value) || 0;
+        if (number >= 1000000) {
+            return (number / 1000000).toFixed(1) + "M";
+        }
+        if (number >= 1000) {
+            return Math.round(number / 1000) + "K";
+        }
+        return String(number);
+    }
     async function selectSession(sessionId) {
         if (!sessionId) {
             return;
@@ -409,6 +522,9 @@
         errorMessage.value = "";
         // 切换会话时清空待发送图片，避免把上一个会话的图片带到新任务里。
         images.value = [];
+        // 上下文占用与「稍后」都是按会话计的，跟着切换一起重置
+        contextUsage.value = null;
+        contextDismissed.value = "";
         closeEventSource();
         try {
             const [sessionResult, outputResult] = await Promise.all([
@@ -471,6 +587,16 @@
                         });
                     }
                     conversationId.value = info.conversationId;
+                }
+            } catch (error) {
+                errorMessage.value = error.message;
+            }
+        });
+        source.addEventListener("context", (event) => {
+            try {
+                const usage = JSON.parse(event.data);
+                if (usage && typeof usage.ratio === "number") {
+                    contextUsage.value = usage;
                 }
             } catch (error) {
                 errorMessage.value = error.message;

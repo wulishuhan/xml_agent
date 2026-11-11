@@ -50,6 +50,17 @@ const DICT = {
         "app.conversation": "对话",
         "app.port": "端口",
         "app.agentError": "执行出错",
+        // ---------- 上下文预算提醒 ----------
+        "context.bannerTitle": "上下文已用 {percent}%",
+        "context.bannerBody":
+            "约 {used} / {limit} token。再往后平台会开始丢掉早期内容。转到新会话只带一页工作摘要，旧记录留在本会话。",
+        "context.transfer": "转移并新开",
+        "context.transferStop": "停止并转移",
+        "context.transferring": "转移中…",
+        "context.later": "稍后",
+        "context.transferFailed": "记忆转移失败",
+        "context.pluginDisabled":
+            "记忆转移插件未启用：到 Plugins 面板启用 memory-transfer 后可用。",
         "app.newSession": "新建会话",
         "app.newAgentSession": "新建 Agent 会话",
         "app.selectWorkspaceHint": "请先在左侧选择一个工作区",
@@ -241,6 +252,17 @@ const DICT = {
         "app.conversation": "Conversation",
         "app.port": "Port",
         "app.agentError": "Agent error",
+        // ---------- context budget ----------
+        "context.bannerTitle": "Context {percent}% full",
+        "context.bannerBody":
+            "~{used} / {limit} tokens. Past this point the platform starts dropping earlier turns. Transferring brings a one-page work summary; the old records stay in this session.",
+        "context.transfer": "Transfer to new session",
+        "context.transferStop": "Stop and transfer",
+        "context.transferring": "Transferring…",
+        "context.later": "Later",
+        "context.transferFailed": "Memory transfer failed",
+        "context.pluginDisabled":
+            "The memory-transfer plugin is not enabled. Turn it on in the Plugins panel.",
         "app.newSession": "New Session",
         "app.newAgentSession": "New Agent Session",
         "app.selectWorkspaceHint": "Please select a workspace to begin",
