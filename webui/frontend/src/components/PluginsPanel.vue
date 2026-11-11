@@ -15,6 +15,9 @@
                     </div>
                 </div>
                 <div class="plugins-header-actions">
+                    <button type="button" class="btn btn-quiet" @click="toggleAll">
+                        {{ allOpen ? "Collapse all" : "Expand all" }}
+                    </button>
                     <button type="button" class="btn" :disabled="busy" @click="reload">
                         {{ busy ? "Working..." : "Reload" }}
                     </button>
@@ -61,66 +64,79 @@
                     <!-- 插件声明的面板：宿主渲染，插件不下发任何可执行代码 -->
                     <PluginPanels />
                     <!-- 密钥：只显示键名与长度，写入后不可回读 -->
-                    <section class="plugin-card secrets-card">
+                    <section
+                        class="plugin-card secrets-card"
+                        :class="{ 'is-open': isOpen(SECRETS_KEY) }"
+                    >
                         <header class="plugin-card-header">
-                            <div class="plugin-title">
-                                <code class="plugin-name">secrets</code>
-                                <span class="plugin-badge">{{ secrets.length }} key(s)</span>
-                                <span class="plugin-badge">host</span>
-                            </div>
+                            <button
+                                type="button"
+                                class="plugin-card-toggle"
+                                :aria-expanded="isOpen(SECRETS_KEY) ? 'true' : 'false'"
+                                @click="toggleCard(SECRETS_KEY)"
+                            >
+                                <span class="plugin-chevron" aria-hidden="true"></span>
+                                <span class="plugin-title">
+                                    <code class="plugin-name">secrets</code>
+                                    <span class="plugin-badge">{{ secrets.length }} key(s)</span>
+                                    <span class="plugin-badge">host</span>
+                                </span>
+                            </button>
                         </header>
-                        <p class="plugin-description">
-                            Stored in ~/.xml-agent/secrets.json. Values are write-only here —
-                            plugins read them through ctx.secrets when they declare the secrets:read
-                            permission.
-                        </p>
-                        <div class="plugin-row plugin-config-row">
-                            <span class="plugin-row-label">Keys</span>
-                            <div class="plugin-fields">
-                                <div
-                                    v-for="secret in secrets"
-                                    :key="secret.key"
-                                    class="plugin-field secret-row"
-                                >
-                                    <code class="secret-key">{{ secret.key }}</code>
-                                    <span class="secret-meta">{{ secret.length }} chars</span>
+                        <div v-show="isOpen(SECRETS_KEY)" class="plugin-card-body">
+                            <p class="plugin-description">
+                                Stored in ~/.xml-agent/secrets.json. Values are write-only here —
+                                plugins read them through ctx.secrets when they declare the
+                                secrets:read permission.
+                            </p>
+                            <div class="plugin-row plugin-config-row">
+                                <span class="plugin-row-label">Keys</span>
+                                <div class="plugin-fields">
+                                    <div
+                                        v-for="secret in secrets"
+                                        :key="secret.key"
+                                        class="plugin-field secret-row"
+                                    >
+                                        <code class="secret-key">{{ secret.key }}</code>
+                                        <span class="secret-meta">{{ secret.length }} chars</span>
+                                        <button
+                                            type="button"
+                                            class="btn secret-delete"
+                                            :disabled="busy"
+                                            @click="removeSecret(secret.key)"
+                                        >
+                                            Delete
+                                        </button>
+                                    </div>
+                                    <p v-if="!secrets.length" class="plugin-row-none">
+                                        No secrets stored
+                                    </p>
+                                    <label class="plugin-field">
+                                        <span class="plugin-field-label">Add / replace</span>
+                                        <input
+                                            v-model="newSecretKey"
+                                            type="text"
+                                            placeholder="API_KEY"
+                                            spellcheck="false"
+                                            :disabled="busy"
+                                        />
+                                        <input
+                                            v-model="newSecretValue"
+                                            type="password"
+                                            placeholder="value"
+                                            :disabled="busy"
+                                            @keyup.enter="addSecret"
+                                        />
+                                    </label>
                                     <button
                                         type="button"
-                                        class="btn secret-delete"
-                                        :disabled="busy"
-                                        @click="removeSecret(secret.key)"
+                                        class="btn"
+                                        :disabled="busy || !newSecretKey.trim() || !newSecretValue"
+                                        @click="addSecret"
                                     >
-                                        Delete
+                                        Save secret
                                     </button>
                                 </div>
-                                <p v-if="!secrets.length" class="plugin-row-none">
-                                    No secrets stored
-                                </p>
-                                <label class="plugin-field">
-                                    <span class="plugin-field-label">Add / replace</span>
-                                    <input
-                                        v-model="newSecretKey"
-                                        type="text"
-                                        placeholder="API_KEY"
-                                        spellcheck="false"
-                                        :disabled="busy"
-                                    />
-                                    <input
-                                        v-model="newSecretValue"
-                                        type="password"
-                                        placeholder="value"
-                                        :disabled="busy"
-                                        @keyup.enter="addSecret"
-                                    />
-                                </label>
-                                <button
-                                    type="button"
-                                    class="btn"
-                                    :disabled="busy || !newSecretKey.trim() || !newSecretValue"
-                                    @click="addSecret"
-                                >
-                                    Save secret
-                                </button>
                             </div>
                         </div>
                     </section>
@@ -131,20 +147,33 @@
                         :class="{
                             'is-error': plugin.status === 'error',
                             'is-off': !plugin.enabled,
+                            'is-open': isOpen(plugin.name),
                         }"
                     >
                         <header class="plugin-card-header">
-                            <div class="plugin-title">
-                                <code class="plugin-name">{{ plugin.name }}</code>
-                                <span class="plugin-badge">v{{ plugin.version }}</span>
-                                <span class="plugin-badge">{{ plugin.kind }}</span>
-                                <span class="plugin-badge" :class="'source-' + plugin.source">
-                                    {{ plugin.source }}
+                            <button
+                                type="button"
+                                class="plugin-card-toggle"
+                                :aria-expanded="isOpen(plugin.name) ? 'true' : 'false'"
+                                @click="toggleCard(plugin.name)"
+                            >
+                                <span class="plugin-chevron" aria-hidden="true"></span>
+                                <span class="plugin-title">
+                                    <code class="plugin-name">{{ plugin.name }}</code>
+                                    <span class="plugin-badge">v{{ plugin.version }}</span>
+                                    <span class="plugin-badge">{{ plugin.kind }}</span>
+                                    <span class="plugin-badge" :class="'source-' + plugin.source">
+                                        {{ plugin.source }}
+                                    </span>
+                                    <span class="plugin-badge" :class="'state-' + plugin.status">
+                                        {{ plugin.status }}
+                                    </span>
+                                    <!-- 收起时用一行摘要替代展开后的明细 -->
+                                    <span v-if="!isOpen(plugin.name)" class="plugin-meta">
+                                        {{ metaOf(plugin) }}
+                                    </span>
                                 </span>
-                                <span class="plugin-badge" :class="'state-' + plugin.status">
-                                    {{ plugin.status }}
-                                </span>
-                            </div>
+                            </button>
                             <label class="plugin-toggle">
                                 <input
                                     type="checkbox"
@@ -155,96 +184,98 @@
                                 <span>{{ plugin.enabled ? "Enabled" : "Disabled" }}</span>
                             </label>
                         </header>
-                        <p v-if="plugin.description" class="plugin-description">
-                            {{ plugin.description }}
-                        </p>
                         <p v-if="plugin.error" class="plugin-card-error">{{ plugin.error }}</p>
-                        <div v-if="plugin.actions.length" class="plugin-row">
-                            <span class="plugin-row-label">Actions</span>
-                            <div class="plugin-chips">
-                                <code
-                                    v-for="name in plugin.actions"
-                                    :key="name"
-                                    class="plugin-chip"
-                                >
-                                    &lt;{{ name }}/&gt;
-                                </code>
-                            </div>
-                        </div>
-                        <div v-if="plugin.effectivePermissions.length" class="plugin-row">
-                            <span class="plugin-row-label">Permissions</span>
-                            <div class="plugin-permissions">
-                                <div
-                                    v-for="permission in plugin.effectivePermissions"
-                                    :key="permission.scope"
-                                    class="plugin-permission"
-                                >
-                                    <code>{{ permission.scope }}</code>
-                                    <select
-                                        :value="permission.policy"
-                                        :disabled="busy"
-                                        :aria-label="'Policy for ' + permission.scope"
-                                        @change="changePolicy(permission.scope, $event)"
+                        <div v-show="isOpen(plugin.name)" class="plugin-card-body">
+                            <p v-if="plugin.description" class="plugin-description">
+                                {{ plugin.description }}
+                            </p>
+                            <div v-if="plugin.actions.length" class="plugin-row">
+                                <span class="plugin-row-label">Actions</span>
+                                <div class="plugin-chips">
+                                    <code
+                                        v-for="name in plugin.actions"
+                                        :key="name"
+                                        class="plugin-chip"
                                     >
-                                        <option value="allow">allow</option>
-                                        <option value="ask">ask</option>
-                                        <option value="deny">deny</option>
-                                    </select>
+                                        &lt;{{ name }}/&gt;
+                                    </code>
                                 </div>
                             </div>
-                        </div>
-                        <div v-else class="plugin-row">
-                            <span class="plugin-row-label">Permissions</span>
-                            <span class="plugin-row-none">None requested</span>
-                        </div>
-                        <div v-if="hasConfig(plugin)" class="plugin-row plugin-config-row">
-                            <span class="plugin-row-label">Configuration</span>
-                            <div class="plugin-fields">
-                                <label
-                                    v-for="field in configFields(plugin)"
-                                    :key="field.key"
-                                    class="plugin-field"
-                                >
-                                    <span class="plugin-field-label">{{ field.key }}</span>
-                                    <input
-                                        v-if="field.type === 'boolean'"
-                                        v-model="drafts[plugin.name][field.key]"
-                                        type="checkbox"
+                            <div v-if="plugin.effectivePermissions.length" class="plugin-row">
+                                <span class="plugin-row-label">Permissions</span>
+                                <div class="plugin-permissions">
+                                    <div
+                                        v-for="permission in plugin.effectivePermissions"
+                                        :key="permission.scope"
+                                        class="plugin-permission"
+                                    >
+                                        <code>{{ permission.scope }}</code>
+                                        <select
+                                            :value="permission.policy"
+                                            :disabled="busy"
+                                            :aria-label="'Policy for ' + permission.scope"
+                                            @change="changePolicy(permission.scope, $event)"
+                                        >
+                                            <option value="allow">allow</option>
+                                            <option value="ask">ask</option>
+                                            <option value="deny">deny</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="plugin-row">
+                                <span class="plugin-row-label">Permissions</span>
+                                <span class="plugin-row-none">None requested</span>
+                            </div>
+                            <div v-if="hasConfig(plugin)" class="plugin-row plugin-config-row">
+                                <span class="plugin-row-label">Configuration</span>
+                                <div class="plugin-fields">
+                                    <label
+                                        v-for="field in configFields(plugin)"
+                                        :key="field.key"
+                                        class="plugin-field"
+                                    >
+                                        <span class="plugin-field-label">{{ field.key }}</span>
+                                        <input
+                                            v-if="field.type === 'boolean'"
+                                            v-model="drafts[plugin.name][field.key]"
+                                            type="checkbox"
+                                            :disabled="busy"
+                                        />
+                                        <input
+                                            v-else-if="
+                                                field.type === 'integer' || field.type === 'number'
+                                            "
+                                            v-model="drafts[plugin.name][field.key]"
+                                            type="number"
+                                            :disabled="busy"
+                                        />
+                                        <textarea
+                                            v-else-if="field.type === 'array'"
+                                            v-model="drafts[plugin.name][field.key]"
+                                            rows="2"
+                                            spellcheck="false"
+                                            :disabled="busy"
+                                        ></textarea>
+                                        <input
+                                            v-else
+                                            v-model="drafts[plugin.name][field.key]"
+                                            type="text"
+                                            :disabled="busy"
+                                        />
+                                        <span v-if="field.description" class="plugin-field-hint">
+                                            {{ field.description }}
+                                        </span>
+                                    </label>
+                                    <button
+                                        type="button"
+                                        class="btn"
                                         :disabled="busy"
-                                    />
-                                    <input
-                                        v-else-if="
-                                            field.type === 'integer' || field.type === 'number'
-                                        "
-                                        v-model="drafts[plugin.name][field.key]"
-                                        type="number"
-                                        :disabled="busy"
-                                    />
-                                    <textarea
-                                        v-else-if="field.type === 'array'"
-                                        v-model="drafts[plugin.name][field.key]"
-                                        rows="2"
-                                        spellcheck="false"
-                                        :disabled="busy"
-                                    ></textarea>
-                                    <input
-                                        v-else
-                                        v-model="drafts[plugin.name][field.key]"
-                                        type="text"
-                                        :disabled="busy"
-                                    />
-                                    <span v-if="field.description" class="plugin-field-hint">
-                                        {{ field.description }}
-                                    </span>
-                                </label>
-                                <button
-                                    type="button"
-                                    class="btn"
-                                    :disabled="busy"
-                                    @click="saveConfig(plugin)"
-                                >
-                                    Save configuration
-                                </button>
+                                        @click="saveConfig(plugin)"
+                                    >
+                                        Save configuration
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </article>
@@ -262,6 +293,7 @@
 <script setup>
     import { computed, onMounted, reactive, ref } from "vue";
     import PluginPanels from "./PluginPanels.vue";
+    import { useCollapse } from "../services/collapse-state.js";
     import {
         deleteSecret,
         getPlugins,
@@ -275,6 +307,10 @@
 
     defineEmits(["close"]);
 
+    // 折叠状态：按卡片名存，secrets 卡片用保留键
+    const SECRETS_KEY = "__secrets__";
+    const COLLAPSE_STORAGE_KEY = "xml-agent.plugins.collapsed";
+
     const plugins = ref([]);
     const enabled = ref(true);
     const loadErrors = ref([]);
@@ -287,8 +323,35 @@
     const errorMessage = ref("");
     // 每个插件的配置草稿：值统一存成"输入框友好"的字符串/布尔
     const drafts = reactive({});
+    // 卡片默认收起（插件通常有四五个，全展开要滑好几屏），展开过的记进 localStorage
+    const {
+        isOpen,
+        toggle: toggleCard,
+        toggleAll,
+        allOpen,
+        restore: restoreCollapsed,
+    } = useCollapse(COLLAPSE_STORAGE_KEY, () =>
+        [SECRETS_KEY].concat(plugins.value.map((plugin) => plugin.name))
+    );
 
     let noticeTimer = null;
+
+    // 收起时显示的一行摘要，免得为了看一眼有几个动作就得展开
+    function metaOf(plugin) {
+        const parts = [];
+        const actions = plugin.actions ? plugin.actions.length : 0;
+        if (actions) {
+            parts.push(actions + " action(s)");
+        }
+        const permissions = plugin.effectivePermissions ? plugin.effectivePermissions.length : 0;
+        if (permissions) {
+            parts.push(permissions + " permission(s)");
+        }
+        if (hasConfig(plugin)) {
+            parts.push("config");
+        }
+        return parts.join(" · ");
+    }
 
     const summary = computed(() => {
         if (!enabled.value) {
@@ -464,7 +527,10 @@
         );
     }
 
-    onMounted(() => load());
+    onMounted(() => {
+        restoreCollapsed();
+        load();
+    });
 </script>
 
 <style scoped>
@@ -617,6 +683,48 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
+    }
+    /* 头部整块是折叠按钮：点名字/徽标都能展开收起，右侧开关单独可点 */
+    .plugin-card-toggle {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        align-items: center;
+        gap: 8px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+    .plugin-card-toggle:focus-visible {
+        outline: 2px solid var(--c-accent-blue);
+        outline-offset: 3px;
+        border-radius: 5px;
+    }
+    /* 字体里的 ▸ 在这个字族下只有 2px，改用 border 画实心三角，大小与颜色都可控 */
+    .plugin-chevron {
+        flex: 0 0 auto;
+        width: 0;
+        height: 0;
+        border-top: 4px solid transparent;
+        border-bottom: 4px solid transparent;
+        border-left: 5px solid var(--c-text-muted);
+        transition: transform 120ms ease;
+    }
+    .plugin-card.is-open .plugin-chevron {
+        transform: rotate(90deg);
+    }
+    .plugin-meta {
+        color: var(--c-text-dim);
+        font-size: 10px;
+        white-space: nowrap;
+    }
+    .plugin-card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
     }
     .plugin-title {
         display: flex;

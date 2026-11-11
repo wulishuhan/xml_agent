@@ -823,6 +823,20 @@ kbd {
     opacity: 0.4;
 }
 
+/* 次要操作（"全部展开"这类）：不描边，别跟主按钮抢注意力 */
+.btn-quiet {
+    padding: 5px 8px;
+    border-color: transparent;
+    background: none;
+    color: var(--c-text-muted);
+}
+
+.btn-quiet:hover:not(:disabled) {
+    border-color: transparent;
+    background: var(--c-btn-hover);
+    color: var(--c-text-body);
+}
+
 .btn-primary {
     border-color: #3265a0;
     background: #1d4f86;

@@ -42,24 +42,26 @@ const EXTRA = {
     "test/check-migration-equivalence.js": "一次性迁移核对脚本，迁移完成后已失效",
 };
 
-/** npm script 里出现的 `node <path>` 路径。 */
+/** npm script 里出现的 `node [--flag ...] <path>` 路径（.js 与 .mjs）。 */
 function scriptedPaths() {
     const found = new Set();
     for (const script of Object.values(pkg.scripts)) {
-        for (const match of String(script).matchAll(/node\s+([\w./-]+\.js)/g)) {
+        // 注意要允许 `node --no-warnings xxx.mjs` 这种带参数的写法，
+        // 否则 ESM 测试会被当成"没挂进脚本"。
+        for (const match of String(script).matchAll(/node\s+(?:--[\w-]+\s+)*([\w./-]+\.m?js)/g)) {
             found.add(match[1].replace(/\\/g, "/"));
         }
     }
     return found;
 }
 
-/** test/ 与 test/unit/ 下的所有 .js（不递归更深，避免把 fixtures 算进来）。 */
+/** test/ 与 test/unit/ 下的所有 .js / .mjs（不递归更深，避免把 fixtures 算进来）。 */
 function testFiles() {
     const files = [];
     for (const dir of ["test", "test/unit"]) {
         const abs = path.join(ROOT, dir);
         for (const name of fs.readdirSync(abs)) {
-            if (name.endsWith(".js")) {
+            if (name.endsWith(".js") || name.endsWith(".mjs")) {
                 files.push(dir + "/" + name);
             }
         }
@@ -118,7 +120,9 @@ check("test:offline 覆盖离线四组（unit / core / plugins / api / desktop�
 
 check("test:offline 不含 live 脚本", () => {
     const live = String(pkg.scripts["test:live"] || "");
-    const liveFiles = [...live.matchAll(/node\s+([\w./-]+\.js)/g)].map((m) => m[1]);
+    const liveFiles = [...live.matchAll(/node\s+(?:--[\w-]+\s+)*([\w./-]+\.m?js)/g)].map(
+        (m) => m[1]
+    );
     assert.ok(liveFiles.length > 0, "test:live 不应为空");
     const offline = ["unit", "core", "plugins", "api", "desktop"]
         .map((g) => String(pkg.scripts["test:" + g] || ""))

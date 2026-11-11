@@ -5,92 +5,119 @@
                 <strong>Plugin panels</strong>
                 <span>{{ panels.length }} panel(s) contributed by plugins</span>
             </div>
-            <button type="button" class="btn" :disabled="busy" @click="refreshAll">
-                {{ busy ? "Loading..." : "Refresh" }}
-            </button>
+            <div class="panels-actions">
+                <button type="button" class="btn btn-quiet" @click="toggleAllPanels">
+                    {{ allPanelsOpen ? "Collapse all" : "Expand all" }}
+                </button>
+                <button type="button" class="btn" :disabled="busy" @click="refreshAll">
+                    {{ busy ? "Loading..." : "Refresh" }}
+                </button>
+            </div>
         </header>
-        <article v-for="panel in panels" :key="panel.plugin + ':' + panel.id" class="panel-card">
+        <article
+            v-for="panel in panels"
+            :key="panelKey(panel)"
+            class="panel-card"
+            :class="{ 'is-open': isPanelOpen(panelKey(panel)) }"
+        >
             <header class="panel-card-header">
-                <strong>{{ panel.title }}</strong>
-                <span class="panel-plugin">{{ panel.plugin }}</span>
+                <button
+                    type="button"
+                    class="panel-card-toggle"
+                    :aria-expanded="isPanelOpen(panelKey(panel)) ? 'true' : 'false'"
+                    @click="togglePanel(panelKey(panel))"
+                >
+                    <span class="panel-chevron" aria-hidden="true"></span>
+                    <strong>{{ panel.title }}</strong>
+                    <span class="panel-plugin">{{ panel.plugin }}</span>
+                    <!-- 收起时给一行摘要，免得为了看一眼有啥内容就得展开 -->
+                    <span v-if="!isPanelOpen(panelKey(panel))" class="panel-meta">
+                        {{ panelMeta(panel) }}
+                    </span>
+                </button>
             </header>
-            <p v-if="panel.description" class="panel-description">{{ panel.description }}</p>
-            <div v-for="(block, index) in panel.blocks" :key="index" class="panel-block">
-                <p v-if="block.kind === 'note'" class="panel-note">{{ block.text }}</p>
+            <div v-show="isPanelOpen(panelKey(panel))" class="panel-card-body">
+                <p v-if="panel.description" class="panel-description">{{ panel.description }}</p>
+                <div v-for="(block, index) in panel.blocks" :key="index" class="panel-block">
+                    <p v-if="block.kind === 'note'" class="panel-note">{{ block.text }}</p>
 
-                <template v-else-if="block.kind === 'status'">
-                    <div v-if="block.title" class="panel-block-title">{{ block.title }}</div>
-                    <div v-if="blockState(panel, block).error" class="panel-error">
-                        {{ blockState(panel, block).error }}
-                    </div>
-                    <div v-else class="panel-status">
-                        <div
-                            v-for="item in block.items"
-                            :key="item.label"
-                            class="panel-status-item"
-                        >
-                            <span class="panel-status-label">{{ item.label }}</span>
-                            <span class="panel-status-value">
-                                {{
-                                    formatValue(
-                                        readPath(blockState(panel, block).value, item.value)
-                                    )
-                                }}
+                    <template v-else-if="block.kind === 'status'">
+                        <div v-if="block.title" class="panel-block-title">{{ block.title }}</div>
+                        <div v-if="blockState(panel, block).error" class="panel-error">
+                            {{ blockState(panel, block).error }}
+                        </div>
+                        <div v-else class="panel-status">
+                            <div
+                                v-for="item in block.items"
+                                :key="item.label"
+                                class="panel-status-item"
+                            >
+                                <span class="panel-status-label">{{ item.label }}</span>
+                                <span class="panel-status-value">
+                                    {{
+                                        formatValue(
+                                            readPath(blockState(panel, block).value, item.value)
+                                        )
+                                    }}
+                                </span>
+                            </div>
+                        </div>
+                    </template>
+
+                    <template v-else-if="block.kind === 'table'">
+                        <div v-if="block.title" class="panel-block-title">{{ block.title }}</div>
+                        <div v-if="blockState(panel, block).error" class="panel-error">
+                            {{ blockState(panel, block).error }}
+                        </div>
+                        <template v-else>
+                            <!-- 表格限高内部滚动：审计日志这类面板一次二十行，铺开会把整屏占满 -->
+                            <div v-if="tableRows(panel, block).length" class="panel-table-scroll">
+                                <table class="panel-table">
+                                    <thead>
+                                        <tr>
+                                            <th v-for="column in block.columns" :key="column.key">
+                                                {{ column.label }}
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr
+                                            v-for="(row, rowIndex) in tableRows(panel, block)"
+                                            :key="rowIndex"
+                                        >
+                                            <td v-for="column in block.columns" :key="column.key">
+                                                {{ formatValue(readPath(row, column.key)) }}
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <p v-else class="panel-empty">{{ block.empty }}</p>
+                        </template>
+                    </template>
+
+                    <template v-else-if="block.kind === 'action'">
+                        <div class="panel-action">
+                            <button
+                                type="button"
+                                class="btn"
+                                :disabled="actionState(panel, block).loading"
+                                @click="runAction(panel, block)"
+                            >
+                                {{ actionState(panel, block).loading ? "Running..." : block.label }}
+                            </button>
+                            <span v-if="block.description" class="panel-action-hint">
+                                {{ block.description }}
                             </span>
                         </div>
-                    </div>
-                </template>
-
-                <template v-else-if="block.kind === 'table'">
-                    <div v-if="block.title" class="panel-block-title">{{ block.title }}</div>
-                    <div v-if="blockState(panel, block).error" class="panel-error">
-                        {{ blockState(panel, block).error }}
-                    </div>
-                    <template v-else>
-                        <table v-if="tableRows(panel, block).length" class="panel-table">
-                            <thead>
-                                <tr>
-                                    <th v-for="column in block.columns" :key="column.key">
-                                        {{ column.label }}
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <tr
-                                    v-for="(row, rowIndex) in tableRows(panel, block)"
-                                    :key="rowIndex"
-                                >
-                                    <td v-for="column in block.columns" :key="column.key">
-                                        {{ formatValue(readPath(row, column.key)) }}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        <p v-else class="panel-empty">{{ block.empty }}</p>
+                        <div v-if="actionState(panel, block).error" class="panel-error">
+                            {{ actionState(panel, block).error }}
+                        </div>
+                        <pre v-if="actionState(panel, block).value" class="panel-result">{{
+                            actionState(panel, block).value
+                        }}</pre>
                     </template>
-                </template>
-
-                <template v-else-if="block.kind === 'action'">
-                    <div class="panel-action">
-                        <button
-                            type="button"
-                            class="btn"
-                            :disabled="actionState(panel, block).loading"
-                            @click="runAction(panel, block)"
-                        >
-                            {{ actionState(panel, block).loading ? "Running..." : block.label }}
-                        </button>
-                        <span v-if="block.description" class="panel-action-hint">
-                            {{ block.description }}
-                        </span>
-                    </div>
-                    <div v-if="actionState(panel, block).error" class="panel-error">
-                        {{ actionState(panel, block).error }}
-                    </div>
-                    <pre v-if="actionState(panel, block).value" class="panel-result">{{
-                        actionState(panel, block).value
-                    }}</pre>
-                </template>
+                </div>
             </div>
         </article>
         <p class="panels-hint">
@@ -103,6 +130,7 @@
 <script setup>
     import { onMounted, reactive, ref } from "vue";
     import { callPluginApi, getPluginUi } from "../services/agent-api.js";
+    import { useCollapse } from "../services/collapse-state.js";
 
     const panels = ref([]);
     const uiErrors = ref([]);
@@ -110,6 +138,24 @@
     // `${plugin}${path}` → { loading, error, value }
     const blockStates = reactive({});
     const actionStates = reactive({});
+
+    function panelKey(panel) {
+        return panel.plugin + ":" + panel.id;
+    }
+
+    // 面板默认收起：审计日志那种面板一展开就是几十行，会把下面的插件卡片全顶出屏幕
+    const {
+        isOpen: isPanelOpen,
+        toggle: togglePanel,
+        toggleAll: toggleAllPanels,
+        allOpen: allPanelsOpen,
+        restore: restorePanels,
+    } = useCollapse("xml-agent.plugin-panels.collapsed", () => panels.value.map(panelKey));
+
+    function panelMeta(panel) {
+        const blocks = Array.isArray(panel.blocks) ? panel.blocks.length : 0;
+        return blocks + " block(s)";
+    }
 
     function stateKey(panel, block) {
         return panel.plugin + "|" + block.path;
@@ -221,7 +267,10 @@
         }
     }
 
-    onMounted(refreshAll);
+    onMounted(() => {
+        restorePanels();
+        refreshAll();
+    });
 </script>
 
 <style scoped>
@@ -237,6 +286,11 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
+    }
+    .panels-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
     }
     .panels-heading strong {
         display: block;
@@ -262,6 +316,48 @@
     .panel-card-header {
         display: flex;
         align-items: center;
+        gap: 8px;
+    }
+    /* 头部整块是折叠按钮：点标题或插件名都能展开收起 */
+    .panel-card-toggle {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        align-items: center;
+        gap: 8px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+    }
+    .panel-card-toggle:focus-visible {
+        outline: 2px solid var(--c-accent-blue);
+        outline-offset: 3px;
+        border-radius: 5px;
+    }
+    /* 字体里的 ▸ 在这个字族下只有 2px，改用 border 画实心三角 */
+    .panel-chevron {
+        flex: 0 0 auto;
+        width: 0;
+        height: 0;
+        border-top: 3.5px solid transparent;
+        border-bottom: 3.5px solid transparent;
+        border-left: 4.5px solid var(--c-text-muted);
+        transition: transform 120ms ease;
+    }
+    .panel-card.is-open .panel-chevron {
+        transform: rotate(90deg);
+    }
+    .panel-meta {
+        color: var(--c-text-dim);
+        font-size: 10px;
+        white-space: nowrap;
+    }
+    .panel-card-body {
+        display: flex;
+        flex-direction: column;
         gap: 8px;
     }
     .panel-card-header strong {
@@ -324,6 +420,18 @@
         width: 100%;
         border-collapse: collapse;
         font-size: 11px;
+    }
+    /* 表头固定在滚动区顶部，行多的时候不丢列名 */
+    .panel-table-scroll {
+        max-height: 240px;
+        overflow: auto;
+        border: 1px solid var(--c-border-soft);
+        border-radius: 8px;
+    }
+    .panel-table-scroll thead th {
+        position: sticky;
+        top: 0;
+        background: var(--c-panel-bg);
     }
     .panel-table th {
         padding: 4px 8px;

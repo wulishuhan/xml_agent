@@ -790,6 +790,12 @@ Web 版与桌面版顶部都有 **Plugins** 按钮（History / Trace 旁边）�
 - Reload 重新扫描插件目录（改完插件代码不用重启服务，被 `require` 的子模块也会重新加载）；
 - 查看插件声明的面板（`Plugin panels` 区块）：插件用纯 JSON 声明 `note` / `status` / `table` / `action` 四种 block，宿主前端渲染并调用插件自己的只读接口（`/api/plugins/<name>/api/*`）——插件不向浏览器下发任何 JS。
 
+> 卡片默认是收起的（插件有四五个、审计日志那种面板一展开就是几十行，全展开会把后面的内容顶出屏幕）。
+> 点卡片头部展开，收起时头部右侧会显示 `3 action(s) · 2 permission(s) · config` 这样的一行摘要；
+> 两块区域各自有「Expand all / Collapse all」，状态按卡片记在 `localStorage`
+> （`xml-agent.plugins.collapsed` / `xml-agent.plugin-panels.collapsed`），刷新后保持。
+> 折叠逻辑在 `webui/frontend/src/services/collapse-state.js`，测试 `test/unit/test-collapse-state.mjs`。
+
 > 前端面板只是调用下面的接口，没有额外权限；REST 接口仍然可以单独使用（例如 CI 或脚本）。
 
 ## 管理接口
