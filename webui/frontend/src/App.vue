@@ -595,6 +595,7 @@
         if (!sessionId) {
             return;
         }
+        const previousId = activeSessionId.value;
         activeSessionId.value = sessionId;
         errorMessage.value = "";
         // 切换会话时清空待发送图片，避免把上一个会话的图片带到新任务里。
@@ -613,18 +614,29 @@
             output.value = outputResult.output || [];
             workspace.value = sessionResult.workspace || "";
             provider.value = sessionResult.provider || provider.value;
-            // 只有当这是一个尚未运行过的会话（没有 conversationId、没有输出）时，
-            // 才把历史任务回填到输入框；已运行过的会话保持输入框为空，
+            // 只有尚未运行过的会话才把 task 回填到输入框；已运行过的会话保持为空，
             // 避免用户看到上一次已经执行过的任务还以为没有提交。
+            // 例外：记忆转移刚生成的目标会话 —— 它有记录但没真跑过，task 里还要
+            // 写给模型看的「先 read 摘要」提示，空着的话用户点运行会被拦下。
+            const transferred = (outputResult.output || []).some(
+                (record) => record && record.id === "memory-transfer-note"
+            );
             const hasRunBefore =
                 !!sessionResult.conversationId ||
                 (sessionResult.runCount || 0) > 0 ||
                 (sessionResult.outputLength || 0) > 0;
-            task.value = hasRunBefore ? "" : sessionResult.task || "";
+            task.value = transferred || !hasRunBefore ? sessionResult.task || "" : "";
             conversationId.value = sessionResult.conversationId || "";
             subscribeToSession(sessionId);
         } catch (error) {
             errorMessage.value = error.message;
+            // 打不开就当这次切换没发生：退回到上一个会话，别让界面停在一个
+            // 不存在的 id 上（左侧却还留着这条会话），顺带把列表重新对一次。
+            if (previousId && previousId !== sessionId) {
+                activeSessionId.value = previousId;
+                subscribeToSession(previousId);
+                loadWorkspaces();
+            }
         }
     }
     function subscribeToSession(sessionId) {
@@ -689,7 +701,13 @@
                 errorMessage.value = error.message;
             }
             // 任务结束后清空任务输入框，避免下一次误以为任务还没提交。
-            if (finishedInfo && finishedInfo.status !== "running") {
+            // 只在"真的跑过"（runCount > 0）时清：服务端在连接建立时会重放一次
+            // finished，转移生成的会话 runCount 还是 0，那条重放会把刚回填的接手任务抹掉。
+            if (
+                finishedInfo &&
+                finishedInfo.status !== "running" &&
+                (finishedInfo.runCount || 0) > 0
+            ) {
                 task.value = "";
             }
             refreshStorage();
