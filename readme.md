@@ -977,6 +977,7 @@ npm run test:electron   # 需要 Electron 运行时
 - ✅ XML Agent 协议
 - ✅ Workspace 安全管理（路径沙箱、超时、进程树级别的停止）
 - ✅ 文件读写与命令执行（含后台执行与停止语义）
+- ✅ `edit` 局部修改（锚点替换，不必整篇重写）
 - ✅ 多模型 Provider（ChatGPT / DeepSeek / Qwen / GLM / Gemini）
 - ✅ Runtime 与 XML 错误恢复
 - ✅ BrowserAgent 页面自愈
@@ -987,6 +988,9 @@ npm run test:electron   # 需要 Electron 运行时
 - ✅ History 回复历史（时间线、Markdown 渲染、内容化标题）
 - ✅ Trace 执行轨迹（按运行分段，Run 头部显示该次运行任务）
 - ✅ 会话持久化与存储上限管理
+- ✅ 上下文预算与记忆转移（四种模式、压缩档位、摘要 md）
+- ✅ 附带图片（识图：选择 / 粘贴 / 拖拽，按会话暂存）
+- ✅ 中英双语界面
 - ✅ Report 生成
 - ✅ 插件系统（action / hook / provider / ui 四类插件，权限声明 + 审计）
 - ✅ Plugins 管理面板（启停 / 权限策略 / 配置表单 / Reload / 声明式面板，Web 与桌面一致）
@@ -1004,7 +1008,7 @@ npm run test:electron   # 需要 Electron 运行时
 | `docs/PLUGIN_API.md`                       | 插件开发契约：清单字段、动作定义、schema、ctx 能力、钩子、错误码 |
 | `docs/PLUGIN_DESIGN.md`                    | 插件化设计：现状诊断、P0 重构、四类插件、权限模型、路线图        |
 | `docs/ARCHITECTURE_FLOW.md`                | 架构与数据流：模块职责、动作分发、子进程生命周期                 |
-| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.1.1.md` | 各版本更新日志                                                   |
+| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.3.0.md` | 各版本更新日志                                                   |
 
 ---
 
