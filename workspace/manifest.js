@@ -99,6 +99,13 @@ function buildWorkspaceManifest(
         const itemPath = path.join(dir, item.name);
         const isDir = item.isDirectory();
 
+        // 上传接口把用户附件放在 <workspace>/uploads。这些图片是随任务发一次的，
+        // 模型在对话里本来就能看到，列进清单只是白占预算（实测 40 张图就多出 2KB）。
+        // 只忽略顶层，避免误伤用户自己项目里的 uploads 目录。
+        if (depth === 0 && isDir && item.name === "uploads") {
+            continue;
+        }
+
         if (shouldIgnore(item.name, isDir)) {
             continue;
         }

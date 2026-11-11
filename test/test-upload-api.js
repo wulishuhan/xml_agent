@@ -79,6 +79,29 @@ function postMultipart(port, pathName, boundary, body) {
         req.end();
     });
 }
+async function getUrl(port, pathName) {
+    return new Promise((resolve, reject) => {
+        http.get({ host: "127.0.0.1", port: port, path: pathName }, (res) => {
+            const chunks = [];
+            res.on("data", (chunk) => chunks.push(chunk));
+            res.on("end", () => {
+                const buffer = Buffer.concat(chunks);
+                let parsed = null;
+                try {
+                    parsed = JSON.parse(buffer.toString());
+                } catch (error) {
+                    parsed = null;
+                }
+                resolve({
+                    status: res.statusCode,
+                    type: res.headers["content-type"],
+                    bytes: buffer.length,
+                    body: parsed,
+                });
+            });
+        }).on("error", reject);
+    });
+}
 async function run() {
     const { startServer, shutdown } = require("../webui/server");
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-upload-"));
@@ -214,6 +237,55 @@ async function run() {
                 traversalRes.body.paths[0].indexOf("..") === -1,
             JSON.stringify(traversalRes.body.paths)
         );
+        // 8. 回读接口：缩略图靠它显示，必须能取回原字节
+        const fileName = path.basename(okRes.body.paths[0]);
+        const readRes = await getUrl(
+            port,
+            "/api/uploads/" +
+                encodeURIComponent(fileName) +
+                "?workspace=" +
+                encodeURIComponent(workspace)
+        );
+        check("回读返回 200", readRes.status === 200, String(readRes.status));
+        check("回读 content-type 为 image/png", readRes.type === "image/png", String(readRes.type));
+        check("回读字节数一致", readRes.bytes === pngBuffer.length, String(readRes.bytes));
+        const noWsRead = await getUrl(port, "/api/uploads/" + encodeURIComponent(fileName));
+        check("回读缺 workspace 返回 400", noWsRead.status === 400, String(noWsRead.status));
+        const badName = await getUrl(
+            port,
+            "/api/uploads/..%2Fsecret.png?workspace=" + encodeURIComponent(workspace)
+        );
+        check("回读非法文件名返回 400", badName.status === 400, String(badName.status));
+        const missing = await getUrl(
+            port,
+            "/api/uploads/nope-1-abcdef.png?workspace=" + encodeURIComponent(workspace)
+        );
+        check("回读不存在的文件返回 404", missing.status === 404, String(missing.status));
+        // 9. workspace 路径以点开头时也要能回读（send 默认把点目录当 dotfile 拒掉）
+        const dotWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), ".xmlagent-upload-"));
+        const dotUpload = buildMultipart(
+            [],
+            [{ field: "images", name: "dot.png", type: "image/png", buffer: pngBuffer }]
+        );
+        const dotRes = await postMultipart(
+            port,
+            "/api/uploads?workspace=" + encodeURIComponent(dotWorkspace),
+            dotUpload.boundary,
+            dotUpload.body
+        );
+        const dotName =
+            dotRes.body.paths && dotRes.body.paths[0]
+                ? path.basename(dotRes.body.paths[0])
+                : "none.png";
+        const dotRead = await getUrl(
+            port,
+            "/api/uploads/" +
+                encodeURIComponent(dotName) +
+                "?workspace=" +
+                encodeURIComponent(dotWorkspace)
+        );
+        check("点开头 workspace 也能回读", dotRead.status === 200, String(dotRead.status));
+        fs.rmSync(dotWorkspace, { recursive: true, force: true });
     } finally {
         await shutdown();
         try {

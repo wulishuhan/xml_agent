@@ -334,6 +334,11 @@
     const task = ref("");
     // 用户随任务附带的图片：桌面端为本地绝对路径，Web 端为 workspace 下相对路径。
     const images = ref([]);
+    // 每个会话各自保留一份「还没发出去的图片」。
+    // 之前切换会话直接清空，用户去看一眼别的会话再回来，图片就没了且没有任何提示。
+    // key 是会话 id，值是路径数组；图片路径是相对 workspace 的，而会话与 workspace 绑定，
+    // 所以按会话 id 存不会串味。
+    const imageDrafts = new Map();
     // exec 权限控制：workspace 限制在当前工作区，all 无限制
     const execScope = ref("workspace");
     const storage = ref(null);
@@ -598,8 +603,17 @@
         const previousId = activeSessionId.value;
         activeSessionId.value = sessionId;
         errorMessage.value = "";
-        // 切换会话时清空待发送图片，避免把上一个会话的图片带到新任务里。
-        images.value = [];
+        // 切换会话时把没发出去的图片寄存到原会话，并取回目标会话的那份。
+        // 直接清空的旧做法会让「看一眼别的会话」变成丢图，且没有任何提示。
+        if (previousId && previousId !== sessionId) {
+            if (images.value.length) {
+                imageDrafts.set(previousId, images.value.slice());
+            } else {
+                imageDrafts.delete(previousId);
+            }
+        }
+        const draft = imageDrafts.get(sessionId);
+        images.value = draft ? draft.slice() : [];
         // 上下文占用与「稍后」都是按会话计的，跟着切换一起重置
         contextUsage.value = null;
         contextDismissed.value = "";
@@ -776,7 +790,9 @@
             const result = await apiRunAgent(payload);
             activeSessionId.value = result.sessionId;
             // 启动后图片已交给本次运行，清空避免下次重复上传。
+            // 对应会话的草稿也要一起清掉，否则切回来又冒出上一次的图。
             images.value = [];
+            imageDrafts.delete(result.sessionId);
             await loadWorkspaces();
             await selectSession(result.sessionId);
         } catch (error) {

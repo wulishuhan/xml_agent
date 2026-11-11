@@ -5,6 +5,9 @@ const UPLOAD_DIR = "uploads";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MAX_FILES = 8;
 const ALLOWED_EXT = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"];
+// 读取时只接受「上传接口自己生成」的文件名，形如 stem-<13 位时间戳>-<6 位随机>.png。
+// 不用宽松的 .*\.png 是为了从根上排除路径穿越与点文件。
+const SERVED_NAME = /^[A-Za-z0-9_-]{1,80}\.(png|jpe?g|webp|gif|bmp)$/i;
 function isPathInside(parent, child) {
     const parentResolved = path.resolve(parent);
     const childResolved = path.resolve(child);
@@ -100,6 +103,35 @@ function registerUploadRoutes(app) {
                 paths: saved.map((item) => item.path),
             });
         });
+    });
+
+    // 回读已上传的图片，供界面显示缩略图（否则用户只能看到一串随机后缀的文件名）。
+    // 只允许读 <workspace>/uploads 下的一级文件，扩展名白名单与上传保持一致。
+    app.get("/api/uploads/:name", function (req, res) {
+        let workspace;
+        try {
+            workspace = resolveWorkspace(req.query.workspace);
+        } catch (error) {
+            return res.status(400).json({ ok: false, error: error.message });
+        }
+        const name = String(req.params.name || "");
+        if (!SERVED_NAME.test(name)) {
+            return res.status(400).json({ ok: false, error: "invalid image name" });
+        }
+        const uploadDir = path.resolve(workspace, UPLOAD_DIR);
+        const target = path.resolve(uploadDir, name);
+        if (!isPathInside(uploadDir, target)) {
+            return res.status(400).json({ ok: false, error: "path escapes uploads" });
+        }
+        if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+            return res.status(404).json({ ok: false, error: "image not found" });
+        }
+        // 文件名带时间戳，内容不会变；允许浏览器缓存，避免每次渲染缩略图都走磁盘。
+        res.setHeader("Cache-Control", "private, max-age=600");
+        // dotfiles 必须放开：workspace 路径里可能有以点开头的目录（如 .tmp-x），
+        // send 默认会把它当 dotfile 直接 404。安全性由上面的文件名白名单与
+        // isPathInside 保证，不依赖 dotfiles 策略。
+        return res.sendFile(target, { dotfiles: "allow" });
     });
 }
 module.exports = {

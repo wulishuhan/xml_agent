@@ -114,6 +114,28 @@ try {
         assert.deepStrictEqual(buildWorkspaceManifest(empty), []);
     });
 
+    check("顶层 uploads 不进清单，嵌套的 uploads 保留", () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "xa-uploads-"));
+        fs.mkdirSync(path.join(dir, "uploads"));
+        fs.writeFileSync(path.join(dir, "uploads", "a.png"), "x");
+        fs.mkdirSync(path.join(dir, "src", "uploads"), { recursive: true });
+        fs.writeFileSync(path.join(dir, "src", "uploads", "keep.png"), "x");
+        const entries = buildWorkspaceManifest(dir);
+        assert.ok(
+            entries.indexOf("uploads/") === -1,
+            "顶层 uploads 应被忽略：" + entries.join("|")
+        );
+        assert.ok(
+            entries.indexOf(" uploads/") !== -1,
+            "嵌套 src/uploads 应保留（带一级缩进）：" + entries.join("|")
+        );
+        assert.ok(
+            !entries.some((line) => line.includes("a.png")),
+            "被忽略目录里的文件不该出现：" + entries.join("|")
+        );
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
     check("不存在的目录返回空数组而不是抛错", () => {
         assert.deepStrictEqual(buildWorkspaceManifest(path.join(root, "no-such-dir")), []);
     });

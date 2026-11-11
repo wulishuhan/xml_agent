@@ -253,6 +253,28 @@ export async function uploadWorkspaceImages(workspace, files) {
 }
 
 /**
+把「workspace 下的相对图片路径」转成可直接放进 <img src> 的回读地址。
+只有上传接口产出的 uploads/<文件名> 才可回读；桌面端的绝对路径没有对应接口，
+返回空串，调用方据此回退到不显示缩略图。
+*/
+export function uploadedImageUrl(workspace, relativePath) {
+    if (!workspace || typeof relativePath !== "string") {
+        return "";
+    }
+    const normalized = relativePath.split(String.fromCharCode(92)).join("/");
+    if (normalized.indexOf("uploads/") !== 0) {
+        return "";
+    }
+    const name = normalized.slice("uploads/".length);
+    if (!name || name.indexOf("/") !== -1) {
+        return "";
+    }
+    return api(
+        "/api/uploads/" + encodeURIComponent(name) + "?workspace=" + encodeURIComponent(workspace)
+    );
+}
+
+/**
 从 provider 页面 URL 中提取 conversationId。
 前端不直接依赖 provider 逻辑，只做一点轻量解析，用于提示用户。
 

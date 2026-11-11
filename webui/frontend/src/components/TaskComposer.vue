@@ -1,5 +1,11 @@
 <template>
-    <section class="composer">
+    <section
+        class="composer"
+        :class="{ 'composer-drop-active': dragActive }"
+        @dragover.prevent="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+    >
         <div class="composer-header">
             <div>
                 <span class="composer-label">{{ t("composer.task") }}</span>
@@ -44,6 +50,7 @@
             @input="$emit('update:task', $event.target.value)"
             @keydown.enter.ctrl="submit"
             @keydown.enter.meta="submit"
+            @paste="onPaste"
         ></textarea>
         <div v-if="images.length || imageError" class="composer-images">
             <div v-if="imageError" class="composer-images-error">{{ imageError }}</div>
@@ -54,7 +61,16 @@
                     class="composer-image-item"
                     :title="image"
                 >
-                    <span class="composer-image-name">{{ shortName(image) }}</span>
+                    <img
+                        v-if="thumbFor(image)"
+                        class="composer-image-thumb"
+                        :src="thumbFor(image)"
+                        :alt="displayName(image)"
+                        :title="t('composer.previewImage')"
+                        @click="previewImage(image)"
+                    />
+                    <span v-else class="composer-image-placeholder" aria-hidden="true">🖼</span>
+                    <span class="composer-image-name">{{ displayName(image) }}</span>
                     <button
                         type="button"
                         class="composer-image-remove"
@@ -87,7 +103,7 @@
                 <input
                     ref="fileInput"
                     type="file"
-                    accept="image/*"
+                    accept=".png,.jpg,.jpeg,.webp,.gif,.bmp"
                     multiple
                     class="composer-file-input"
                     :disabled="running || uploading"
@@ -167,7 +183,13 @@
         extractConversationId,
         pickImages,
         uploadWorkspaceImages,
+        uploadedImageUrl,
     } from "../services/agent-api.js";
+    // 与 webui/upload-api.js 保持一致：单次 8 张、单张 20MB、只收位图。
+    // 前端先拦一遍，避免把 21MB 的文件整个传上去再被服务端拒绝。
+    const MAX_IMAGES = 8;
+    const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+    const ALLOWED_EXT = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"];
     const props = defineProps({
         task: { type: String, default: "" },
         provider: { type: String, default: "chatgpt" },
@@ -190,6 +212,8 @@
     const fileInput = ref(null);
     const uploading = ref(false);
     const imageError = ref("");
+    // 拖拽悬停高亮：只在真的有文件被拖进来时点亮，避免拖动选中文本也亮
+    const dragActive = ref(false);
     const showPermissionMenu = ref(false);
     const isElectron = computed(() => {
         return (
@@ -234,6 +258,22 @@
         const normalized = value.split(String.fromCharCode(92)).join("/");
         const parts = normalized.split("/");
         return parts[parts.length - 1] || value;
+    }
+    // 上传接口会给文件名加「-<13 位时间戳>-<6 位随机>」防重名。
+    // 这串东西对用户没有意义，显示时去掉，只留原始文件名。
+    const UPLOAD_SUFFIX = /-\d{13}-[a-z0-9]{6}(\.[A-Za-z0-9]+)$/;
+    function displayName(value) {
+        const base = shortName(value);
+        return base.replace(UPLOAD_SUFFIX, "$1");
+    }
+    function thumbFor(image) {
+        return uploadedImageUrl(props.workspace, image);
+    }
+    function previewImage(image) {
+        const url = thumbFor(image);
+        if (url) {
+            window.open(url, "_blank", "noopener");
+        }
     }
     function mergeImages(list) {
         const next = Array.isArray(props.images) ? props.images.slice() : [];
@@ -291,30 +331,176 @@
         openFilePicker();
     }
     async function onFilesSelected(event) {
-        const files = event.target && event.target.files ? event.target.files : null;
+        // input.files 返回的是「活」的 FileList：把 value 清空后它会立刻变成空列表。
+        // 所以必须先拷成普通数组再清 value，否则下面的 files.length 永远是 0，
+        // 选完图什么都不发生（Web 端附加图片完全失效的根因）。
+        const raw = event.target && event.target.files ? event.target.files : null;
+        const files = raw ? Array.from(raw) : [];
         // 允许用户连续选择同一文件：处理完立即清空 value。
         if (event.target) {
             event.target.value = "";
         }
-        if (!files || !files.length) {
+        if (!files.length) {
+            return;
+        }
+        await uploadFiles(files);
+    }
+    /**
+    统一的上传入口：按钮选文件、拖拽、粘贴都走这里，保证三处的校验与提示一致。
+    */
+    async function uploadFiles(files) {
+        if (!files.length) {
             return;
         }
         if (!props.workspace || !props.workspace.trim()) {
-            imageError.value = "Please set a workspace before uploading images.";
+            imageError.value = t("composer.attachNoWorkspace");
+            return;
+        }
+        // 先本地过一遍：类型、大小、总数。宁可这里说清楚，也不要传完再报
+        // "File too large" / "Too many files" 这种英文服务端错误。
+        const remaining = Math.max(0, MAX_IMAGES - (props.images || []).length);
+        const accepted = [];
+        let tooMany = 0;
+        const problems = [];
+        for (const file of files) {
+            const dot = file.name.lastIndexOf(".");
+            const ext = dot === -1 ? "" : file.name.slice(dot).toLowerCase();
+            if (ALLOWED_EXT.indexOf(ext) === -1) {
+                problems.push(t("composer.attachBadType", { name: file.name }));
+                continue;
+            }
+            if (file.size > MAX_IMAGE_BYTES) {
+                problems.push(
+                    t("composer.attachTooLarge", {
+                        name: file.name,
+                        size: Math.round(MAX_IMAGE_BYTES / (1024 * 1024)),
+                    })
+                );
+                continue;
+            }
+            if (accepted.length >= remaining) {
+                tooMany += 1;
+                continue;
+            }
+            accepted.push(file);
+        }
+        if (tooMany > 0) {
+            problems.push(t("composer.attachLimit", { max: MAX_IMAGES, count: tooMany }));
+        }
+        imageError.value = problems.join(t("composer.attachSeparator"));
+        if (!accepted.length) {
             return;
         }
         uploading.value = true;
-        imageError.value = "";
         try {
-            const paths = await uploadWorkspaceImages(props.workspace, files);
+            const paths = await uploadWorkspaceImages(props.workspace, accepted);
             if (paths && paths.length) {
                 mergeImages(paths);
             }
         } catch (error) {
-            imageError.value = error.message;
+            imageError.value = t("composer.attachFailed", { reason: error.message });
         } finally {
             uploading.value = false;
         }
+    }
+    /**
+    剪贴板里的截图常常没有扩展名（或叫 image.png），而服务端按扩展名白名单放行。
+    这里补一个带扩展名的文件名，否则粘贴会被自己的校验拦掉。
+    */
+    function withImageExtension(file) {
+        if (!file) {
+            return null;
+        }
+        const name = file.name || "";
+        const hasExt = /\.[A-Za-z0-9]+$/.test(name);
+        // 剪贴板的截图通常叫 image.png / blob.png，多张放在一起完全分不清；
+        // 统一改成 pasted-<时间>.png，至少能按时间区分。
+        const generic = /^(image|blob|clipboard)(\.(png|jpe?g|webp|gif|bmp))?$/i.test(name);
+        if (hasExt && !generic) {
+            return file;
+        }
+        // 用本地时间，不要 toISOString：那会把 +8 区用户写成早 8 小时，
+        // 混在一堆文件名里很难对上自己刚粘的那张。
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, "0");
+        const stamp =
+            String(now.getFullYear()) +
+            pad(now.getMonth() + 1) +
+            pad(now.getDate()) +
+            pad(now.getHours()) +
+            pad(now.getMinutes()) +
+            pad(now.getSeconds());
+        const ext = hasExt
+            ? name.slice(name.lastIndexOf("."))
+            : file.type === "image/jpeg"
+              ? ".jpg"
+              : ".png";
+        try {
+            return new File([file], "pasted-" + stamp + ext, { type: file.type || "image/png" });
+        } catch (error) {
+            return file;
+        }
+    }
+    function clipboardImages(event) {
+        const data = event.clipboardData;
+        if (!data || !data.items) {
+            return [];
+        }
+        const files = [];
+        for (const item of Array.from(data.items)) {
+            if (item.kind !== "file" || String(item.type).indexOf("image/") !== 0) {
+                continue;
+            }
+            const named = withImageExtension(item.getAsFile());
+            if (named) {
+                files.push(named);
+            }
+        }
+        return files;
+    }
+    async function onPaste(event) {
+        if (props.running || uploading.value) {
+            return;
+        }
+        const files = clipboardImages(event);
+        if (!files.length) {
+            return;
+        }
+        // 有图片就不要再把二进制内容插进 textarea（会变成乱码或 base64 长串）
+        event.preventDefault();
+        imageError.value = "";
+        await uploadFiles(files);
+    }
+    function onDragOver(event) {
+        if (props.running || uploading.value) {
+            return;
+        }
+        const types =
+            event.dataTransfer && event.dataTransfer.types ? event.dataTransfer.types : [];
+        if (Array.from(types).indexOf("Files") === -1) {
+            return;
+        }
+        dragActive.value = true;
+    }
+    function onDragLeave() {
+        dragActive.value = false;
+    }
+    async function onDrop(event) {
+        dragActive.value = false;
+        if (props.running || uploading.value) {
+            return;
+        }
+        const dropped =
+            event.dataTransfer && event.dataTransfer.files
+                ? Array.from(event.dataTransfer.files)
+                : [];
+        if (!dropped.length) {
+            return;
+        }
+        // 拖进来的可能是文件夹或任意文件：交给 uploadFiles 统一校验类型与大小，
+        // 非图片会得到一句明确的提示，而不是静默丢弃。
+        imageError.value = "";
+        await uploadFiles(dropped);
     }
     function togglePermissionMenu() {
         if (props.running) {
@@ -332,6 +518,12 @@
     defineExpose({ focus });
 </script>
 <style scoped>
+    /* 拖拽图片进来时给整个输入区一个可见落点，否则用户不知道能不能放 */
+    .composer.composer-drop-active {
+        outline: 2px dashed var(--c-accent);
+        outline-offset: -3px;
+        background: color-mix(in srgb, var(--c-accent) 8%, transparent);
+    }
     .composer-conversation-row {
         display: flex;
         align-items: center;
@@ -546,6 +738,26 @@
         border: 1px solid var(--c-border-strong);
         border-radius: 5px;
         background: var(--c-elevated-bg);
+    }
+    .composer-image-thumb {
+        flex: 0 0 auto;
+        width: 46px;
+        height: 34px;
+        border: 1px solid var(--c-border-soft);
+        border-radius: 4px;
+        background: var(--c-elevated-bg);
+        object-fit: cover;
+        cursor: zoom-in;
+    }
+    .composer-image-placeholder {
+        display: inline-flex;
+        flex: 0 0 auto;
+        width: 22px;
+        height: 22px;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        opacity: 0.7;
     }
     .composer-image-name {
         overflow: hidden;
