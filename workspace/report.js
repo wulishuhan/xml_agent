@@ -69,6 +69,28 @@ function buildReport(task, workspace, records = []) {
             }
         }
 
+        if (result.action === "edit") {
+            if (result.ok) {
+                lines.push("修改成功：" + result.path);
+                if (result.lines) {
+                    lines.push(
+                        "替换 " +
+                            (result.changes || 0) +
+                            " 处（+" +
+                            (result.lines.added || 0) +
+                            " / -" +
+                            (result.lines.removed || 0) +
+                            " 行）"
+                    );
+                }
+                if (result.matched === "loose") {
+                    lines.push("注意：按忽略缩进的方式匹配，请确认改动位置。");
+                }
+            } else {
+                lines.push("修改失败：" + (result.error || "unknown error"));
+            }
+        }
+
         if (result.action === "exec") {
             if (result.ok) {
                 lines.push("命令执行成功：" + result.command);

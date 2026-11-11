@@ -1,13 +1,14 @@
 /**
 内置动作表
 
-把 read / write / exec / answer / done 五个内置动作统一成"动作定义对象"
+把 read / write / edit / exec / answer / done 六个内置动作统一成"动作定义对象"
 （与插件动作同一个形状），从而让：
 - runtime.js 只剩"查表 + 执行"，不再有动作的具体实现；
 - parse/xml-parse.js 的校验走同一张表，而不是另一份 switch；
 - agent-core.js 的终止语义（answer / done）与产物上传（collectImages）由元数据驱动。
 
-顺序与 1.1.0 的 ACTION_NAMES 保持一致：read, write, exec, answer, done。
+顺序为 read, write, edit, exec, answer, done：write 与 edit 相邻（一个建/重写，
+一个局部改），其余保持 1.1.0 的相对次序。
 
 > screenshot 自 v1.1.0 起是内置插件（plugins/builtin/screenshot），
 > 因此不在这张表里；它通过 plugins/registry 注册，由 Runtime 的插件分支执行。
@@ -18,6 +19,7 @@ const sdk = require("../plugins/sdk");
 const DEFINITIONS = [
     require("./read"),
     require("./write"),
+    require("./edit"),
     require("./exec"),
     require("./answer"),
     require("./done"),

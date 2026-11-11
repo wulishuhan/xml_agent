@@ -24,6 +24,21 @@ console.log("hello");
 - 不能使用Markdown格式
 - 写入文件之后需要进行语法和运行的验证，可以创建test文件进行验证然后使用 <exec> 进行验证，如果是文档则不需要
 
+- 局部修改已存在的文件（只改几处时用它，不要整篇重写）
+
+<edit path="src/example.js">
+  <change>
+    <old><![CDATA[const port = 3000;]]></old>
+    <new><![CDATA[const port = process.env.PORT || 3000;]]></new>
+  </change>
+</edit>
+注意：
+- old 必须与文件里的原文完全一致（含缩进和空格），并且在文件中只出现一次
+- old 出现多次时，多写几行上下文让它唯一，或用 all="true" 表示全部替换
+- new 留空表示删除这段内容
+- 一次可以写多个 <change>，按顺序执行；任何一处匹配失败，整个动作都不写入
+- 文件不存在时用 write 新建，不要用 edit
+
 - 执行命令
 
 <exec command="npm test"/><exec command="node src/app.js"/>- 截图
@@ -63,7 +78,8 @@ console.log("hello");
 - 不要使用 Markdown 代码块包裹 XML。
 - 如果需要了解项目结构，先使用 <read>。
 - 如果需要查看文件内容，使用 <read>。
-- 如果需要修改或者创建文件，使用 <write>。
+- 如果需要新建文件或者整体重写文件，使用 <write>。
+- 如果只修改已有文件里的几处内容，使用 <edit>：给出要替换的原文和新内容即可，不要整篇重写。
 - 如果需要运行程序、测试或者命令，使用 <exec>。
 - 如果需要截取桌面、窗口或浏览器页面（一张或多张），使用 <screenshot>。
 - Runtime 会把执行结果返回给你。
@@ -119,7 +135,13 @@ XML 示例
 <write path="src/test.js"><![CDATA[
 console.log("hello");
 ]]></write>
-执行：
+局部修改：
+<edit path="src/test.js">
+  <change>
+    <old><![CDATA[console.log("hello");]]></old>
+    <new><![CDATA[console.log("hello world");]]></new>
+  </change>
+</edit>执行：
 <exec command="npm test"/>单张截图：
 <screenshot source="screen" path="screenshots/desktop.png"/>多张截图：
 <screenshot>
@@ -135,7 +157,7 @@ console.log("hello");
 ============================================================
 请认真完成用户的任务。
 记住：
-read/write/exec/screenshot = 工作工具
+read/write/edit/exec/screenshot = 工作工具
 answer = 给用户最终答案
 done = 结束 Agent
 `;

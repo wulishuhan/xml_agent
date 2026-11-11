@@ -11,7 +11,8 @@ write 的内容在 CDATA 里可能包含任意文本，交给通用 XML 解析�
 const fs = require("fs");
 const path = require("path");
 const agentConfig = require("../config/agent-config");
-const { getText } = require("../parse/xml-text");
+const { getText, decodeXmlEntities } = require("../parse/xml-text");
+const { validateContent } = require("./content-check");
 const {
     CHAR_LT,
     CHAR_GT,
@@ -34,48 +35,6 @@ function stripCdataLeadingNewline(content) {
     return typeof content === "string" ? content.replace(/^\r?\n/, "") : content;
 }
 
-const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-
-/**
-解码属性里的实体。
-
-快速解析器读到的是原始文本，`path="a&amp;b.txt"` 会原样当成文件名；
-而通用解析路径（fast-xml-parser）和 read 都会解码成 `a&b.txt`。
-两条路径给出不同的文件名，就会出现"刚写进去的文件读不到"，
-所以这里统一按 XML 规则解一次。
-*/
-function decodeXmlAttribute(value) {
-    return String(value).replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[a-zA-Z]+);/g, (match, body) => {
-        if (body.charAt(0) === "#") {
-            const hex = body.charAt(1) === "x" || body.charAt(1) === "X";
-            const code = hex ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
-            if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) {
-                return match;
-            }
-            try {
-                return String.fromCodePoint(code);
-            } catch (error) {
-                return match;
-            }
-        }
-        const key = body.toLowerCase();
-        return Object.prototype.hasOwnProperty.call(XML_ENTITIES, key) ? XML_ENTITIES[key] : match;
-    });
-}
-
-// 验证写入内容（可选）
-function validateContent(filePath, content) {
-    // 如果是 JSON 文件，尝试解析
-    if (filePath.endsWith(".json")) {
-        try {
-            JSON.parse(content);
-        } catch (e) {
-            throw new Error("Invalid JSON content: " + e.message);
-        }
-    }
-    // 可扩展其他验证
-}
-
 /**
 手写解析 <write path="..."><![CDATA[...]]></write>。
 返回 { action, node } 或 null（null 表示交给通用解析器）。
@@ -96,7 +55,7 @@ function tryExtractWriteManually(text) {
     const pathValueStart = pathStart + pathMarker.length;
     const pathValueEnd = openTag.indexOf(CHAR_DQUOTE, pathValueStart);
     if (pathValueEnd === -1) return null;
-    const filePath = decodeXmlAttribute(openTag.substring(pathValueStart, pathValueEnd));
+    const filePath = decodeXmlEntities(openTag.substring(pathValueStart, pathValueEnd));
     if (!filePath) return null;
     let content = trimmed.substring(firstGt + 1, trimmed.length - WRITE_CLOSE_TAG.length);
     content = content.trim();

@@ -33,10 +33,11 @@ const { SYSTEM_PROMPT } = require("../prompts/system-prompt");
 const { getFirstPrompt } = require("../prompts/first-prompt");
 
 // 内置动作表顺序（screenshot 自 v1.1.0 起迁到内置插件，不再在这里）
-const EXPECTED_NAMES = ["read", "write", "exec", "answer", "done"];
+// edit 是新增的：write 负责新建/整体重写，edit 负责局部替换。
+const EXPECTED_NAMES = ["read", "write", "edit", "exec", "answer", "done"];
 
-// 系统提示词指纹（v1.1.0）。改动 SYSTEM_PROMPT 时必须重新评估模型行为并更新此值。
-const SYSTEM_PROMPT_SHA1 = "fc1b21acfcd773ef8cca99ff1826f981bc5f0b3e";
+// 系统提示词指纹（v1.1.0 + edit）。改动 SYSTEM_PROMPT 时必须重新评估模型行为并更新此值。
+const SYSTEM_PROMPT_SHA1 = "fbcf4c4691dc677725345fbfe43c0628268c4193";
 
 // 迁移前的校验错误文案（逐字节冻结）。
 // screenshot 的用例仍然保留 —— 它们验证的是"协议层校验没有因为搬家而变化"，
@@ -47,6 +48,19 @@ const VALIDATION_CASES = [
     { xml: "<read path='x'/>".replace(/'/g, '"'), message: null },
     { xml: "<write></write>", message: "write action is invalid" },
     { xml: '<write path="a.txt"></write>', message: "write content cannot be empty" },
+    { xml: "<edit></edit>", message: "edit action is invalid" },
+    {
+        xml: '<edit path="a.txt"><old>x</old></edit>',
+        message: "edit change requires <new> (use an empty <new> to delete)",
+    },
+    {
+        xml: '<edit path="a.txt"><old></old><new>y</new></edit>',
+        message: "edit change requires non-empty <old> (use write to create a file)",
+    },
+    {
+        xml: '<edit path="a.txt"><old>a</old><new>b</new></edit>',
+        message: null,
+    },
     { xml: "<exec></exec>", message: "exec action is invalid" },
     { xml: '<exec command=""/>', message: "exec requires command" },
     {
@@ -120,7 +134,7 @@ async function main() {
         console.log("\n=== 2. 终止语义（meta.terminal） ===");
         check("answer 声明 terminal=answer", getBuiltinAction("answer").meta.terminal === "answer");
         check("done 声明 terminal=end", getBuiltinAction("done").meta.terminal === "end");
-        const nonTerminal = ["read", "write", "exec"].filter(
+        const nonTerminal = ["read", "write", "edit", "exec"].filter(
             (name) => getBuiltinAction(name).meta.terminal !== null
         );
         check("其它动作没有终止语义", nonTerminal.length === 0, nonTerminal.join(","));
@@ -170,6 +184,16 @@ async function main() {
                 writeManual.action === "write" &&
                 writeManual.node["@_path"] === "a.txt" &&
                 writeManual.node["#text"] === "hello world"
+        );
+        const editParsed = extractXML(
+            '<edit path="a&amp;b.txt"><old><![CDATA[if (a < b) { return 1; }]]></old><new><![CDATA[if (a < b) { return 2; }]]></new></edit>'
+        );
+        check(
+            "edit 快速解析器保留 CDATA 原文并解码路径实体",
+            editParsed.action === "edit" &&
+                editParsed.node["@_path"] === "a&b.txt" &&
+                getText(editParsed.node.change[0].old) === "if (a < b) { return 1; }",
+            JSON.stringify(editParsed.node)
         );
         const shotManual = tryExtractScreenshotManually('<screenshot source="screen"/>');
         check(
@@ -244,6 +268,36 @@ async function main() {
             badJson.ok === false &&
                 String(badJson.error).indexOf("Content validation failed") === 0,
             String(badJson.error)
+        );
+
+        fs.writeFileSync(path.join(workspace, "edit-me.txt"), "line1\nline2\nline3\n", "utf8");
+        const editResult = await runtime.run({
+            action: "edit",
+            node: {
+                "@_path": "edit-me.txt",
+                change: [{ old: "line2", new: "LINE-TWO" }],
+            },
+        });
+        check(
+            "edit 只替换命中片段，其余保持不变",
+            editResult.ok === true &&
+                fs.readFileSync(path.join(workspace, "edit-me.txt"), "utf8") ===
+                    "line1\nLINE-TWO\nline3\n",
+            String(editResult.error)
+        );
+        check(
+            "edit 回显 diff 供模型自检",
+            typeof editResult.diff === "string" && editResult.diff.indexOf("-line2") !== -1,
+            String(editResult.diff)
+        );
+        const editMissing = await runtime.run({
+            action: "edit",
+            node: { "@_path": "no-such.txt", change: [{ old: "a", new: "b" }] },
+        });
+        check(
+            "edit 对不存在的文件给出 write 提示",
+            editMissing.ok === false &&
+                editMissing.error === "File does not exist; use <write> to create it"
         );
 
         // exec 依赖真实子进程；本机沙箱可能禁止 spawn，此时只验证"失败被结构化"

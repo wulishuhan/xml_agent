@@ -34,7 +34,7 @@ const PLUGIN_KINDS = ["action", "hook", "provider", "ui"];
 // 由 Agent 编排器依赖，覆盖会直接破坏协议。
 // 注意：screenshot 自 v1.1.0 起本身就是内置插件（plugins/builtin/screenshot），
 // 因此不在保留名单里；"插件不能覆盖别人已注册的动作名"仍由 registry 保证。
-const RESERVED_ACTION_NAMES = ["read", "write", "exec", "answer", "done"];
+const RESERVED_ACTION_NAMES = ["read", "write", "edit", "exec", "answer", "done"];
 
 const PLUGIN_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$/;
 const ACTION_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$/;

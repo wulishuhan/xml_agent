@@ -182,7 +182,7 @@ function collect(records) {
                 }
                 files.set(key, entry);
             }
-        } else if (action === "write" && result.path) {
+        } else if ((action === "write" || action === "edit") && result.path) {
             if (result.ok !== false) {
                 const key = String(result.path);
                 const entry = files.get(key) || { path: key, reads: 0, writes: 0, kind: "file" };
@@ -257,7 +257,7 @@ function tailLine(record) {
     }
     const action = String(result.action || event.action || "?");
     const failed = result.ok === false;
-    if (action === "read" || action === "write") {
+    if (action === "read" || action === "write" || action === "edit") {
         return (failed ? "✗ " : "") + action + " " + String(result.path || "?");
     }
     if (action === "exec") {

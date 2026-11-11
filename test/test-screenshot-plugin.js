@@ -56,9 +56,9 @@ async function main() {
         console.log("=== 1. 内置动作表瘦身 ===");
         const builtinNames = getBuiltinActionNames();
         check(
-            "内置动作只剩 5 个（screenshot 已移出）",
+            "内置动作只剩 6 个（screenshot 已移出）",
             JSON.stringify(builtinNames) ===
-                JSON.stringify(["read", "write", "exec", "answer", "done"]),
+                JSON.stringify(["read", "write", "edit", "exec", "answer", "done"]),
             builtinNames.join(",")
         );
         check("getBuiltinAction('screenshot') 返回 null", getBuiltinAction("screenshot") === null);

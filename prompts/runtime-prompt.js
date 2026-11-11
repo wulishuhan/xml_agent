@@ -15,7 +15,11 @@ ${JSON.stringify(promptView(result), null, 2)}
 请根据这个真实结果继续完成用户任务。
 如果还需要读取文件：
 使用 <read>
-如果需要修改文件：
+如果需要修改已有文件里的几处：
+使用 <edit>（old 必须与文件原文一致且唯一，出现多次就多写上下文或用 all="true"；<new> 留空表示删除）
+例如：
+<edit path="src/example.js"><old><![CDATA[const a = 1;]]></old><new><![CDATA[const a = 2;]]></new></edit>
+如果需要新建文件或者整体重写：
 使用 <write>
 例如：
 <write path="src/example.js"><![CDATA[

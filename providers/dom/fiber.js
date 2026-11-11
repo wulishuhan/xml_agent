@@ -174,7 +174,7 @@ function collectChildFiberCandidate(element) {
 
     const candidates = [];
 
-    const actionTagNames = ["write", "read", "exec", "answer", "done", "screenshot"];
+    const actionTagNames = ["write", "edit", "read", "exec", "answer", "done", "screenshot"];
     const LT = String.fromCharCode(60);
 
     function hasAction(text) {

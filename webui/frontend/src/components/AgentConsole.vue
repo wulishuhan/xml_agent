@@ -278,6 +278,7 @@
         if (tag === "answer") return "*";
         if (tag === "read") return "R";
         if (tag === "write") return "W";
+        if (tag === "edit") return "E";
         if (tag === "exec") return ">";
         if (tag === "screenshot") return "P";
         if (tag === "done") return "=";
