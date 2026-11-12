@@ -1,0 +1,46 @@
+{
+    "name": "browser",
+    "version": "1.0.0",
+    "kind": "action",
+    "apiVersion": 1,
+    "engines": { "xmlAgent": ">=1.1.0" },
+    "author": "xml-agent",
+    "description": "驱动一个独立的 Chromium 浏览器（Edge/Chrome，独立配置目录）：打开网页、点击、填表、取正文、截图",
+    "permissions": ["network:http", "system:screen", "workspace:write"],
+    "activation": {
+        "keywords": ["浏览器", "browser", "网页", "打开网址", "抓页面", "截图网页", "填表"]
+    },
+    "configSchema": {
+        "cdpPort": {
+            "type": "integer",
+            "default": 9333,
+            "min": 1024,
+            "max": 65535,
+            "description": "独立浏览器的调试端口（不要和 provider 用的 CDP 端口重复）"
+        },
+        "executablePath": {
+            "type": "string",
+            "default": "",
+            "description": "Edge/Chrome 可执行文件路径，留空则自动探测"
+        },
+        "allowEval": {
+            "type": "boolean",
+            "default": false,
+            "description": "是否允许 browse-eval 在页面里执行 JS（默认关闭）"
+        },
+        "maxTextChars": {
+            "type": "integer",
+            "default": 4000,
+            "min": 200,
+            "max": 20000,
+            "description": "回给模型的正文长度上限"
+        },
+        "navigationTimeoutMs": {
+            "type": "integer",
+            "default": 30000,
+            "min": 5000,
+            "max": 120000,
+            "description": "单次导航超时"
+        }
+    }
+}
