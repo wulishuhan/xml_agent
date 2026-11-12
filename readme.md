@@ -454,6 +454,62 @@ console.log("hello");
 - 结果带 `plugin` 与 `durationMs`，审计日志可区分；
 - `XML_AGENT_PLUGINS=0` 关闭整个插件系统时，截图能力随之不可用。
 
+### wechat（内置插件，Windows）
+
+操作桌面版微信：打开会话、发消息、读当前会话。四个动作：
+
+```xml
+<wechat-status/>
+<wechat-open to="文件传输助手"/>
+<wechat-send text="收到，我晚点回你"/>
+<wechat-read path="screenshots/wechat.png"/>
+```
+
+**发送刻意分成两步**，这不是啰嗦，是被现实逼的：
+
+- WeChat 4.x 是 Qt 应用，UIA 只暴露 1 个节点（实测 `TreeScope.Descendants` 返回 1），
+  没有可用的无障碍树；搜索下拉里同一个名字会出现「会话」「搜索聊天记录」「打开」
+  「怎么恢复历史记录」等好几个条目，点错一条就落到别的会话上。
+- 所以 `wechat-open` 打开后会**截图 + OCR 读会话标题**，标题对不上就返回 `ok:false`
+  并且不建立发送许可；`wechat-send` 没有收件人参数，只能发到「刚校验过的那个会话」，
+  发之前还会再 OCR 一次标题（你可能在 GUI 里自己切走了）。
+- 配额默认 10 分钟 5 条（硬上限 30），同一段文本 60 秒内重复发送直接拒绝，
+  每次发送写一行到 `~/.xml-agent/plugin-data/wechat/sends.jsonl`，Plugins 面板可查。
+- 群发/遍历写法（`所有人`、`全体`、`群发`、`everyone`…）在 validate 阶段就被拒。
+
+实现要点（`plugins/builtin/wechat/engine/wechat-windows.ps1`）：
+
+| 坑 | 处理 |
+| --- | --- |
+| 主窗口句柄 `Process.MainWindowHandle` 恒为 0（多进程 + 4.x 的 frame 有 owner） | 按窗口类 `Qt51514QWindowIcon` 枚举，**先排除辅助窗**再取面积最大的那个 |
+| 窗口关到托盘后所有键盘动作会打到别的窗口 | 发送前用微信自己的 `Ctrl+Alt+W` 唤回，再核对前台窗口祖先句柄 |
+| `Esc` 会把主窗口关进托盘 | 全流程不发 Esc；页面错了就点左栏「聊天」图标 + 会话列表复位 |
+| 搜索下拉是独立的无边框窗口，主窗口截图里看不到 | 单独按类 `Qt51514QWindowToolSaveBits` 找它、对它 `PrintWindow` |
+| 小字号 OCR 丢字（`文件传输助手` → `文件传助手`） | 2 倍放大后 OCR；按「子序列覆盖 + 字符重合」打分，再用标题做最终裁决 |
+| 搜索框写入在 ProseMirror 里不生效（长文本会变空消息） | 统一走剪贴板 + `Ctrl+V`，不直接改 `textContent` |
+| 后台进程调 `SetForegroundWindow` 被前台锁静默拒绝（脚本会报「无法聚焦」） | 依次试 `SwitchToThisWindow` → 合成 ALT（系统视为用户活动，放开前台锁）→ 最后才 `AttachThreadInput`（挂到不泵消息的线程上会死锁，所以放最后） |
+| 抢前台会把 agent 正在驱动的浏览器窗口顶掉，Qwen provider 随即 `input not found` | 只有真正要打字的 `open` / `send` 才抢前台；`read` / `shot` 用 `PrintWindow`，不碰焦点，窗口最小化时用 `SW_SHOWNOACTIVATE` 还原 |
+| 发送前那一次标题 OCR 偶尔读到空串，被当成「换错会话」误拒 | 空串不等于不匹配：抓 3 次（间隔 400ms），仍为空或仍不匹配才拒发 |
+| 「搜索聊天记录」也是 `Qt51514QWindowIcon` 独立窗口，面积（726×648）比托盘还原后的主窗（296×388）还大，于是被当成主窗 | 按标题排除辅助窗（以「聊天记录」结尾、`搜一搜`/`朋友圈`/`小程序` 等）；主窗最小化时 rect 停在 `-32000,-32000`，用 `ShowWindow(SW_RESTORE)` 还原而不是判成「没有窗口」；实在找不到就先 `WM_CLOSE` 掉这些残留搜索窗再重试 |
+| 长消息在气泡里折成 3 行，回读按**单行**打分最高只有 1/3，误报 `verified:false` | 除逐行打分外，把聊天区末尾 6 行拼成一块再打一次（覆盖度与顺序无关）；实测同一条从 0.328 → 0.909 |
+
+### browser（内置插件）
+
+驱动一个**独立**的 Chromium（Edge/Chrome，独立端口 + 独立 user-data-dir），
+和 provider 用的那个浏览器不是同一个窗口——那个窗口里跑的是模型自己：
+
+```xml
+<browse-nav url="https://example.com"/>
+<browse-click selector="a.more"/>
+<browse-fill selector="#q" text="关键字"/>
+<browse-text selector="main"/>
+<browse-shot path="screenshots/page.png"/>
+<browse-eval script="document.title"/>   <!-- 默认关闭，需配置 allowEval=true -->
+```
+
+边界：只允许 `http/https`（`file://`、`javascript:`、`chrome://` 一律拒绝）；
+正文按 `maxTextChars`（默认 4000）截断；`browse-eval` 默认关闭；插件卸载时关掉它启动的进程。
+
 ### answer
 
 返回最终答案：
