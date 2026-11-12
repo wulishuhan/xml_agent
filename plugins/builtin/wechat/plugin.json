@@ -1,0 +1,39 @@
+{
+    "name": "wechat",
+    "version": "1.0.0",
+    "kind": "action",
+    "apiVersion": 1,
+    "engines": { "xmlAgent": ">=1.1.0" },
+    "author": "xml-agent",
+    "description": "操作微信桌面版：打开会话 / 发送消息 / 读取当前会话（Windows，OCR 校验会话标题后才允许发送）",
+    "permissions": ["system:window", "system:screen", "workspace:write"],
+    "activation": { "keywords": ["微信", "wechat", "WeChat", "群聊", "发消息", "会话"] },
+    "configSchema": {
+        "maxSendsPer10Min": {
+            "type": "integer",
+            "default": 5,
+            "min": 1,
+            "max": 30,
+            "description": "10 分钟内最多允许发送多少条消息（硬上限 30）"
+        },
+        "ticketTtlSeconds": {
+            "type": "integer",
+            "default": 180,
+            "min": 30,
+            "max": 1800,
+            "description": "wechat-open 打开会话后的有效期，过期后必须重新打开才能发送"
+        },
+        "maxMessageChars": {
+            "type": "integer",
+            "default": 1500,
+            "min": 50,
+            "max": 4000,
+            "description": "单条消息长度上限"
+        },
+        "dryRun": {
+            "type": "boolean",
+            "default": false,
+            "description": "打开后只演练不真正发送（调试用：不粘贴、不按回车）"
+        }
+    }
+}
