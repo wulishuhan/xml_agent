@@ -141,6 +141,69 @@ async function main() {
         await assert.rejects(() => provider.deliverMessage(), /failed to send message/);
     });
 
+    /**
+    真机事故：页面二次水合时，回车和发送按钮都会静默失败 —— 按钮 "clicked"
+    返回成功，消息根本没进会话，整轮任务白等 60 秒才发现「回复未开始」。
+    契约：输入框没清空就是没发出去，必须显式降级或显式报错，不能假装成功。
+    */
+    await check("回车没提交时退回按钮，按钮清空了输入框就算成功", async () => {
+        const provider = makeProvider();
+        let clearCalls = 0;
+        let clicks = 0;
+
+        provider.waitForSplashGone = async () => true;
+        provider.waitForComposerReady = async () => true;
+        provider.findVisibleInput = async () => ({
+            click: async () => {},
+            press: async () => {},
+        });
+        // 第一次（回车后）没清空，第二次（点了发送按钮）才清空
+        provider.waitForInputClear = async () => {
+            clearCalls += 1;
+            return clearCalls >= 2;
+        };
+        provider.clickSendButton = async () => {
+            clicks += 1;
+            return true;
+        };
+
+        await provider.deliverMessage();
+
+        assert.strictEqual(clicks, 1, "回车无效时应退回点击发送按钮");
+        assert.strictEqual(clearCalls, 2, "点完按钮必须再校验一次是否清空");
+    });
+
+    await check("回车与按钮都没提交时报错，而不是继续等回复", async () => {
+        const provider = makeProvider();
+
+        provider.waitForSplashGone = async () => true;
+        provider.waitForComposerReady = async () => true;
+        provider.findVisibleInput = async () => ({
+            click: async () => {},
+            press: async () => {},
+        });
+        provider.waitForInputClear = async () => false;
+        provider.clickSendButton = async () => true;
+
+        await assert.rejects(() => provider.deliverMessage(), /composer still holds text/);
+    });
+
+    await check("发送按钮一直等不到就绪时只告警，仍继续回车", async () => {
+        const provider = makeProvider();
+
+        provider.waitForSplashGone = async () => true;
+        provider.findVisibleInput = async () => ({
+            click: async () => {},
+            press: async () => {},
+        });
+        provider.waitForInputClear = async () => true;
+
+        // 没有 page.locator 的环境直接返回 false，不阻塞
+        assert.strictEqual(await provider.waitForComposerReady(200), false);
+
+        await provider.deliverMessage();
+    });
+
     await check("insertMessage 写入前先等遮罩", async () => {
         const provider = makeProvider();
         const order = [];

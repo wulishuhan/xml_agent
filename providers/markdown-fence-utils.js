@@ -13,11 +13,21 @@ var RE_CODE_PUNCT = new RegExp("[;{}()[]" + BS + "<>]=?");
 var RE_INDENT = new RegExp(NL + BS + "s+" + BS + "S");
 var RE_LEAD_WS = new RegExp("^" + BS + "s+");
 var RE_TRAIL_WS = new RegExp(BS + "s+$");
-// 注意：这里必须与 parse/xml-parse.js 的 validateAction 支持的 action 名称保持一致，
-// 否则大模型回复里只包含 screenshot 时会被当成“没有 XML Action”而丢弃。
-var RE_ACTION = new RegExp(
-    "<(read|write|edit|exec|screenshot|answer|done)(?:" + BS + "s[^>]*)?/?>"
-);
+// 动作名不能写死：插件动作（browse-nav / wechat-read / …）是开放集合，
+// 清单由 providers/action-tag.js 从插件注册表派生，这里只负责拼正则。
+var actionTag = require("./action-tag");
+var actionRegexCache = null;
+var actionRegexSignature = null;
+function getActionRegex() {
+    var names = actionTag.getActionTagNames();
+    var signature = names.join("|");
+    if (signature === actionRegexSignature && actionRegexCache) {
+        return actionRegexCache;
+    }
+    actionRegexSignature = signature;
+    actionRegexCache = new RegExp("<(" + signature + ")(?:" + BS + "s[^>]*)?/?>");
+    return actionRegexCache;
+}
 function balanceMarkdownFences(value) {
     if (value == null) {
         return "";
@@ -75,7 +85,7 @@ function extractXmlFromCandidate(value) {
         text = text.slice(0, text.length - FENCE.length).replace(RE_TRAIL_WS, "");
     }
     text = text.trim();
-    var match = text.match(RE_ACTION);
+    var match = text.match(getActionRegex());
     if (!match) {
         return null;
     }

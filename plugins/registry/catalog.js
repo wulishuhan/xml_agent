@@ -27,6 +27,17 @@ module.exports = {
         return this.actions.has(String(name || ""));
     },
 
+    /**
+    当前注册的全部插件动作名。
+
+    provider 判断「这条回复里有没有 Action」时需要一份完整清单；
+    插件动作是开放集合，任何手写清单都会漂移，只能从这里派生。
+    */
+    listActionNames() {
+        this.load();
+        return Array.from(this.actions.keys());
+    },
+
     getActionDefinition(name) {
         this.load();
         const entry = this.actions.get(String(name || ""));

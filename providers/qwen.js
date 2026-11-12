@@ -1,5 +1,5 @@
 const { BrowserChatProvider } = require("./browser-chat");
-const { containsActionTag } = require("./action-tag");
+const { containsActionTag, getActionTagNames } = require("./action-tag");
 const { balanceMarkdownFences, extractXmlFromCandidate } = require("./markdown-fence-utils");
 const { collectChildFiberCandidate } = require("./dom/fiber");
 
@@ -269,7 +269,7 @@ class QwenProvider extends BrowserChatProvider {
 
         let fiberResult = null;
         try {
-            fiberResult = await target.evaluate(collectChildFiberCandidate);
+            fiberResult = await target.evaluate(collectChildFiberCandidate, getActionTagNames());
         } catch (error) {
             console.warn("[Qwen] fiber extraction failed:", error.message);
         }
@@ -350,7 +350,9 @@ class QwenProvider extends BrowserChatProvider {
 
                 try {
                     const item = await this.extractOne(i, count);
-                    if (item.text) parts.push(item.text);
+                    // 同一条内容被渲染成多个节点时，拼进去就是两份 XML，
+                    // 解析器会报 "received 2"。去重比事后纠错便宜。
+                    if (item.text && parts.indexOf(item.text) === -1) parts.push(item.text);
                 } catch (error) {
                     failed.push(i + ": " + error.message);
                 }
@@ -441,12 +443,75 @@ class QwenProvider extends BrowserChatProvider {
     async insertMessage(message) {
         await this.waitForSplashGone();
 
-        return super.insertMessage(message);
+        await super.insertMessage(message);
+
+        // 落地页（新建对话）的输入框会接受 input.fill() 的赋值，但应用状态还是空的：
+        // DOM 里有字、回车却不发送、发送按钮一直是禁用的，于是消息永远发不出去
+        // （真机表现为 composer still holds text after Enter and send-button attempts）。
+        // 判据用「发送按钮是否变成可点」——它才是应用确实收到了文本的证据。
+        if (await this.waitForComposerReady(2500)) {
+            return;
+        }
+
+        console.warn("[Qwen] composer did not react to fill; retyping with real keystrokes");
+
+        const input = await this.findVisibleInput(this.inputSelectors, 3);
+        if (!input) {
+            return;
+        }
+
+        try {
+            await input.click({ timeout: 5000 });
+            await this.page.keyboard.press("Control+A");
+            await this.page.keyboard.press("Backspace");
+            await this.page.keyboard.type(message, { delay: 1 });
+            await this.sleep(300);
+        } catch (error) {
+            console.warn("[Qwen] keyboard retype failed: " + error.message);
+        }
+    }
+
+    /**
+    等输入区真正可用：发送按钮出现且可点，说明应用已水合完成。
+    页面二次水合时输入框已经能写字，但回车与发送按钮都还没接管事件 ——
+    这时按下去会静默失败，整轮任务要白等一个 60 秒的「回复未开始」才发现。
+    等不到只告警不阻塞：有些版本始终没有匹配的按钮，回车本身仍然有效。
+    */
+    async waitForComposerReady(timeout = 8000) {
+        if (!this.page || typeof this.page.locator !== "function") {
+            return false;
+        }
+
+        const deadline = Date.now() + timeout;
+
+        while (Date.now() < deadline) {
+            for (const selector of SEND_BUTTON_SELECTORS) {
+                try {
+                    const button = this.page.locator(selector).first();
+
+                    if (
+                        (await button.count()) > 0 &&
+                        (await button.isVisible()) &&
+                        (await button.isEnabled())
+                    ) {
+                        return true;
+                    }
+                } catch (error) {
+                    // 选择器没命中就换下一个
+                }
+            }
+
+            await this.sleep(250);
+        }
+
+        console.warn("[Qwen] send button never became ready in " + timeout + "ms; pressing Enter anyway");
+        return false;
     }
 
     /** Qwen 只有输入元素回车这一条提交路径。 */
     async deliverMessage() {
         await this.waitForSplashGone();
+        await this.waitForComposerReady();
 
         // Qwen 的输入区需要一次真实鼠标点击才会接管键盘：仅 focus() 后按 Enter
         // 在当前版本不会触发发送（输入框内容会原样保留）。所以这里显式点击再回车。
@@ -474,15 +539,35 @@ class QwenProvider extends BrowserChatProvider {
                 throw new Error("Qwen failed to send message: " + retryError.message);
             }
         }
-        // 回车仍无效时退回点击发送按钮，避免整个任务卡在"输入框未清空"。
+
+        // 回车到底有没有提交，唯一可靠的信号是「输入框被清空」：Qwen 提交成功一定
+        // 会清空，失败则原样留着。只看"发送按钮点到了"是不够的 —— 按钮被点中但页面
+        // 还没接管事件时，按钮会返回成功、消息根本没进会话。
         if (await this.waitForInputClear(3000)) {
             return;
         }
-        if (!(await this.clickSendButton())) {
-            throw new Error(
-                "Qwen failed to send message: Enter did not submit and no send button matched"
-            );
+
+        if (await this.clickSendButton()) {
+            if (await this.waitForInputClear(3000)) {
+                return;
+            }
+
+            console.warn("[Qwen] send button clicked but composer still holds text; pressing Enter again");
         }
+
+        try {
+            await input.press("Enter");
+        } catch (error) {
+            // 落到下面统一报错
+        }
+
+        if (await this.waitForInputClear(3000)) {
+            return;
+        }
+
+        throw new Error(
+            "Qwen failed to send message: composer still holds text after Enter and send-button attempts"
+        );
     }
 
     /**
