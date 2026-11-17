@@ -29,6 +29,9 @@ const state = {
     profileDir: null,
 };
 
+// ensurePage 的单飞句柄：见 ensurePage() 里的注释
+let pendingPage = null;
+
 const CANDIDATES = [
     "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -157,6 +160,19 @@ function launch(options) {
 }
 
 async function ensurePage(options) {
+    // 单飞：两个动作同时进来时，都会看到「端口没起来」然后各自 launch。
+    // 第二个会因为 profile 目录锁失败退出，但 launchedPid 已经被它覆盖，
+    // 于是 dispose 杀的是一个早已退出的 PID —— 真正的浏览器残留下来。
+    if (pendingPage) {
+        return pendingPage;
+    }
+    pendingPage = openPage(options).finally(() => {
+        pendingPage = null;
+    });
+    return pendingPage;
+}
+
+async function openPage(options) {
     const port = Number(options.port) || DEFAULT_PORT;
 
     if (state.browser && state.page && state.port === port) {

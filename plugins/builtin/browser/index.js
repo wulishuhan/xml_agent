@@ -29,9 +29,11 @@ function setup(ctx) {
         return engine.ensurePage({ port: port, executablePath: executablePath });
     }
 
-    function resolveShot(target) {
+    // fs 只在动作执行期下发（setup 期没有），所以必须用 run 的 ctx。
+    // 这里曾经写成闭包里的 ctx.fs.resolve，真机上 browse-shot 一调就炸。
+    function resolveShot(runCtx, target) {
         const relative = String(target || "screenshots/browser.png");
-        const absolute = ctx.fs.resolve(relative);
+        const absolute = runCtx.fs.resolve(relative);
         fs.mkdirSync(path.dirname(absolute), { recursive: true });
         return { relative: relative.split(path.sep).join("/"), absolute: absolute };
     }
@@ -217,7 +219,7 @@ function setup(ctx) {
         },
         async run(node, runCtx) {
             const page = await withPage();
-            const shot = resolveShot(runCtx.attrs.path);
+            const shot = resolveShot(runCtx, runCtx.attrs.path);
             await page.screenshot({
                 path: shot.absolute,
                 fullPage: runCtx.attrs.fullPage === true,

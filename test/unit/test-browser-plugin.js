@@ -9,6 +9,7 @@ browser 插件的边界单测（不启动浏览器）
 */
 
 const assert = require("assert");
+const os = require("os");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..", "..");
@@ -47,7 +48,8 @@ function makeCtx(config) {
     plugin.setup({
         config: Object.assign({ cdpPort: 9333, allowEval: false, maxTextChars: 500 }, config),
         logger: { debug() {}, info() {}, warn() {}, error() {} },
-        fs: { resolve: (target) => path.resolve(__dirname, String(target || "")) },
+        // setup 期没有 fs（宿主只在动作执行期下发），这里刻意不给：
+        // 插件若在 setup 闭包里用 ctx.fs 会当场炸，正是要测的坑。
         storage: { appendLine() {}, readText: () => "", list: () => [], remove: () => false },
         actions: {
             register(def) {
@@ -135,6 +137,39 @@ check("browse-nav 在 validate 阶段就拦掉非法协议（不会去启动浏�
         const result = await def.run({}, { attrs: { script: "document.title" } });
         assert.strictEqual(result.ok, false);
         assert.match(result.error, /allowEval/);
+    });
+
+    // 真机翻车点：dump 截图这一步如果取 setup 期的 ctx.fs，宿主那里压根没有 fs，
+    // browse-shot 一调就抛 "Cannot read properties of undefined (reading 'resolve')"。
+    await checkAsync("browse-shot 用运行期 fs 落盘，不碰 setup 期的 ctx.fs", async () => {
+        const { actions } = makeCtx();
+        const saved = [];
+        const fakePage = {
+            url: () => "https://example.com/",
+            title: async () => "Example Domain",
+            isClosed: () => false,
+            screenshot: async (options) => {
+                saved.push(options.path);
+            },
+        };
+        const original = engine.ensurePage;
+        engine.ensurePage = async () => fakePage;
+        try {
+            const def = actions.get("browse-shot");
+            const result = await def.run(
+                {},
+                {
+                    attrs: { path: "screenshots/shot.png" },
+                    fs: { resolve: (target) => path.join(os.tmpdir(), "xml-agent-shot", target) },
+                }
+            );
+            assert.strictEqual(result.ok, true);
+            assert.strictEqual(saved.length, 1);
+            assert.ok(saved[0].endsWith("shot.png"), "应落到运行期 fs 解析出来的路径");
+            assert.strictEqual(result.path, "screenshots/shot.png");
+        } finally {
+            engine.ensurePage = original;
+        }
     });
 
     check("面板与清理函数都登记了", () => {
