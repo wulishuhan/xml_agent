@@ -327,6 +327,27 @@ check("超长消息在 validate 阶段被拒", () => {
         assert.strictEqual(second.ok, true, "不相干的内容不该被相似度拦下");
     });
 
+    // 两个 ps1 同时抢微信的后果是互相打断（一个在搜索、一个在粘贴），
+    // 会发进错的会话。所以动作之间要有闸门，忙时直接拒绝而不是排队。
+    await checkAsync("并发时第二个动作被直接拒绝", async () => {
+        const { actions } = makeCtx();
+        let release;
+        const gate = new Promise((resolve) => {
+            release = resolve;
+        });
+        driverImpl = (action) =>
+            gate.then(() => ({ ok: true, action: action, title: "张三", lines: [] }));
+
+        const first = runAction(actions, "wechat-read", {});
+        const second = await runAction(actions, "wechat-read", {});
+        assert.strictEqual(second.ok, false, "并发时应直接拒绝");
+        assert.match(second.error, /还有动作/);
+
+        release();
+        const firstResult = await first;
+        assert.strictEqual(firstResult.ok, true, "先到的那个应该正常完成");
+    });
+
     await checkAsync("dryRun 只校验当前会话，不粘贴回车", async () => {
         const { actions } = makeCtx({ config: { dryRun: true } });
         driverImpl = (action) =>

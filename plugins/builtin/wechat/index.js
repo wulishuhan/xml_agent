@@ -155,6 +155,32 @@ function setup(ctx) {
         return { relative: relative.split(path.sep).join("/"), absolute: absolute };
     }
 
+    /**
+     * 同一时刻只允许一个动作操作微信。
+     *
+     * 每个动作都会 spawn 一个 powershell 去抢焦点、打字、截图；两个并发时
+     * 一个在搜索、另一个已经在粘贴，结果就是消息发进错的会话或者双方一起超时。
+     * 这里忙时直接拒绝而不是排队——排队会让 wechat-status 也跟着卡住，
+     * 而且模型看到「忙」会自己换时机，比静默等待可预测。
+     */
+    let busyWith = null;
+    function guard(name, task) {
+        if (busyWith) {
+            return Promise.resolve({
+                ok: false,
+                action: name,
+                error:
+                    "微信上还有动作在执行（" + busyWith + "），这次没有执行；等它结束后再试一次。",
+            });
+        }
+        busyWith = name;
+        return Promise.resolve()
+            .then(task)
+            .finally(() => {
+                busyWith = null;
+            });
+    }
+
     // ------------------------------------------------------------ actions
 
     ctx.actions.register({
@@ -201,27 +227,33 @@ function setup(ctx) {
                 }
             }
         },
-        async run(node, runCtx) {
-            const to = String(runCtx.attrs.to || "").trim();
-            const shot = screenshotPath(runCtx, runCtx.attrs.path, "screenshots/wechat-open.png");
-            const result = await runAction("open", {
-                payload: to,
-                outPng: shot.absolute,
-                timeoutMs: 90000,
-            });
+        run(node, runCtx) {
+            return guard("wechat-open", async () => {
+                const to = String(runCtx.attrs.to || "").trim();
+                const shot = screenshotPath(
+                    runCtx,
+                    runCtx.attrs.path,
+                    "screenshots/wechat-open.png"
+                );
+                const result = await runAction("open", {
+                    payload: to,
+                    outPng: shot.absolute,
+                    timeoutMs: 90000,
+                });
 
-            if (result.ok && result.matched) {
-                state.ticket = { title: result.chatTitle || to, at: Date.now() };
-                ctx.logger.info("已打开会话：" + state.ticket.title);
-            } else if (result.ok === false) {
-                state.ticket = null;
-            }
+                if (result.ok && result.matched) {
+                    state.ticket = { title: result.chatTitle || to, at: Date.now() };
+                    ctx.logger.info("已打开会话：" + state.ticket.title);
+                } else if (result.ok === false) {
+                    state.ticket = null;
+                }
 
-            return Object.assign({}, result, {
-                action: "wechat-open",
-                target: to,
-                path: result.path ? shot.relative : null,
-                ticket: ticketSnapshot(),
+                return Object.assign({}, result, {
+                    action: "wechat-open",
+                    target: to,
+                    path: result.path ? shot.relative : null,
+                    ticket: ticketSnapshot(),
+                });
             });
         },
         meta: {
@@ -271,123 +303,134 @@ function setup(ctx) {
                 );
             }
         },
-        async run(node, runCtx) {
-            const text = String(runCtx.attrs.text || "");
-            const ticket = ticketSnapshot();
+        run(node, runCtx) {
+            return guard("wechat-send", async () => {
+                const text = String(runCtx.attrs.text || "");
+                const ticket = ticketSnapshot();
 
-            if (!ticket.active) {
-                return {
-                    ok: false,
-                    action: "wechat-send",
-                    sent: false,
-                    error: "还没有打开并校验过会话（或已过期）。先调用 wechat-open 打开目标会话，再发送。",
-                };
-            }
-
-            const quota = quotaSnapshot();
-            if (quota.used >= quota.limit) {
-                return {
-                    ok: false,
-                    action: "wechat-send",
-                    sent: false,
-                    error:
-                        "10 分钟内已发送 " +
-                        quota.used +
-                        " 条，达到上限 " +
-                        quota.limit +
-                        "（" +
-                        quota.resetAt +
-                        " 重置）。这条没有发出。",
-                    quota: quota,
-                };
-            }
-
-            const now = Date.now();
-            // 只看同会话最近 3 条：换会话后说同样的「收到」是正常的。
-            // 模型实测会把同一句话改几个字重发（慢点→慢一些），所以按相似度判。
-            const duplicate = history
-                .slice(-3)
-                .reverse()
-                .find(
-                    (item) =>
-                        item &&
-                        item.chat === ticket.title &&
-                        Number.isFinite(Date.parse(item.ts)) &&
-                        now - Date.parse(item.ts) < DUPLICATE_WINDOW_MS &&
-                        // 审计日志只留 80 字，比较时把新文本截到同样长度，
-                        // 否则长消息重发会被长度差拉低相似度而漏判。
-                        similarity(item.text, text.slice(0, item.text.length)) >=
-                            DUPLICATE_SIMILARITY
-                );
-            if (duplicate) {
-                return {
-                    ok: false,
-                    action: "wechat-send",
-                    sent: false,
-                    error:
-                        "这段内容 " +
-                        Math.round(DUPLICATE_WINDOW_MS / 1000) +
-                        " 秒内已经发过一次（相似度 " +
-                        similarity(duplicate.text, text).toFixed(2) +
-                        "），疑似重复触发；这次没有发。",
-                };
-            }
-
-            if (dryRun) {
-                // 只确认「当前会话还是不是那个会话」，不粘贴、不回车
-                const probe = await runAction("read", { timeoutMs: 45000 });
-                return {
-                    ok: probe.ok === true,
-                    action: "wechat-send",
-                    sent: false,
-                    dryRun: true,
-                    chatTitle: probe.title,
-                    error: probe.ok ? null : probe.error,
-                };
-            }
-
-            const shot = screenshotPath(runCtx, runCtx.attrs.path, "screenshots/wechat-send.png");
-            const result = await runAction("send", {
-                payload: text,
-                expectTitle: ticket.title,
-                outPng: shot.absolute,
-                timeoutMs: 60000,
-            });
-
-            if (result.ok && result.chatTitle) {
-                const entry = {
-                    ts: new Date().toISOString(),
-                    chat: result.chatTitle,
-                    chars: text.length,
-                    text: text.slice(0, 80),
-                    verified: result.verified === true,
-                };
-                history.push(entry);
-                if (history.length > 200) {
-                    history.shift();
+                if (!ticket.active) {
+                    return {
+                        ok: false,
+                        action: "wechat-send",
+                        sent: false,
+                        error: "还没有打开并校验过会话（或已过期）。先调用 wechat-open 打开目标会话，再发送。",
+                    };
                 }
-                state2.sends.push(Date.now());
-                try {
-                    ctx.storage.appendLine(SEND_LOG, JSON.stringify(entry));
-                } catch (error) {
-                    ctx.logger.warn("发送记录写入失败：" + error.message);
-                }
-                ctx.logger.info(
-                    "已发送到 " +
-                        result.chatTitle +
-                        "（" +
-                        text.length +
-                        " 字符，回读校验 " +
-                        (result.verified ? "通过" : "未通过") +
-                        "）"
-                );
-            }
 
-            return Object.assign({}, result, {
-                action: "wechat-send",
-                chat: result.chatTitle || ticket.title,
-                quota: quotaSnapshot(),
-                path: result.path ? shot.relative : null,
+                const quota = quotaSnapshot();
+                if (quota.used >= quota.limit) {
+                    return {
+                        ok: false,
+                        action: "wechat-send",
+                        sent: false,
+                        error:
+                            "10 分钟内已发送 " +
+                            quota.used +
+                            " 条，达到上限 " +
+                            quota.limit +
+                            "（" +
+                            quota.resetAt +
+                            " 重置）。这条没有发出。",
+                        quota: quota,
+                    };
+                }
+
+                const now = Date.now();
+                // 只看同会话最近 3 条：换会话后说同样的「收到」是正常的。
+                // 模型实测会把同一句话改几个字重发（慢点→慢一些），所以按相似度判。
+                const duplicate = history
+                    .slice(-3)
+                    .reverse()
+                    .find(
+                        (item) =>
+                            item &&
+                            item.chat === ticket.title &&
+                            Number.isFinite(Date.parse(item.ts)) &&
+                            now - Date.parse(item.ts) < DUPLICATE_WINDOW_MS &&
+                            // 审计日志只留 80 字，比较时把新文本截到同样长度，
+                            // 否则长消息重发会被长度差拉低相似度而漏判。
+                            similarity(item.text, text.slice(0, item.text.length)) >=
+                                DUPLICATE_SIMILARITY
+                    );
+                if (duplicate) {
+                    return {
+                        ok: false,
+                        action: "wechat-send",
+                        sent: false,
+                        error:
+                            "这段内容 " +
+                            Math.round(DUPLICATE_WINDOW_MS / 1000) +
+                            " 秒内已经发过一次（相似度 " +
+                            similarity(duplicate.text, text).toFixed(2) +
+                            "），疑似重复触发；这次没有发。",
+                    };
+                }
+
+                if (dryRun) {
+                    // 只确认「当前会话还是不是那个会话」，不粘贴、不回车
+                    const probe = await runAction("read", { timeoutMs: 45000 });
+                    return {
+                        ok: probe.ok === true,
+                        action: "wechat-send",
+                        sent: false,
+                        dryRun: true,
+                        chatTitle: probe.title,
+                        error: probe.ok ? null : probe.error,
+                    };
+                }
+
+                const shot = screenshotPath(
+                    runCtx,
+                    runCtx.attrs.path,
+                    "screenshots/wechat-send.png"
+                );
+                const result = await runAction("send", {
+                    payload: text,
+                    expectTitle: ticket.title,
+                    outPng: shot.absolute,
+                    timeoutMs: 60000,
+                });
+
+                if (result.ok && result.chatTitle) {
+                    const entry = {
+                        ts: new Date().toISOString(),
+                        chat: result.chatTitle,
+                        chars: text.length,
+                        text: text.slice(0, 80),
+                        verified: result.verified === true,
+                    };
+                    history.push(entry);
+                    if (history.length > 200) {
+                        history.shift();
+                    }
+                    state2.sends.push(Date.now());
+                    // 只留窗口内的：否则长跑之后数组无限长，每次配额检查都要全量过滤
+                    const cutoff = Date.now() - SEND_WINDOW_MS;
+                    while (state2.sends.length > 0 && state2.sends[0] < cutoff) {
+                        state2.sends.shift();
+                    }
+                    try {
+                        ctx.storage.appendLine(SEND_LOG, JSON.stringify(entry));
+                    } catch (error) {
+                        ctx.logger.warn("发送记录写入失败：" + error.message);
+                    }
+                    ctx.logger.info(
+                        "已发送到 " +
+                            result.chatTitle +
+                            "（" +
+                            text.length +
+                            " 字符，回读校验 " +
+                            (result.verified ? "通过" : "未通过") +
+                            "）"
+                    );
+                }
+
+                return Object.assign({}, result, {
+                    action: "wechat-send",
+                    chat: result.chatTitle || ticket.title,
+                    quota: quotaSnapshot(),
+                    path: result.path ? shot.relative : null,
+                });
             });
         },
         meta: {
@@ -405,6 +448,19 @@ function setup(ctx) {
             summary: (result) =>
                 "wechat-send " + (result.chat || "-") + (result.sent === false ? " (refused)" : ""),
             collectImages: (result) => (result.path ? [result.path] : []),
+            // 只回传模型判断需要的东西：引擎的 stdoutTail / path 之类是给人排查的，
+            // 塞进上下文只会挤掉真正有用的部分。
+            promptResult: (result) => ({
+                ok: result.ok,
+                sent: result.sent,
+                action: result.action,
+                chat: result.chat,
+                verified: result.verified,
+                echoScore: result.echoScore,
+                warn: result.warn,
+                quota: result.quota,
+                error: result.error,
+            }),
         },
     });
 
@@ -415,13 +471,22 @@ function setup(ctx) {
                 path: { type: "string", maxLength: 200 },
             },
         },
-        async run(node, runCtx) {
-            const shot = screenshotPath(runCtx, runCtx.attrs.path, "screenshots/wechat-read.png");
-            const result = await runAction("read", { outPng: shot.absolute, timeoutMs: 45000 });
-            return Object.assign({}, result, {
-                action: "wechat-read",
-                count: Array.isArray(result.lines) ? result.lines.length : 0,
-                path: result.path ? shot.relative : null,
+        run(node, runCtx) {
+            return guard("wechat-read", async () => {
+                const shot = screenshotPath(
+                    runCtx,
+                    runCtx.attrs.path,
+                    "screenshots/wechat-read.png"
+                );
+                const result = await runAction("read", {
+                    outPng: shot.absolute,
+                    timeoutMs: 45000,
+                });
+                return Object.assign({}, result, {
+                    action: "wechat-read",
+                    count: Array.isArray(result.lines) ? result.lines.length : 0,
+                    path: result.path ? shot.relative : null,
+                });
             });
         },
         meta: {

@@ -111,16 +111,22 @@ function runAction(action, options) {
         let stdout = "";
         let stderr = "";
         let settled = false;
+        let timedOut = false;
 
         const child = spawn("powershell.exe", args, { windowsHide: true });
         const timer = setTimeout(() => {
+            timedOut = true;
             killTree(child);
-            finish({
-                ok: false,
-                action: action,
-                error: "驱动脚本超时（" + timeoutMs + "ms）",
-                timedOut: true,
-            });
+            // taskkill 是异步的：立刻 resolve 会让调用方马上发起下一个动作，
+            // 而残留进程可能还占着微信窗口。留一点时间等它真的退出。
+            setTimeout(() => {
+                finish({
+                    ok: false,
+                    action: action,
+                    error: "驱动脚本超时（" + timeoutMs + "ms），已终止",
+                    timedOut: true,
+                });
+            }, 1000);
         }, timeoutMs);
 
         function finish(result) {
@@ -165,6 +171,17 @@ function runAction(action, options) {
             finish({ ok: false, action: action, error: "无法启动 PowerShell：" + error.message });
         });
         child.on("close", () => {
+            if (timedOut) {
+                // 超时路径已经给过结论，不要在 close 里改口成「没有返回结果」
+                finish({
+                    ok: false,
+                    action: action,
+                    error: "驱动脚本超时（" + timeoutMs + "ms），已终止",
+                    timedOut: true,
+                });
+                return;
+            }
+
             let parsed = null;
             try {
                 parsed = JSON.parse(fs.readFileSync(outJson, "utf8"));

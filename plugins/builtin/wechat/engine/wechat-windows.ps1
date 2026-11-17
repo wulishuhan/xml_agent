@@ -254,6 +254,11 @@ function Close-AuxWindows {
 }
 
 function Find-MainWindow {
+    # -NoRestore: find the handle only, do not pull a tray-minimized window
+    # back onto the screen. status just reports; being asked a question should
+    # not make WeChat pop up.
+    param([switch]$NoRestore)
+
     $best = [IntPtr]::Zero
     $bestArea = 0
     $mini = [IntPtr]::Zero
@@ -277,6 +282,7 @@ function Find-MainWindow {
     if ($best -ne [IntPtr]::Zero) { return $best }
 
     if ($mini -ne [IntPtr]::Zero) {
+        if ($NoRestore) { return $mini }
         [void][WxWin]::ShowWindow($mini, 9)
         Start-Sleep -Milliseconds 500
         if (-not (Test-Offscreen $mini)) { return $mini }
@@ -441,8 +447,8 @@ function Test-TitleMatch([string]$title, [string]$target) {
     return $false
 }
 
-function Get-MainHandle {
-    return Find-MainWindow
+function Get-MainHandle([switch]$NoRestore) {
+    return Find-MainWindow -NoRestore:$NoRestore
 }
 
 function Get-WeChatExe {
@@ -629,8 +635,9 @@ function Get-HeaderOcr([string]$pngPath) {
 # ---------------------------------------------------------------- actions
 
 $started = Get-Date
-# status only reports; it must not launch WeChat just to answer "not running".
-$mainHwnd = Get-MainHandle
+# status only reports; it must not launch WeChat just to answer "not running",
+# and it must not drag a tray-minimized window back onto the screen.
+$mainHwnd = Get-MainHandle -NoRestore:($Action -eq "status")
 
 if ($Action -eq "status") {
     if ($mainHwnd -eq [IntPtr]::Zero) {
@@ -782,8 +789,10 @@ if ($Action -eq "open") {
     for ($i = 0; $i -lt $unique.Count; $i++) {
         $candidate = $unique[$i]
         if ($i -gt 0) {
-            # previous attempt landed on a history search or another panel: back
-            # out with a single Escape, then redo the search from the main window
+            # previous attempt landed on a history search or another panel: redo
+            # the search from the main window. Never send Escape here -- it
+            # closes the main window into the tray, and then every later action
+            # sees "no main window".
             Set-SearchText $target
             $dropdown = Find-Dropdown $mainHwnd $mainRect
             if ($dropdown -eq [IntPtr]::Zero) { continue }
@@ -840,13 +849,18 @@ if ($Action -eq "read") {
     if (@($head).Count -gt 0) { $title = (@($head) | Sort-Object -Property cy | Select-Object -First 1).text }
     if ($OutPng) { Copy-Item -LiteralPath $mainPng -Destination $OutPng -Force }
     Remove-Item -LiteralPath $mainPng -ErrorAction SilentlyContinue
+    # Reading nothing is not the same as an empty chat: it usually means the
+    # captured frame was not repainted yet. Report ok=false so the caller knows
+    # this attempt failed to read, instead of assuming nobody said anything.
+    $readAnything = (@($head).Count -gt 0) -or (@($body).Count -gt 0)
     Write-Result ([ordered]@{
-            ok       = $true
+            ok       = $readAnything
             action   = "read"
             title    = $title
             lines    = @($body | Sort-Object -Property cy | ForEach-Object { $_.text })
             path     = $(if ($OutPng) { $OutPng } else { $null })
             ocrError = $(if ($ocrError) { $ocrError } else { $null })
+            error    = $(if ($readAnything) { $null } else { "OCR read nothing from the window" + $(if ($ocrError) { ": " + $ocrError } else { "" }) })
         })
     exit 0
 }
@@ -895,11 +909,26 @@ if ($Action -eq "send") {
         }
     }
 
-    Set-Clipboard -Value $text
-    Start-Sleep -Milliseconds 180
-    [System.Windows.Forms.SendKeys]::SendWait("^v")
-    Start-Sleep -Milliseconds 420
-    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    # SendKeys throws when the foreground window changed between the focus gate
+    # and this point (the user clicked something, a modal popped up). Catch it
+    # here so the caller gets a structured "not sent" instead of a script crash,
+    # which the driver can only report as "no result".
+    try {
+        Set-Clipboard -Value $text
+        Start-Sleep -Milliseconds 180
+        [System.Windows.Forms.SendKeys]::SendWait("^v")
+        Start-Sleep -Milliseconds 420
+        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    } catch {
+        Write-Result ([ordered]@{
+                ok      = $false
+                action  = "send"
+                sent    = $false
+                error   = "keystroke injection failed: " + $_.Exception.Message
+                current = $preTitle
+            })
+        exit 0
+    }
     Start-Sleep -Milliseconds 1500
 
     $mainPng = [System.IO.Path]::Combine([System.IO.Path]::GetTempPath(), "wx-sent-" + [guid]::NewGuid().ToString("N") + ".png")
@@ -930,13 +959,20 @@ if ($Action -eq "send") {
         $s = Get-Coverage $tail $text
         if ($s -gt $best) { $best = $s }
     }
+    # ok means "the flow completed", sent means "read-back found the bubble".
+    # They are separate because read-back depends on OCR: a low score can be a
+    # misread rather than a failed send. Still, the caller must know, so emit a
+    # warn telling it to confirm with wechat-read.
+    $verified = ($best -ge 0.55)
     Write-Result ([ordered]@{
             ok        = $true
+            sent      = $verified
             action    = "send"
             chatTitle = $(if ($preTitle) { $preTitle } else { $title })
-            verified  = ($best -ge 0.55)
+            verified  = $verified
             echoScore = [Math]::Round($best, 3)
             path      = $(if ($OutPng) { $OutPng } else { $null })
+            warn      = $(if ($verified) { $null } else { "read-back score " + [Math]::Round($best, 3) + ": the message may not have been sent; confirm with wechat-read" })
         })
     exit 0
 }
