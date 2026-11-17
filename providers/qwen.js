@@ -504,7 +504,9 @@ class QwenProvider extends BrowserChatProvider {
             await this.sleep(250);
         }
 
-        console.warn("[Qwen] send button never became ready in " + timeout + "ms; pressing Enter anyway");
+        console.warn(
+            "[Qwen] send button never became ready in " + timeout + "ms; pressing Enter anyway"
+        );
         return false;
     }
 
@@ -552,7 +554,9 @@ class QwenProvider extends BrowserChatProvider {
                 return;
             }
 
-            console.warn("[Qwen] send button clicked but composer still holds text; pressing Enter again");
+            console.warn(
+                "[Qwen] send button clicked but composer still holds text; pressing Enter again"
+            );
         }
 
         try {
