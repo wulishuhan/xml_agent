@@ -18,6 +18,27 @@
                     <button
                         type="button"
                         class="btn"
+                        :class="{ active: showCreate }"
+                        :disabled="busy || editing"
+                        :title="showCreate ? t('skills.newSkillClose') : t('skills.newSkillTitle')"
+                        @click="toggleCreate"
+                    >
+                        {{ showCreate ? t("skills.newSkillCancel") : t("skills.newSkill") }}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn"
+                        :disabled="busy || editing || !workspace"
+                        :title="
+                            workspace ? t('skills.syncTitle') : t('skills.installNeedsWorkspace')
+                        "
+                        @click="syncAll"
+                    >
+                        {{ t("skills.sync") }}
+                    </button>
+                    <button
+                        type="button"
+                        class="btn"
                         :disabled="busy || editing"
                         :title="editing ? t('skills.finishEditingFirst') : t('skills.reloadTitle')"
                         @click="reload"
@@ -39,6 +60,57 @@
                 <template v-else>
                     <div v-if="errorMessage" class="skills-alert">{{ errorMessage }}</div>
                     <div v-if="notice" class="skills-notice">{{ notice }}</div>
+                    <!-- 新建技能：名称 + 何时使用 + 内容，后端组装成一份自包含文档 -->
+                    <section v-if="showCreate" class="skills-create">
+                        <h3>{{ t("skills.newSkill") }}</h3>
+                        <label class="skills-create-field">
+                            <span>{{ t("skills.field.name") }}</span>
+                            <input
+                                v-model="createForm.name"
+                                type="text"
+                                spellcheck="false"
+                                :placeholder="t('skills.field.namePlaceholder')"
+                            />
+                        </label>
+                        <label class="skills-create-field">
+                            <span>{{ t("skills.field.whenToUse") }}</span>
+                            <input
+                                v-model="createForm.whenToUse"
+                                type="text"
+                                :placeholder="t('skills.field.whenToUsePlaceholder')"
+                            />
+                        </label>
+                        <label class="skills-create-field">
+                            <span>{{ t("skills.field.content") }}</span>
+                            <textarea
+                                v-model="createForm.content"
+                                rows="10"
+                                spellcheck="false"
+                                :placeholder="t('skills.field.contentPlaceholder')"
+                            ></textarea>
+                        </label>
+                        <div class="skills-create-actions">
+                            <button
+                                type="button"
+                                class="btn btn-primary"
+                                :disabled="busy || !canCreate"
+                                @click="createNew"
+                            >
+                                {{ t("skills.create") }}
+                            </button>
+                            <button
+                                type="button"
+                                class="btn"
+                                :disabled="busy"
+                                @click="toggleCreate"
+                            >
+                                {{ t("skills.cancel") }}
+                            </button>
+                            <span class="skills-create-hint">
+                                {{ t("skills.createHint", { source: createForm.source }) }}
+                            </span>
+                        </div>
+                    </section>
                     <div v-if="!workspace" class="skills-warning">
                         <strong>{{ t("skills.noWorkspaceTitle") }}</strong>
                         <span>{{ t("skills.noWorkspaceBody") }}</span>
@@ -222,6 +294,10 @@
                                         <span>{{ t("skills.meta.updated") }}</span>
                                         <code>{{ formatDate(detail.modifiedAt) }}</code>
                                     </div>
+                                    <div v-if="detail.whenToUse" class="skills-meta-row">
+                                        <span>{{ t("skills.meta.whenToUse") }}</span>
+                                        <code>{{ detail.whenToUse }}</code>
+                                    </div>
                                     <div v-if="detail.tags.length" class="skills-meta-row">
                                         <span>{{ t("skills.meta.tags") }}</span>
                                         <code>{{ detail.tags.join(", ") }}</code>
@@ -229,11 +305,24 @@
                                 </div>
                                 <div class="skills-doc" :class="{ 'skills-doc-editing': editing }">
                                     <div v-if="editing" class="skills-editor">
+                                        <label class="skills-editor-trigger">
+                                            <span>{{ t("skills.field.whenToUse") }}</span>
+                                            <input
+                                                v-model="draftTrigger"
+                                                type="text"
+                                                spellcheck="false"
+                                                :disabled="busy"
+                                                :placeholder="
+                                                    t('skills.field.whenToUsePlaceholder')
+                                                "
+                                            />
+                                        </label>
                                         <textarea
                                             v-model="draft"
                                             class="skills-editor-input"
                                             spellcheck="false"
                                             :disabled="busy"
+                                            :placeholder="t('skills.field.content')"
                                             @keydown.ctrl.s.prevent="save(detail)"
                                             @keydown.meta.s.prevent="save(detail)"
                                         ></textarea>
@@ -270,11 +359,13 @@
 <script setup>
     import { computed, onMounted, ref, watch } from "vue";
     import {
+        createSkill,
         getSkill,
         getSkills,
         installSkill,
         removeSkill,
         setSkillEnabled,
+        syncSkills,
         updateSkill,
     } from "../services/agent-api.js";
     import { renderMarkdown } from "../services/markdown.mjs";
@@ -303,6 +394,11 @@
     // 编辑态只改本地草稿，按 Save 才落盘，避免每敲一个字就写文件
     const editing = ref(false);
     const draft = ref("");
+    // 「何时使用」单独一个字段：后端据此同时写用途一行与正文小节
+    const draftTrigger = ref("");
+    // 新建技能表单（默认落 user 来源，跨工作区共享）
+    const showCreate = ref(false);
+    const createForm = ref({ name: "", whenToUse: "", content: "", source: "user" });
     const grouped = computed(() => {
         return SOURCE_GROUPS.map((group) => ({
             source: group.source,
@@ -332,11 +428,35 @@
         }
         return renderMarkdown(detail.value.body || "");
     });
+    // 结构化保存时正文不含「何时使用」小节，用后端给的 draftContent 做基准；
+    // 旧服务端没有这个字段时退回整篇 content。
+    function baseContent(doc) {
+        if (!doc) {
+            return "";
+        }
+        return typeof doc.draftContent === "string" ? doc.draftContent : doc.content || "";
+    }
+    function baseTrigger(doc) {
+        if (!doc) {
+            return "";
+        }
+        return doc.whenToUse || "";
+    }
     const dirty = computed(() => {
         if (!editing.value || !detail.value) {
             return false;
         }
-        return draft.value !== (detail.value.content || "");
+        return (
+            draft.value !== baseContent(detail.value) ||
+            draftTrigger.value !== baseTrigger(detail.value)
+        );
+    });
+    const canCreate = computed(() => {
+        const form = createForm.value;
+        return (
+            String(form.name || "").trim().length > 0 &&
+            String(form.content || "").trim().length > 0
+        );
     });
     const draftChars = computed(() => draft.value.length);
     const draftLines = computed(() => (draft.value ? draft.value.split("\n").length : 0));
@@ -433,6 +553,7 @@
         selectedId.value = skill.id;
         editing.value = false;
         draft.value = "";
+        draftTrigger.value = "";
         loadDetail(skill.id);
     }
     async function reload() {
@@ -516,7 +637,8 @@
             }
             notice.value = t("skills.notice.copied");
         }
-        draft.value = detail.value ? detail.value.content || "" : "";
+        draft.value = baseContent(detail.value);
+        draftTrigger.value = baseTrigger(detail.value);
         editing.value = true;
     }
     async function save(skill) {
@@ -527,9 +649,20 @@
         errorMessage.value = "";
         notice.value = "";
         try {
-            await updateSkill(skill.id, draft.value, props.workspace);
+            // 结构化保存：后端把「何时使用」同时写进 frontmatter 用途一行与正文小节，
+            // 重复保存不会追加出第二个小节。
+            await updateSkill(
+                skill.id,
+                {
+                    name: skill.name,
+                    whenToUse: draftTrigger.value,
+                    content: draft.value,
+                },
+                props.workspace
+            );
             editing.value = false;
             draft.value = "";
+            draftTrigger.value = "";
             notice.value = t("skills.notice.saved");
             await load();
         } catch (error) {
@@ -541,6 +674,66 @@
     function cancelEdit() {
         editing.value = false;
         draft.value = "";
+        draftTrigger.value = "";
+    }
+    function toggleCreate() {
+        showCreate.value = !showCreate.value;
+        if (!showCreate.value) {
+            createForm.value = { name: "", whenToUse: "", content: "", source: "user" };
+        }
+        errorMessage.value = "";
+    }
+    /**
+     * 新建技能：后端把「何时使用」同时写进用途一行与正文小节。
+     * 默认落 user 来源（跨工作区共享），Agent 下次启动会自动同步进工作区。
+     */
+    async function createNew() {
+        if (!canCreate.value || busy.value) {
+            return;
+        }
+        busy.value = true;
+        errorMessage.value = "";
+        notice.value = "";
+        try {
+            const result = await createSkill({
+                name: createForm.value.name,
+                whenToUse: createForm.value.whenToUse,
+                content: createForm.value.content,
+                source: createForm.value.source,
+                workspace: props.workspace || "",
+            });
+            notice.value = t("skills.notice.created", { id: result.id });
+            createForm.value = { name: "", whenToUse: "", content: "", source: "user" };
+            showCreate.value = false;
+            selectedId.value = result.id;
+            await load();
+            await loadDetail(result.id);
+        } catch (error) {
+            errorMessage.value = error.message;
+        } finally {
+            busy.value = false;
+        }
+    }
+    /** 手动把内置 / 用户级技能同步进当前工作区（Agent 启动时本就会自动做一次）。 */
+    async function syncAll() {
+        if (!props.workspace || busy.value) {
+            return;
+        }
+        busy.value = true;
+        errorMessage.value = "";
+        notice.value = "";
+        try {
+            const result = await syncSkills(props.workspace);
+            const changed = (result.installed || []).length + (result.updated || []).length;
+            notice.value = changed
+                ? t("skills.notice.synced", { count: changed })
+                : t("skills.notice.upToDate");
+            await load();
+        } catch (error) {
+            errorMessage.value = error.message;
+        } finally {
+            busy.value = false;
+        }
     }
     watch(
         () => props.workspace,
@@ -549,6 +742,7 @@
             detail.value = null;
             editing.value = false;
             draft.value = "";
+            draftTrigger.value = "";
             load();
         }
     );
@@ -622,6 +816,10 @@
         display: flex;
         align-items: center;
         gap: 8px;
+    }
+    .skills-header-actions .btn.active {
+        border-color: var(--c-accent);
+        color: var(--c-accent);
     }
     .skills-body {
         display: flex;
@@ -916,6 +1114,77 @@
         min-height: 0;
         flex: 1;
         flex-direction: column;
+    }
+    /* 结构化编辑：「何时使用」单独一行，正文只放指令 */
+    .skills-editor-trigger {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 20px;
+        border-bottom: 1px solid var(--c-border-soft);
+        background: var(--c-elevated-bg);
+        color: var(--c-text-muted);
+        font-size: 11px;
+    }
+    .skills-editor-trigger span {
+        flex: 0 0 auto;
+    }
+    .skills-editor-trigger input {
+        min-width: 0;
+        flex: 1;
+        padding: 5px 8px;
+        border: 1px solid var(--c-border-strong);
+        border-radius: 6px;
+        background: var(--c-panel-bg);
+        color: var(--c-text-body);
+        font-size: 11.5px;
+        outline: none;
+    }
+    .skills-create {
+        display: flex;
+        margin-bottom: 12px;
+        padding: 12px 14px;
+        border: 1px solid var(--c-border-strong);
+        border-radius: 10px;
+        background: var(--c-elevated-bg);
+        flex-direction: column;
+        gap: 8px;
+    }
+    .skills-create h3 {
+        margin: 0;
+        color: var(--c-text-strong);
+        font-size: 12.5px;
+        font-weight: 650;
+    }
+    .skills-create-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        color: var(--c-text-muted);
+        font-size: 11px;
+    }
+    .skills-create-field input,
+    .skills-create-field textarea {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid var(--c-border-strong);
+        border-radius: 6px;
+        background: var(--c-panel-bg);
+        color: var(--c-text-body);
+        font-size: 11.5px;
+        font-family: inherit;
+        outline: none;
+        resize: vertical;
+    }
+    .skills-create-actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .skills-create-hint {
+        color: var(--c-text-faint);
+        font-size: 10.5px;
     }
     .skills-editor-input {
         min-height: 0;

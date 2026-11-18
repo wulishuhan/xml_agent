@@ -283,6 +283,11 @@ select {
     background: var(--c-danger);
 }
 
+/* 排队中：跟 running 区分开，用警示色而不是成功色 */
+.dot-queued {
+    background: var(--c-warning-text);
+}
+
 .dot-stopped,
 .dot-interrupted {
     background: var(--c-text-soft);
@@ -594,6 +599,13 @@ select {
     border-color: #663331;
     background: rgb(248 81 73 / 12%);
     color: var(--c-danger-text);
+}
+
+/* 排队中的会话状态标签 */
+.status-queued {
+    border-color: #5c5222;
+    background: rgb(203 175 74 / 12%);
+    color: var(--c-warning-text);
 }
 
 .status-stopped,

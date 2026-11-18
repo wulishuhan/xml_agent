@@ -3,6 +3,7 @@ const { EventEmitter } = require("events");
 const { Agent } = require("../../agent-core");
 const { getRegistrySafe } = require("../../plugins/registry");
 const contextBudget = require("./context-budget");
+const { runGate } = require("./run-gate");
 
 /**
 上下文预算的采样间隔（步）。
@@ -47,6 +48,8 @@ class AgentSession extends EventEmitter {
         this.finishedAt = null;
         // 记录本 session 内运行的次数（同一会话可多次运行，复用同一个 session）。
         this.runCount = 0;
+        // 并发闸门排队位置（仅 status === "queued" 时有意义）。
+        this.queuePosition = null;
         // 上下文窗口：默认 1M，可用 XML_AGENT_CONTEXT_LIMIT 覆盖
         this.contextLimit = contextBudget.normalizeLimit(process.env.XML_AGENT_CONTEXT_LIMIT);
         this.contextLevel = "normal";
@@ -69,7 +72,9 @@ class AgentSession extends EventEmitter {
             this.output = data.output;
         }
         if (typeof data.status === "string") {
-            this.status = data.status;
+            // 排队状态只存在于进程内存：重启后队列不存在，归一回 created，并清掉排队位置。
+            this.status = data.status === "queued" ? "created" : data.status;
+            this.queuePosition = null;
         }
         if (data.conversationId) {
             this.conversationId = data.conversationId;
@@ -256,6 +261,28 @@ class AgentSession extends EventEmitter {
         if (!this.task || !this.task.trim()) {
             throw new Error("Task is required before starting agent");
         }
+        // 并发闸门：同一浏览器/账号同时最多 maxConcurrentSessions 个会话运行。
+        // 排不到槽位就进入 queued，等前面会话结束后自动启动；排队不算失败，不抛错。
+        if (!runGate.acquire(this.id)) {
+            this.status = "queued";
+            // 先入队再取位置，否则第二个及以后的会话都会显示「第 1 位」。
+            runGate.enqueue(this.id, () => this._begin());
+            this.queuePosition = runGate.positionOf(this.id) || 1;
+            this.addOutput(
+                "system",
+                "⏳ Waiting in queue (position " + this.queuePosition + ")..."
+            );
+            this.emit("queued", { id: this.id, position: this.queuePosition });
+            return this;
+        }
+        return this._begin();
+    }
+
+    /**
+     * 真正启动 Agent（已获得并发槽位）。
+     */
+    _begin() {
+        this.queuePosition = null;
         this.status = "running";
         this.startedAt = Date.now();
         this.finishedAt = null;
@@ -337,6 +364,8 @@ class AgentSession extends EventEmitter {
             throw error;
         } finally {
             this.agent = null;
+            // 释放并发槽位：会唤醒下一个排队会话（幂等）。
+            runGate.release(this.id);
             if (this.plugins && typeof this.plugins.emitHook === "function") {
                 try {
                     this.plugins.emitHook("session.finished", this.getInfo());
@@ -347,6 +376,16 @@ class AgentSession extends EventEmitter {
         }
     }
     async stop() {
+        if (this.status === "queued") {
+            // 排队中取消：移出队列，避免醒来后又启动。
+            runGate.release(this.id);
+            this.queuePosition = null;
+            this.status = "stopped";
+            this.finishedAt = Date.now();
+            this.addOutput("system", "⏹ Agent stopped before start");
+            this.emit("finished", this.getInfo());
+            return true;
+        }
         if (!this.agent || this.status !== "running") {
             throw new Error("Agent is not running");
         }
@@ -357,6 +396,8 @@ class AgentSession extends EventEmitter {
         this.status = "stopped";
         this.finishedAt = Date.now();
         this.addOutput("system", "⏹ Agent stopped by user");
+        // run() 的 finally 也会释放一次；这里先释放保证 UI 立刻能启动下一个会话。
+        runGate.release(this.id);
         return true;
     }
     isRunning() {
@@ -428,6 +469,8 @@ class AgentSession extends EventEmitter {
             createdAt: this.createdAt,
             startedAt: this.startedAt,
             finishedAt: this.finishedAt,
+            queued: this.status === "queued",
+            queuePosition: this.queuePosition || null,
             error: this.error,
         };
     }

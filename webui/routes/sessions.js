@@ -106,6 +106,8 @@ function registerSessionRoutes(app, deps = {}) {
                     sessionId: session.id,
                     conversationId: session.conversationId || null,
                     reused: true,
+                    queued: session.queuePosition != null,
+                    queuePosition: session.queuePosition || null,
                 });
             } catch (startError) {
                 console.error("[WebUI] Failed to start placeholder session:", startError);
@@ -122,12 +124,17 @@ function registerSessionRoutes(app, deps = {}) {
         // - 没有已存在的 session：创建新 session。
         if (cid) {
             const existing = sessionManager.findByConversation(providerName, cid);
-            if (existing && existing.isRunning()) {
+            // 排队中的会话也算「已在跑」：不能为同一个 conversation 再开一条线。
+            if (existing && (existing.isRunning() || existing.status === "queued")) {
                 return res.json({
-                    message: "Session already running for this conversation",
+                    message: existing.isRunning()
+                        ? "Session already running for this conversation"
+                        : "Session is waiting in queue",
                     sessionId: existing.id,
                     conversationId: cid,
                     reused: true,
+                    queued: existing.queuePosition != null,
+                    queuePosition: existing.queuePosition || null,
                 });
             }
             if (existing && typeof existing.resume === "function") {
@@ -147,6 +154,8 @@ function registerSessionRoutes(app, deps = {}) {
                         conversationId: existing.conversationId || cid,
                         reused: true,
                         resumed: true,
+                        queued: existing.queuePosition != null,
+                        queuePosition: existing.queuePosition || null,
                     });
                 } catch (resumeError) {
                     console.error(
@@ -180,6 +189,8 @@ function registerSessionRoutes(app, deps = {}) {
                 message: "Agent started successfully",
                 sessionId: session.id,
                 conversationId: session.conversationId || null,
+                queued: session.queuePosition != null,
+                queuePosition: session.queuePosition || null,
             });
         } catch (error) {
             if (session) {

@@ -490,6 +490,7 @@
     const statusText = computed(() => {
         const labels = {
             created: t("app.status.created"),
+            queued: t("app.status.queued"),
             running: t("app.status.running"),
             completed: t("app.status.completed"),
             stopped: t("app.status.stopped"),

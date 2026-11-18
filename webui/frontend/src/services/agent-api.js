@@ -583,11 +583,52 @@ export async function getSkill(id, workspace) {
     }
     return result;
 }
-export async function updateSkill(id, content, workspace) {
+/**
+ * 新建技能。payload 形如 { name, whenToUse, content, source?, workspace? }，
+ * 默认写 user 来源，跨工作区共享。
+ */
+export async function createSkill(payload) {
+    const response = await fetch(api("/api/skills"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {}),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to create skill");
+    }
+    return result;
+}
+/**
+ * 手动触发一次技能自动安装（把 builtin / user 技能同步进工作区）。
+ * Agent 启动时本就会自动做一次，这里给面板上的即时操作用。
+ */
+export async function syncSkills(workspace, overwrite) {
+    const response = await fetch(api("/api/skills/sync"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workspace: workspace || "", overwrite: overwrite === true }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+        throw new Error(result.error || "Failed to sync skills");
+    }
+    return result;
+}
+/**
+ * 保存技能文档。
+ * payload 可以是字符串（整篇覆盖，旧形状），也可以是
+ * { name, description, whenToUse, content }（结构化，由后端组装「何时使用」小节）。
+ */
+export async function updateSkill(id, payload, workspace) {
+    const body =
+        typeof payload === "string"
+            ? { content: payload, workspace: workspace || "" }
+            : Object.assign({}, payload || {}, { workspace: workspace || "" });
     const response = await fetch(skillPath(id, "", workspace), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content, workspace: workspace || "" }),
+        body: JSON.stringify(body),
     });
     const result = await response.json();
     if (!response.ok) {
