@@ -153,12 +153,27 @@ function killTreeSync(pid) {
             const result = spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
                 stdio: "ignore",
                 windowsHide: true,
-                // taskkill 自己卡住时不能把退出流程一起拖住
-                timeout: 3000,
+                // 系统繁忙（例如磁盘写满）时 taskkill 启动会变慢，3s 太紧；
+                // 但这是退出兜底路径，也不能无限等，给到 8s。
+                timeout: 8000,
             });
-            return !!(result && result.status === 0);
+            // taskkill 的退出码不等于结果：进程可能已自行退出（报「未找到进程」），
+            // 或命令超时但进程随后已被结束。最终以「进程是否还活着」为准。
+            if (result && result.status === 0) {
+                return true;
+            }
+            if (!isAlive(pid)) {
+                return true;
+            }
+            // taskkill 没起来时再兜一次：直接发信号，然后重新判存活。
+            try {
+                process.kill(pid, "SIGKILL");
+            } catch (error) {
+                // 非子进程在 Windows 上可能不允许，忽略后交给下面的判据
+            }
+            return !isAlive(pid);
         } catch (error) {
-            return false;
+            return !isAlive(pid);
         }
     }
     try {
