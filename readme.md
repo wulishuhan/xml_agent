@@ -80,9 +80,17 @@ npm run webui:dev
 **就地编辑并保存**、启用/禁用，以及把内置或用户级技能**安装到当前工作区**（`read` 被沙箱限制在工作区内，
 不安装模型读不到）。
 
+面板顶部还有两个入口：**New skill** 直接新建文档（名称 + 何时使用 + 正文，默认写 `user` 来源，跨工作区共享），
+**Sync to workspace** 手动把内置 / 用户级技能复制进当前工作区。编辑时「何时使用」是单独一个输入框，
+保存时后端会把它同时写进 frontmatter 的用途一行和正文的「何时使用」小节，重复保存不会追加出第二个小节。
+
 内置技能（随安装包分发，在 `app.asar` 里）是只读的——点 **Copy & edit** 会先复制一份到工作区，之后改的是
-那份副本：内置文件改了下次升级也会被覆盖。保存是整篇覆盖，`Ctrl/⌘+S` 也可以。
+那份副本：内置文件改了下次升级也会被覆盖。`Ctrl/⌘+S` 可以直接保存。
 单次保存受请求体大小限制（100 KB 左右），技能文档本来该精简，超过 1 MB 的会直接报错。
+
+**装好即用**：内置 / 用户级技能物理上在工作区之外，模型本来读不到。每次启动 Agent 前会自动把启用的技能
+同步进 `<workspace>/.agent/skills/`（默认不覆盖用户在工作区改过的副本），首轮提示词就能列出来，
+不必先手动点 Install。开关见[下面这一节](#合入的四项行为变更)。
 
 工作区里可用且启用的技能，会在首轮提示词里列成一小段清单（名称 + 相对路径 + 一句话用途）。
 细节见 [`skills/README.md`](skills/README.md)。
@@ -161,6 +169,43 @@ EDGE_PATH=...
 ```
 
 **桌面版（Electron）与 Web 版都可以在界面里配置**：点击右上角 Settings（Web 版显示为 Browser Settings），即可选择 Chrome / Edge、查看探测结果、设置各自 CDP 端口、保存并一键切换。Web 版配置保存在 `~/.xml-agent/webui-browser.json`，保存后立即同步到运行环境（写入 `BROWSER_TYPE`、`BROWSER_CDP_URL` 等环境变量并更新 `agentConfig`），新任务即使用所选浏览器。
+
+## 合入的四项行为变更
+
+从另一条 `1.2.0` 分支的抽取包合入（2026-11-18）。**不是整包覆盖**：包里的 `App.vue`、`app.css`、
+`sessions.js` 等是更旧的硬编码英文版本，直接覆盖会丢掉 1.3.0 的 i18n、上下文转移和插件入口。
+实际做法是「8 个新增文件直接复制 + 10 个无冲突文件整包覆盖 + 6 个 webui 文件逐处移植」。
+
+| 变更            | 作用                                                                | 默认                        | 关闭方式                                 |
+| --------------- | ------------------------------------------------------------------- | --------------------------- | ---------------------------------------- |
+| 拟人化节流      | 逐段键入、随机停顿、退避抖动、疑似限流时拉长冷却；只改时序不改协议  | `browser.humanize = true`   | `BROWSER_HUMANIZE=false`                 |
+| 并发闸门        | 同一浏览器/账号默认只跑 1 个会话，第二个排队，前一个结束自动启动    | `maxConcurrentSessions = 1` | `BROWSER_MAX_CONCURRENT_SESSIONS=0`      |
+| 技能自动安装    | 启动前把启用的技能同步进 `<workspace>/.agent/skills/`，模型首轮可读 | `skills.autoInstall = true` | `SKILLS_AUTO_INSTALL=false`              |
+| 新建/结构化编辑 | 面板里新建技能；编辑时「何时使用」与正文分开保存，不重复追加小节    | 无开关                      | 还原 `skills/index.js`、删 `template.js` |
+
+拟人化节流的可调项（都在 `config/schema.js`，环境变量同名大写）：
+`BROWSER_HUMANIZE_MAX_CHARS`、`BROWSER_TYPING_DELAY_MIN_MS` / `MAX_MS`、
+`BROWSER_STEP_DELAY_MIN_MS` / `MAX_MS`、`BROWSER_STABLE_TIME_JITTER`、`BROWSER_RETRY_JITTER`、
+`BROWSER_THROTTLE_COOLDOWN_MS`。`retryJitter=0` 时退避仍是精确的 1/2/4 秒。
+
+技能自动安装还有 `SKILLS_AUTO_INSTALL_SOURCES`（默认 `builtin,user`）与
+`SKILLS_AUTO_INSTALL_OVERWRITE`（默认 `false`；置 true 才会用新版内置技能覆盖工作区里改过的副本）。
+
+验收（已挂进 `npm run test:offline` / `test:ui`）：
+
+```bash
+node test/unit/test-humanize.js
+node test/unit/test-retry-jitter.js
+node test/unit/test-config-humanize.js
+node test/unit/test-skills.js
+node test/unit/test-skills-autoinstall.js
+node webui/test/test-run-gate.js
+node webui/test/test-session-restore-queued.js
+```
+
+已知边界：面板的结构化保存只提交 `name` / `whenToUse` / `content`，后端重建 frontmatter 时
+只保留 `name` + `description`，原文件里的 `tags` / `version` 等自定义字段可能被重写（包内文档标注为
+「尚未实测确认，未修复」）。
 
 ## 独立 CDP 端口
 
