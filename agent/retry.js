@@ -13,8 +13,12 @@ const DEFAULT_MAX_MS = 30000;
 /**
  * 第 attempt 次连续失败后应等待的毫秒数（attempt 从 1 开始计数）。
  *
+ * jitter 表示 ±比例抖动（0 表示不抖动，保持旧行为精确落在 1/2/4s）；
+ * 每次重试用不同的随机偏移，避免"失败重试的节奏本身就是自动化指纹"。
+ * random 可注入，便于单测固定区间端点。
+ *
  * @param {number} attempt 连续失败次数，1 表示第一次失败
- * @param {{ baseMs?: number, maxMs?: number }} [options] 覆盖默认步长与上限
+ * @param {{ baseMs?: number, maxMs?: number, jitter?: number, random?: function }} [options]
  * @returns {number} 建议等待的毫秒数
  */
 function nextDelay(attempt, options = {}) {
@@ -22,7 +26,18 @@ function nextDelay(attempt, options = {}) {
     const max = options.maxMs || DEFAULT_MAX_MS;
     // 防御非法入参：非数字 / 0 / 负数一律按第一次失败处理。
     const normalized = Math.max(1, Math.floor(Number(attempt) || 1));
-    return Math.min(base * Math.pow(2, normalized - 1), max);
+    const raw = Math.min(base * Math.pow(2, normalized - 1), max);
+    const jitter = typeof options.jitter === "number" ? options.jitter : 0;
+    if (!jitter || raw <= 0) {
+        return raw;
+    }
+    const lower = raw * (1 - jitter);
+    const upper = Math.min(max, raw * (1 + jitter));
+    if (lower >= upper) {
+        return raw;
+    }
+    const random = typeof options.random === "function" ? options.random : Math.random;
+    return Math.round(lower + random() * (upper - lower));
 }
 
 module.exports = {

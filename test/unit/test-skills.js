@@ -520,6 +520,98 @@ async function main() {
         assert.strictEqual(builtin.json.code, "SKILL_NOT_REMOVABLE");
     });
 
+    // ---- 新建 / 同步 / 结构化编辑 ----
+    // createSkill 的 slug 由中文名生成，后续几步都复用这个 id，避免靠内容反查。
+    let createdSkillId = "";
+    let createdSkillPath = "";
+
+    await check("POST /api/skills 新建技能并组装「何时使用」", async () => {
+        const created = await call("POST", "/api/skills", {
+            name: "审查清单",
+            whenToUse: "做代码审查时",
+            content: "# 审查清单\n\n先看边界条件。",
+        });
+        assert.strictEqual(created.status, 201);
+        assert.ok(created.json.id.indexOf("user:") === 0);
+        assert.ok(created.json.id !== "user:skill", "中文名不该被压成 skill");
+        createdSkillId = created.json.id;
+        createdSkillPath = created.json.path;
+        const raw = fs.readFileSync(createdSkillPath, "utf8");
+        assert.ok(raw.indexOf("description: 做代码审查时") !== -1);
+        assert.ok(raw.indexOf("## 何时使用") !== -1);
+        // 本轮明确不做协议适配注入：文档里不该出现这两节
+        assert.strictEqual(/协议适配/.test(raw), false);
+    });
+
+    await check("重名新建返回 409 而不是静默覆盖", async () => {
+        const created = await call("POST", "/api/skills", {
+            name: "审查清单",
+            whenToUse: "dup",
+            content: "x",
+        });
+        assert.strictEqual(created.status, 409);
+        assert.strictEqual(created.json.code, "SKILL_EXISTS");
+    });
+
+    await check("无名新建被拒绝（不兜底成 user:skill）", async () => {
+        const bad = await call("POST", "/api/skills", { whenToUse: "x", content: "y" });
+        assert.strictEqual(bad.status, 400);
+        assert.strictEqual(bad.json.code, "SKILL_INVALID_ID");
+    });
+
+    await check("新建的技能 readSkill 能拆回两个字段", async () => {
+        assert.ok(createdSkillId, "上一步应已创建技能");
+        const doc = await call("GET", "/api/skills/" + encoded(createdSkillId));
+        assert.strictEqual(doc.json.whenToUse, "做代码审查时");
+        assert.ok(doc.json.draftContent.indexOf("先看边界条件") !== -1);
+        // draftContent 不该再包含「何时使用」小节，否则编辑时会重复
+        assert.strictEqual(doc.json.draftContent.indexOf("## 何时使用"), -1);
+    });
+
+    await check("结构化 PUT 改「何时使用」不会追加出第二个小节", async () => {
+        const saved = await call("PUT", "/api/skills/" + encoded(createdSkillId), {
+            name: "审查清单",
+            whenToUse: "做安全审查时",
+            content: "# 审查清单\n\n改过的正文。",
+        });
+        assert.strictEqual(saved.status, 200);
+        const raw = fs.readFileSync(createdSkillPath, "utf8");
+        assert.strictEqual((raw.match(/## 何时使用/g) || []).length, 1);
+        assert.ok(raw.indexOf("做安全审查时") !== -1);
+        assert.strictEqual(/协议适配/.test(raw), false);
+    });
+
+    await check("POST /api/skills/sync 把 builtin / user 技能复制进工作区", async () => {
+        const synced = await call("POST", "/api/skills/sync", { workspace: httpWorkspace });
+        assert.strictEqual(synced.status, 200);
+        assert.ok(Array.isArray(synced.json.installed));
+        const dir = path.join(httpWorkspace, ".agent", "skills");
+        const files = fs.readdirSync(dir);
+        assert.ok(files.indexOf("novel-writing.md") !== -1, "builtin 应被同步");
+        assert.strictEqual(files.indexOf("README.md"), -1, "索引页不该被当成技能");
+
+        // 再来一次：已存在的默认不覆盖，所以都进 skipped
+        const again = await call("POST", "/api/skills/sync", { workspace: httpWorkspace });
+        assert.strictEqual(again.json.installed.length, 0);
+        assert.strictEqual(again.json.updated.length, 0);
+        assert.ok(again.json.skipped.length >= 1);
+    });
+
+    await check("同步不覆盖用户在工作区改过的副本", async () => {
+        const mine = path.join(httpWorkspace, ".agent", "skills", "novel-writing.md");
+        writeFile(mine, "# 我改过的版本\n");
+        const synced = await call("POST", "/api/skills/sync", { workspace: httpWorkspace });
+        assert.strictEqual(synced.json.updated.length, 0);
+        assert.strictEqual(fs.readFileSync(mine, "utf8"), "# 我改过的版本\n");
+
+        const forced = await call("POST", "/api/skills/sync", {
+            workspace: httpWorkspace,
+            overwrite: true,
+        });
+        assert.ok(forced.json.updated.length >= 1);
+        assert.notStrictEqual(fs.readFileSync(mine, "utf8"), "# 我改过的版本\n");
+    });
+
     await new Promise((resolve) => server.close(resolve));
     console.log("\nTotal: " + pass + "/" + total);
     if (pass !== total) {

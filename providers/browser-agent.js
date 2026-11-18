@@ -122,6 +122,39 @@ class BrowserAgent {
             options.headless !== undefined
                 ? options.headless === true
                 : process.env.BROWSER_HEADLESS === "true";
+
+        // ------------------------------------------------------------
+        // 拟人化节流参数（默认值见 config/schema 的 browser.* 字段）
+        // ------------------------------------------------------------
+        // 随机源可注入：单测据此固定序列，生产环境用 Math.random。
+        this.random = typeof options.random === "function" ? options.random : Math.random;
+        this.humanize =
+            options.humanize !== undefined
+                ? options.humanize !== false
+                : process.env.BROWSER_HUMANIZE !== "false";
+        this.humanizeMaxChars = this.getCountOption(
+            options.humanizeMaxChars,
+            process.env.BROWSER_HUMANIZE_MAX_CHARS,
+            800
+        );
+        this.typingDelayMin = this.getNumberOption(
+            options.typingDelayMinMs,
+            process.env.BROWSER_TYPING_DELAY_MIN_MS,
+            15
+        );
+        this.typingDelayMax = this.getNumberOption(
+            options.typingDelayMaxMs,
+            process.env.BROWSER_TYPING_DELAY_MAX_MS,
+            60
+        );
+        if (this.typingDelayMax < this.typingDelayMin) {
+            this.typingDelayMax = this.typingDelayMin;
+        }
+        this.stableTimeJitter = this.getRatioOption(
+            options.stableTimeJitter,
+            process.env.BROWSER_STABLE_TIME_JITTER,
+            0.35
+        );
         this.responseTimeout = this.getNumberOption(
             options.responseTimeout,
             process.env.XML_AGENT_RESPONSE_TIMEOUT_MS,
@@ -196,6 +229,59 @@ class BrowserAgent {
             return defaultValue;
         }
         return number;
+    }
+    /**
+     * 允许 0 的计数/长度选项：0 有明确语义（"关闭"），不能像 getNumberOption 那样回退默认值。
+     */
+    getCountOption(optionValue, envValue, defaultValue) {
+        const value = optionValue ?? envValue;
+        if (value === undefined || value === null || value === "") {
+            return defaultValue;
+        }
+        const number = Number(value);
+        if (!Number.isFinite(number) || number < 0) {
+            return defaultValue;
+        }
+        return Math.floor(number);
+    }
+    /**
+     * 比例选项（抖动幅度），归一化到 [0, 1]。
+     */
+    getRatioOption(optionValue, envValue, defaultValue) {
+        const value = optionValue ?? envValue;
+        if (value === undefined || value === null || value === "") {
+            return defaultValue;
+        }
+        const number = Number(value);
+        if (!Number.isFinite(number) || number < 0) {
+            return defaultValue;
+        }
+        return Math.min(1, number);
+    }
+    /**
+     * [min, max] 闭区间内的随机整数（min > max 时自动交换，避免配置写反就抛错）。
+     */
+    randomInRange(min, max) {
+        const lower = Math.round(Math.min(min, max));
+        const upper = Math.round(Math.max(min, max));
+        if (upper <= lower) {
+            return lower;
+        }
+        return lower + Math.floor(this.random() * (upper - lower + 1));
+    }
+    /**
+     * 计算本次使用的稳定窗口：基础值 ± jitter，下限 500ms。
+     * 抽成独立方法以便单测直接断言抖动范围。
+     */
+    randomStableTime(stableTime) {
+        const base = Math.max(500, Number(stableTime) || 0);
+        const jitterRatio = Math.min(0.9, Math.max(0, this.stableTimeJitter || 0));
+        if (!jitterRatio) {
+            return base;
+        }
+        const lower = base * (1 - jitterRatio);
+        const upper = base * (1 + jitterRatio);
+        return Math.max(500, Math.round(lower + this.random() * (upper - lower)));
     }
     get name() {
         return "BrowserAgent";
@@ -812,7 +898,7 @@ class BrowserAgent {
                 button.click({ timeout: 5000 }),
             ]);
             await chooser.setFiles(paths);
-            await this.sleep(800);
+            await this.sleep(this.humanize ? this.randomInRange(600, 1200) : 800);
             return { ok: true, count: paths.length };
         } catch (error) {
             // 主路径（filechooser）失败后尝试隐藏的 input[type=file]；
@@ -823,7 +909,7 @@ class BrowserAgent {
                 const input = this.page.locator('input[type="file"]').last();
                 if ((await input.count()) > 0) {
                     await input.setInputFiles(paths);
-                    await this.sleep(800);
+                    await this.sleep(this.humanize ? this.randomInRange(600, 1200) : 800);
                     return { ok: true, count: paths.length };
                 }
             } catch (innerError) {
@@ -841,6 +927,52 @@ class BrowserAgent {
         }
     }
 
+    /**
+     * 拟人化输入：把整段文本拆成随机小片段逐段插入。
+     *
+     * 为什么不用 fill()：fill 会把上千字在 1 帧内写入，这是最典型的自动化指纹。
+     * 逐段键入有两个必须处理的坑：
+     * 1) 换行：contenteditable 里按 Enter 等于"发送"，所以换行只能走 Shift+Enter；
+     * 2) 超长文本：首轮 prompt 有几 KB，逐字键入要几十分钟，超过 humanizeMaxChars 直接放弃。
+     * 返回 false 表示"没走这条路"，调用方会回退到 fill() 链，功能不退化。
+     */
+    async typeMessageHumanized(input, message) {
+        if (!this.humanize || !input || !message) {
+            return false;
+        }
+        if (this.humanizeMaxChars <= 0 || String(message).length > this.humanizeMaxChars) {
+            return false;
+        }
+        await input.focus({ timeout: 5000 });
+        await this.sleep(this.randomInRange(120, 320));
+        const parts = String(message).split("\n");
+        for (let index = 0; index < parts.length; index += 1) {
+            if (index > 0) {
+                // 软换行：直接键入 \n 会被网页当成"按下 Enter 发送"
+                await this.page.keyboard.press("Shift+Enter");
+                await this.sleep(this.randomInRange(this.typingDelayMin, this.typingDelayMax));
+            }
+            const part = parts[index];
+            let cursor = 0;
+            while (cursor < part.length) {
+                const size = this.randomInRange(1, 5);
+                await this.page.keyboard.insertText(part.slice(cursor, cursor + size));
+                cursor += size;
+                await this.sleep(this.randomInRange(this.typingDelayMin, this.typingDelayMax));
+            }
+        }
+        const actual = await this.getInputValue(input);
+        const normalize = (value) =>
+            String(value || "")
+                .replace(/\s+/g, " ")
+                .trim();
+        if (normalize(actual) !== normalize(message)) {
+            return false;
+        }
+        // 输入完到按下发送之间的"检查一下"停顿
+        await this.sleep(this.randomInRange(150, 450));
+        return true;
+    }
     async insertMessage(message) {
         console.log("[" + this.name + "] Inserting message: " + JSON.stringify(message));
         if (!this.isPageAlive()) {
@@ -877,6 +1009,14 @@ class BrowserAgent {
             }
         }
         let fillSuccess = false;
+        // 先尝试逐段输入（真人打字节奏）；超长或校验不一致时回退到下面的 fill 链。
+        try {
+            if (await this.typeMessageHumanized(input, message)) {
+                return true;
+            }
+        } catch (humanizeError) {
+            console.warn("[" + this.name + "] Humanized typing failed: " + humanizeError.message);
+        }
         try {
             await input.fill(message);
             await this.sleep(300);
@@ -967,6 +1107,8 @@ class BrowserAgent {
         const stableTime = options.stableTime || this.responseStableTime;
         const pollInterval = options.pollInterval || this.responsePollInterval;
         const initialTimeout = options.initialTimeout || this.responseInitialTimeout;
+        // 稳定窗口加抖动：每次判定重新随机，避免"每步都精确 4s"这种机械节奏。
+        const effectiveStableTime = this.randomStableTime(stableTime);
         const startTime = Date.now();
         let firstResponseTime = null;
         let lastResponse = "";
@@ -1014,7 +1156,7 @@ class BrowserAgent {
                 continue;
             }
             const stableDuration = now - lastChangeTime;
-            if (stableDuration >= stableTime) {
+            if (stableDuration >= effectiveStableTime) {
                 return response;
             }
             await this.sleep(pollInterval);

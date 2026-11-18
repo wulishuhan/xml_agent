@@ -67,13 +67,31 @@ async function runStep(agent, { prompt, providerErrorState }) {
             };
         }
         providerErrorState.count++;
-        const delay = nextDelay(providerErrorState.count);
+        // 退避加抖动：不再精确落在 1s/2s/4s 上。
+        const jitter = typeof agent.retryJitter === "number" ? agent.retryJitter : 0;
+        let delay = nextDelay(providerErrorState.count, { jitter });
+        // 疑似被限流的失败（空回复 / 发送未生效）额外拉长冷却，避免继续撞。
+        const message = String(error.message || "");
+        const throttled =
+            error.code === "EMPTY_RESPONSE" ||
+            /did not take effect|input box was not cleared/i.test(message);
+        if (throttled) {
+            const cooldown =
+                typeof agent.throttleCooldownMs === "number" ? agent.throttleCooldownMs : 0;
+            if (cooldown > 0) {
+                delay = Math.max(
+                    delay,
+                    Math.round(cooldown * (1 + (Math.random() * 2 - 1) * jitter))
+                );
+            }
+        }
         agent.emitEvent("provider.retry", {
             step: agent.step,
-            error: error.message,
+            error: message,
             count: providerErrorState.count,
             max: providerErrorState.max,
             delay,
+            reason: throttled ? "throttle" : "error",
         });
         await sleep(delay);
         agent.emitEvent("provider.error", {

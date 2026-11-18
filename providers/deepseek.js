@@ -512,7 +512,7 @@ class DeepSeekProvider extends BrowserChatProvider {
                     await del.click({ timeout: 3000 });
                     removed += 1;
                     clicked = true;
-                    await this.sleep(300);
+                    await this.sleep(this.humanize ? this.randomInRange(200, 450) : 300);
                     break;
                 } catch (error) {
                     // 尝试下一个

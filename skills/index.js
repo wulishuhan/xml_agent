@@ -20,6 +20,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { composeSkillDocument, splitSkillDocument } = require("./template");
 
 /** 来源，按优先级从低到高。 */
 const SKILL_SOURCES = ["builtin", "user", "workspace"];
@@ -436,6 +437,8 @@ function describeEntry(entry, options, disabledSet) {
         name: meta.name || firstHeading(body) || entry.slug,
         description: truncate(
             meta.description ||
+                meta["when-to-use"] ||
+                meta.whenToUse ||
                 extractSection(body, /何时使用|when to use/i) ||
                 firstParagraph(body),
             MAX_DESCRIPTION_CHARS
@@ -493,10 +496,16 @@ function readSkill(id, options = {}) {
     const content =
         stat && stat.size > MAX_SKILL_BYTES ? "" : readText(entry.file, MAX_SKILL_BYTES);
     const { meta, body } = parseFrontMatter(content);
+    // 编辑器要分两个字段填：「何时使用」与「Skill 内容」。
+    // whenToUse 优先取 frontmatter 的显式字段，其次从正文的「何时使用」小节反解。
+    const split = splitSkillDocument(body);
+    const whenToUse = String(meta["when-to-use"] || meta.whenToUse || "").trim() || split.whenToUse;
     return Object.assign({}, skill, {
         content,
         body,
         frontMatter: meta,
+        whenToUse,
+        draftContent: split.content,
         truncated: Boolean(stat && stat.size > MAX_SKILL_BYTES),
     });
 }
@@ -643,6 +652,176 @@ function writeSkill(id, content, options = {}) {
     };
 }
 
+/**
+ * 文件名/id 安全化。
+ *
+ * 这里刻意保留 Unicode 字母与数字（含中文）：技能名大量是中文，
+ * 若按 ASCII-only 清洗，"审查清单" 会被压成空串再兜底成 "skill"，
+ * 于是所有中文技能互相撞名、互相覆盖。空格与标点仍压成连字符，
+ * 路径分隔符与控制字符被清掉，保证能通过 INVALID_SLUG 与 parseId。
+ */
+function slugify(value) {
+    const text = String(value || "")
+        .trim()
+        .toLowerCase();
+    const slug = text.replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/^-+|-+$/g, "");
+    return slug || "skill";
+}
+
+/**
+ * 新建一个技能文档。
+ *
+ * 与 1.1.2 的"注册表新增"不同：这里不注册动作，只往来源目录写一份 Markdown。
+ * 默认写 user 来源（`~/.xml-agent/skills/<slug>.md`），跨工作区共享。
+ *
+ * payload: { name, description, whenToUse, content, source }
+ */
+function createSkill(payload, options = {}) {
+    const source = String((payload && payload.source) || "user");
+    if (SKILL_SOURCES.indexOf(source) === -1) {
+        throw skillError("SKILL_INVALID_SOURCE", "Invalid skill source: " + source);
+    }
+    const displayName = String((payload && payload.name) || "").trim();
+    const rawName = displayName || String((payload && payload.slug) || "").trim();
+    // 名字是技能的唯一标识来源，不能空着兜底成 "skill"：
+    // 那样每个匿名技能都会撞在同一个 id 上，互相覆盖。
+    if (!rawName) {
+        throw skillError("SKILL_INVALID_ID", "Skill name is required");
+    }
+    const slug = slugify(rawName);
+    if (INVALID_SLUG.test(slug)) {
+        throw skillError(
+            "SKILL_INVALID_ID",
+            "Invalid skill name: " + (payload.name || payload.slug || "")
+        );
+    }
+    const root = resolveRoots(options).find((item) => item.source === source);
+    if (!root) {
+        throw skillError("SKILL_SOURCE_NOT_FOUND", "Source root not found: " + source);
+    }
+    const rootDir = realPath(root.dir) || root.dir;
+    const target = path.join(rootDir, slug + ".md");
+    if (!isInsidePath(rootDir, target)) {
+        throw skillError("SKILL_READONLY", "Target is outside the skills directory");
+    }
+    // 同名技能已存在时拒绝静默覆盖：新建就该是新建。
+    // 要改已有内容走 writeSkillFields / installSkill，路径与语义都更清楚。
+    const existingId = source + ":" + slug;
+    const clash = collectEntries(options).some(
+        (item) => item.source === source && item.slug === slug
+    );
+    if (clash) {
+        throw skillError("SKILL_EXISTS", "Skill already exists: " + existingId);
+    }
+    const doc = composeSkillDocument({
+        name: displayName || slug,
+        description: payload.description,
+        whenToUse: payload.whenToUse,
+        content: payload.content,
+    });
+    const bytes = Buffer.byteLength(doc, "utf8");
+    if (bytes > MAX_SKILL_BYTES) {
+        throw skillError(
+            "SKILL_TOO_LARGE",
+            "Skill document is " + bytes + " bytes, limit is " + MAX_SKILL_BYTES
+        );
+    }
+    fs.mkdirSync(rootDir, { recursive: true });
+    fs.writeFileSync(target, doc, "utf8");
+    return {
+        id: source + ":" + slug,
+        slug,
+        name: displayName || slug,
+        source,
+        path: target,
+        size: bytes,
+        message: "Skill created",
+    };
+}
+
+/**
+ * 结构化保存：把「何时使用」与正文重新组装成文档后整篇覆盖。
+ * 前端编辑界面的两个输入直接对应这里的 whenToUse 与 content。
+ */
+function writeSkillFields(id, payload, options = {}) {
+    const entry = findEntry(id, options);
+    if (entry.source === "builtin") {
+        throw skillError(
+            "SKILL_READONLY",
+            "Built-in skills are read-only. Install it to the workspace first, then edit that copy."
+        );
+    }
+    const doc = composeSkillDocument({
+        name: payload.name,
+        description: payload.description,
+        whenToUse: payload.whenToUse,
+        content: payload.content,
+    });
+    return writeSkill(id, doc, options);
+}
+
+/**
+ * 把启用的 builtin / user 技能复制进工作区，让模型能 read 到。
+ *
+ * 这是"每个工作区都能直接用上 skills 目录下的技能"的关键：
+ * 内置/用户级技能物理上在工作区外，read 会被沙箱拒绝，只有复制进
+ * `<workspace>/.agent/skills/` 才会出现在首轮提示词里。
+ *
+ * 幂等：目标已存在时默认不覆盖（保护用户改过的工作区副本），
+ * 由 options.overwrite 控制是否强制覆盖；被工作区副本遮蔽的来源
+ * 同样只在 overwrite 时才回写。
+ * options.sources 限定只同步哪些来源（默认 builtin + user）。
+ */
+function syncSkillsToWorkspace(workspace, options = {}) {
+    const result = { installed: [], updated: [], skipped: [] };
+    if (!workspace || typeof workspace !== "string") {
+        return result;
+    }
+    const sources = Array.isArray(options.sources)
+        ? options.sources.filter((item) => SKILL_SOURCES.indexOf(item) !== -1)
+        : ["builtin", "user"];
+    const targetRoot = path.join(path.resolve(workspace), ".agent", "skills");
+    const disabledSet = new Set(readRegistry(options).disabled);
+    const entries = collectEntries(Object.assign({}, options, { workspace }));
+    for (const entry of entries) {
+        const id = entry.source + ":" + entry.slug;
+        if (disabledSet.has(id)) {
+            continue;
+        }
+        if (entry.source === "workspace" || sources.indexOf(entry.source) === -1) {
+            result.skipped.push(id);
+            continue;
+        }
+        // 一旦复制过一次，工作区那份就成了同名技能的生效副本，来源那份被遮蔽（active=false）。
+        // 默认不再动它，否则会冲掉用户改过的副本；显式 overwrite 时才允许刷新，
+        // 这样新版本安装包里的内置技能仍有机会更新到工作区。
+        if (!entry.active && options.overwrite !== true) {
+            continue;
+        }
+        const target = path.join(targetRoot, slugify(entry.slug) + ".md");
+        const realTarget = realPath(target) || target;
+        if (!isInsidePath(path.resolve(targetRoot), realTarget)) {
+            continue;
+        }
+        if (statOrNull(target)) {
+            if (options.overwrite !== true) {
+                result.skipped.push(id);
+                continue;
+            }
+            result.updated.push(id);
+        } else {
+            result.installed.push(id);
+        }
+        try {
+            fs.mkdirSync(targetRoot, { recursive: true });
+            fs.copyFileSync(entry.file, target);
+        } catch (error) {
+            result.skipped.push(id);
+        }
+    }
+    return result;
+}
+
 module.exports = {
     SKILL_SOURCES,
     MAX_SKILL_BYTES,
@@ -651,6 +830,9 @@ module.exports = {
     listSkills,
     readSkill,
     writeSkill,
+    writeSkillFields,
+    createSkill,
+    syncSkillsToWorkspace,
     setSkillEnabled,
     installSkill,
     removeSkill,
@@ -658,4 +840,5 @@ module.exports = {
     resolveRoots,
     collectEntries,
     readRegistry,
+    slugify,
 };

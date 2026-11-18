@@ -288,6 +288,134 @@ const FIELDS = [
         env: ["BROWSER_HEADLESS"],
         message: "browser.headless must be a boolean",
     },
+    // ------------------------------------------------------------
+    // 拟人化节流（env-only：不进入设置面板表单，见 UI_BLOCKS）
+    // ------------------------------------------------------------
+    {
+        // 总开关：false 时行为与未启用拟人化时一致（瞬时写入、固定稳定窗口）。
+        path: "browser.humanize",
+        default: true,
+        type: BOOL,
+        env: ["BROWSER_HUMANIZE"],
+        message: "browser.humanize must be a boolean",
+    },
+    {
+        // 超过这个长度的消息不做逐段输入（首轮 prompt 有几 KB，逐字键入要几十分钟）。
+        // 0 表示"所有消息都不做逐段输入"。
+        path: "browser.humanizeMaxChars",
+        default: 800,
+        type: INT,
+        min: 0,
+        env: ["BROWSER_HUMANIZE_MAX_CHARS"],
+        message: "browser.humanizeMaxChars must be a non-negative integer",
+    },
+    {
+        path: "browser.typingDelayMinMs",
+        default: 15,
+        type: INT,
+        min: 0,
+        env: ["BROWSER_TYPING_DELAY_MIN_MS"],
+        message: "browser.typingDelayMinMs must be a non-negative integer",
+    },
+    {
+        path: "browser.typingDelayMaxMs",
+        default: 60,
+        type: INT,
+        min: 0,
+        env: ["BROWSER_TYPING_DELAY_MAX_MS"],
+        message: "browser.typingDelayMaxMs must be a non-negative integer",
+    },
+    {
+        // 步间停顿：每次请求之间随机等待，避免"稳定后立刻追问"的机械节奏。
+        path: "browser.stepDelayMinMs",
+        default: 800,
+        type: INT,
+        min: 0,
+        env: ["BROWSER_STEP_DELAY_MIN_MS"],
+        message: "browser.stepDelayMinMs must be a non-negative integer",
+    },
+    {
+        path: "browser.stepDelayMaxMs",
+        default: 3500,
+        type: INT,
+        min: 0,
+        env: ["BROWSER_STEP_DELAY_MAX_MS"],
+        message: "browser.stepDelayMaxMs must be a non-negative integer",
+    },
+    {
+        // 稳定窗口的相对抖动比例：每次判定重新随机，避免"每步都精确 4s"。
+        path: "browser.stableTimeJitter",
+        default: 0.35,
+        type: FLOAT,
+        min: 0,
+        max: 0.9,
+        env: ["BROWSER_STABLE_TIME_JITTER"],
+        message: "browser.stableTimeJitter must be between 0 and 0.9",
+    },
+    {
+        path: "browser.retryJitter",
+        default: 0.3,
+        type: FLOAT,
+        min: 0,
+        max: 1,
+        env: ["BROWSER_RETRY_JITTER"],
+        message: "browser.retryJitter must be between 0 and 1",
+    },
+    {
+        // 疑似被限流时的长冷却（空回复 / 发送未生效）。
+        path: "browser.throttleCooldownMs",
+        default: 60000,
+        type: INT,
+        min: 0,
+        env: ["BROWSER_THROTTLE_COOLDOWN_MS"],
+        message: "browser.throttleCooldownMs must be a non-negative integer",
+    },
+    {
+        // 同一浏览器/账号同时运行的会话上限；0 = 不限。
+        path: "browser.maxConcurrentSessions",
+        default: 1,
+        type: INT,
+        min: 0,
+        env: ["BROWSER_MAX_CONCURRENT_SESSIONS"],
+        message: "browser.maxConcurrentSessions must be a non-negative integer",
+    },
+    // ------------------------------------------------------------
+    // Skills（env-only：不进入设置面板表单，见 UI_BLOCKS）
+    // ------------------------------------------------------------
+    {
+        // 是否在 Agent 启动时把启用的非工作区技能自动复制进当前工作区，
+        // 让模型能 read 到（read 被沙箱限制在工作区内）。
+        path: "skills.autoInstall",
+        default: true,
+        type: BOOL,
+        env: ["SKILLS_AUTO_INSTALL"],
+        message: "skills.autoInstall must be a boolean",
+    },
+    {
+        // 只同步这些来源（builtin / user）；workspace 来源本身在工作区内，跳过。
+        path: "skills.autoInstallSources",
+        default: ["builtin", "user"],
+        type: ANY,
+        env: ["SKILLS_AUTO_INSTALL_SOURCES"],
+        parseEnv(raw) {
+            if (typeof raw !== "string" || raw.trim() === "") {
+                return undefined;
+            }
+            return raw
+                .split(path.delimiter)
+                .map((item) => item.trim())
+                .filter(Boolean);
+        },
+        message: "skills.autoInstallSources must be an array",
+    },
+    {
+        // 工作区副本已存在时是否覆盖。默认 false：保护用户改过的工作区副本。
+        path: "skills.autoInstallOverwrite",
+        default: false,
+        type: BOOL,
+        env: ["SKILLS_AUTO_INSTALL_OVERWRITE"],
+        message: "skills.autoInstallOverwrite must be a boolean",
+    },
 ];
 
 // 设置面板（/api/agent/config）只管理这三块，浏览器与插件配置各有专门入口。

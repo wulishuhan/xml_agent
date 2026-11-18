@@ -10,7 +10,7 @@ const { runStep } = require("./agent/step");
 const { getBuiltinAction } = require("./actions");
 const { getRegistrySafe } = require("./plugins/registry");
 const { buildWorkspaceManifest } = require("./workspace/manifest");
-const { listSkills: scanSkills } = require("./skills");
+const { listSkills: scanSkills, syncSkillsToWorkspace } = require("./skills");
 const { createHistory } = require("./workspace/history");
 const { EventEmitter } = require("events");
 const agentConfig = require("./config/agent-config");
@@ -52,6 +52,16 @@ class Agent extends EventEmitter {
                 ? options.browserType
                 : agentConfig.browser.browserType
         );
+        // 失败重试退避抖动比例（0 表示不抖动，保持旧行为）。
+        this.retryJitter =
+            options.retryJitter !== undefined
+                ? options.retryJitter
+                : agentConfig.browser.retryJitter;
+        // 疑似被限流时的冷却上限（空回复 / 发送未生效等）。
+        this.throttleCooldownMs =
+            options.throttleCooldownMs !== undefined
+                ? options.throttleCooldownMs
+                : agentConfig.browser.throttleCooldownMs;
         this.history = createHistory();
         // 传递 execScope 给 Runtime
         this.runtime = createRuntime(this.workspace, this.execScope);
@@ -204,9 +214,34 @@ class Agent extends EventEmitter {
 
     /**
      * 扫描工作区里的技能（builtin / user / workspace 三处合并）。
-     * 扫描本身是只读的，出问题只降级成"没有技能提示"，不影响任务本身。
+     *
+     * 扫描前先做一次"自动安装"：read 被沙箱限制在工作区内，builtin / user 来源
+     * 的文件模型读不到，只有复制进 `<workspace>/.agent/skills/` 才会进首轮提示词。
+     * 这一步默认开启（skills.autoInstall），目标已存在时默认不覆盖，
+     * 避免冲掉用户在工作区里改过的副本。
+     *
+     * 整个过程只读或复制文件，出问题只降级成"没有技能提示"，不影响任务本身。
      */
     collectSkills(workspace) {
+        try {
+            const config = agentConfig.skills || {};
+            if (config.autoInstall !== false) {
+                const synced = syncSkillsToWorkspace(workspace, {
+                    sources: config.autoInstallSources,
+                    overwrite: config.autoInstallOverwrite === true,
+                });
+                const changed = synced.installed.length + synced.updated.length;
+                if (changed > 0) {
+                    this.emitEvent("skills.auto_installed", {
+                        installed: synced.installed,
+                        updated: synced.updated,
+                        skipped: synced.skipped.length,
+                    });
+                }
+            }
+        } catch (error) {
+            this.emitEvent("skills.auto_install.failed", { message: error.message });
+        }
         try {
             return scanSkills({ workspace: workspace });
         } catch (error) {
@@ -336,6 +371,11 @@ class Agent extends EventEmitter {
                     break;
                 }
                 prompt = stepResult.prompt;
+                // 步间停顿：每次请求之间带随机间隔，避免"稳定后立刻追问"的机械节奏。
+                // 最后一步（stop=true）直接退出，不额外等待。
+                if (prompt && this.status === "running") {
+                    await this.pauseBetweenSteps();
+                }
             }
             if (this.status === "running") {
                 this.status = this.step >= this.maxSteps ? "max_steps" : "completed";
@@ -365,6 +405,26 @@ class Agent extends EventEmitter {
             }
             throw error;
         }
+    }
+
+    /**
+     * 步间停顿：读取配置（运行期可被 applyToRuntime 改写），
+     * 在 [stepDelayMinMs, stepDelayMaxMs] 内随机等待。两者都为 0 表示关闭。
+     */
+    async pauseBetweenSteps() {
+        const min = Number(agentConfig.browser.stepDelayMinMs) || 0;
+        const max = Number(agentConfig.browser.stepDelayMaxMs) || 0;
+        const lower = Math.min(min, max);
+        const upper = Math.max(min, max);
+        if (upper <= 0) {
+            return 0;
+        }
+        const ms = lower + Math.floor(Math.random() * (upper - lower + 1));
+        if (ms > 0) {
+            this.emitEvent("agent.step_delay", { step: this.step, ms });
+            await new Promise((resolve) => setTimeout(resolve, ms));
+        }
+        return ms;
     }
 
     async stop() {

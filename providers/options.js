@@ -77,6 +77,12 @@ function buildProviderOptions(input = {}) {
         reuseExistingPage: agentConfig.browser.reuseExistingPage,
         focusCdpPage: input.focusCdpPage,
         conversationId: input.conversationId || null,
+        // 拟人化节流参数（env > schema 默认值，provider 侧再做一次归一化）
+        humanize: agentConfig.browser.humanize,
+        humanizeMaxChars: agentConfig.browser.humanizeMaxChars,
+        typingDelayMinMs: agentConfig.browser.typingDelayMinMs,
+        typingDelayMaxMs: agentConfig.browser.typingDelayMaxMs,
+        stableTimeJitter: agentConfig.browser.stableTimeJitter,
     };
 }
 
