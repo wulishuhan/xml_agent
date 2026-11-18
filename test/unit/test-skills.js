@@ -581,6 +581,126 @@ async function main() {
         assert.strictEqual(/协议适配/.test(raw), false);
     });
 
+    // 1.1.x 的技能文档把「何时使用」放在中间（后面还有 --- 与正文），
+    // 结构化编辑不能把后半段吃掉，也不能重写掉用户自定义的 frontmatter 字段。
+    await check("结构化保存保留自定义 frontmatter 字段与小节之后的正文", async () => {
+        const legacy = [
+            "---",
+            "name: 审查清单",
+            "description: 旧用途",
+            "tags: 审查, 质量",
+            "version: 2",
+            "owner: shuhan",
+            "---",
+            "",
+            "# 审查清单",
+            "",
+            "## 何时使用",
+            "",
+            "做代码审查时",
+            "",
+            "---",
+            "",
+            "## 检查项",
+            "",
+            "先看边界条件，再看并发。",
+            "",
+            "## 收尾",
+            "",
+            "写完要复核。",
+            "",
+        ].join("\n");
+        // 只传 content 走旧接口（整篇覆盖），不改 frontmatter
+        const put = await call("PUT", "/api/skills/" + encoded(createdSkillId), {
+            content: legacy,
+        });
+        assert.strictEqual(put.status, 200);
+
+        const before = await call("GET", "/api/skills/" + encoded(createdSkillId));
+        assert.strictEqual(before.json.whenToUse, "做代码审查时");
+        assert.ok(before.json.draftContent.indexOf("## 检查项") !== -1, "小节之后的章节不该丢");
+        assert.ok(before.json.draftContent.indexOf("写完要复核") !== -1);
+
+        const saved = await call("PUT", "/api/skills/" + encoded(createdSkillId), {
+            name: "审查清单",
+            whenToUse: "做安全审查时",
+            content: [
+                "# 审查清单",
+                "",
+                "## 检查项",
+                "",
+                "先看边界条件，再看并发。",
+                "",
+                "## 收尾",
+                "",
+                "写完要复核。",
+            ].join("\n"),
+        });
+        assert.strictEqual(saved.status, 200);
+        const raw = fs.readFileSync(createdSkillPath, "utf8");
+        assert.ok(raw.indexOf("tags: 审查, 质量") !== -1, "tags 应原样保留");
+        assert.ok(raw.indexOf("version: 2") !== -1, "version 应原样保留");
+        assert.ok(raw.indexOf("owner: shuhan") !== -1, "自定义字段应原样保留");
+        assert.ok(raw.indexOf("description: 做安全审查时") !== -1, "description 应更新");
+        assert.strictEqual(raw.indexOf("旧用途"), -1, "旧 description 不该残留");
+        assert.ok(raw.indexOf("写完要复核") !== -1, "正文后半段不该丢");
+        assert.strictEqual((raw.match(/## 何时使用/g) || []).length, 1);
+    });
+
+    await check("splitSkillDocument 往返不丢小节之后的章节", async () => {
+        const { splitSkillDocument, composeSkillDocument } = require("../../skills/template");
+        const doc = [
+            "# T",
+            "",
+            "## 何时使用",
+            "",
+            "触发规则",
+            "",
+            "---",
+            "",
+            "## A",
+            "",
+            "甲",
+            "",
+            "## B",
+            "",
+            "乙",
+            "",
+        ].join("\n");
+        const split = splitSkillDocument(doc);
+        assert.strictEqual(split.whenToUse, "触发规则");
+        assert.ok(split.content.indexOf("## A") !== -1, "## A 应保留");
+        assert.ok(split.content.indexOf("乙") !== -1, "末段应保留");
+        const composed = composeSkillDocument({
+            name: "T",
+            whenToUse: split.whenToUse,
+            content: split.content,
+        });
+        assert.ok(composed.indexOf("甲") !== -1 && composed.indexOf("乙") !== -1);
+        assert.strictEqual((composed.match(/## 何时使用/g) || []).length, 1);
+    });
+
+    await check("frontmatter 值里的换行被压平，不会撑坏字段结构", async () => {
+        const { composeSkillDocument, mergeFrontMatter } = require("../../skills/template");
+        const doc = composeSkillDocument({
+            name: "T",
+            whenToUse: "第一行\n第二行",
+            content: "正文",
+        });
+        const { meta } = skills.parseFrontMatter(doc);
+        assert.strictEqual(meta.description, "第一行 第二行");
+        assert.strictEqual(meta.name, "T");
+
+        // 清空「何时使用」时 description 行应被移除，其它字段仍在
+        const merged = mergeFrontMatter(
+            "---\nname: T\ndescription: 旧用途\ntags: a\n---\n\n正文\n",
+            { name: "T", description: "" }
+        );
+        assert.strictEqual(merged.indexOf("description"), -1);
+        assert.ok(merged.indexOf("tags: a") !== -1);
+        assert.ok(merged.indexOf("name: T") !== -1);
+    });
+
     await check("POST /api/skills/sync 把 builtin / user 技能复制进工作区", async () => {
         const synced = await call("POST", "/api/skills/sync", { workspace: httpWorkspace });
         assert.strictEqual(synced.status, 200);

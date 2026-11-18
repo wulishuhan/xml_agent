@@ -742,6 +742,10 @@ function createSkill(payload, options = {}) {
 /**
  * 结构化保存：把「何时使用」与正文重新组装成文档后整篇覆盖。
  * 前端编辑界面的两个输入直接对应这里的 whenToUse 与 content。
+ *
+ * 先把原文档读进来交给 composeSkillDocument：它只改 name / description 两行，
+ * 原 frontmatter 里的 tags、version、自定义字段、注释和顺序都原样保留。
+ * 读不到原文时退化为「无原文档」，行为与新建一致，不让一次读取失败挡住保存。
  */
 function writeSkillFields(id, payload, options = {}) {
     const entry = findEntry(id, options);
@@ -751,12 +755,13 @@ function writeSkillFields(id, payload, options = {}) {
             "Built-in skills are read-only. Install it to the workspace first, then edit that copy."
         );
     }
-    const doc = composeSkillDocument({
-        name: payload.name,
-        description: payload.description,
-        whenToUse: payload.whenToUse,
-        content: payload.content,
-    });
+    let originalText = "";
+    try {
+        originalText = readText(entry.file, MAX_SKILL_BYTES);
+    } catch (error) {
+        originalText = "";
+    }
+    const doc = composeSkillDocument(Object.assign({}, payload, { originalText }));
     return writeSkill(id, doc, options);
 }
 
