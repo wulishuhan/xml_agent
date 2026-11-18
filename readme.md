@@ -83,6 +83,8 @@ npm run webui:dev
 面板顶部还有两个入口：**New skill** 直接新建文档（名称 + 何时使用 + 正文，默认写 `user` 来源，跨工作区共享），
 **Sync to workspace** 手动把内置 / 用户级技能复制进当前工作区。编辑时「何时使用」是单独一个输入框，
 保存时后端会把它同时写进 frontmatter 的用途一行和正文的「何时使用」小节，重复保存不会追加出第二个小节。
+结构化保存只改 `name` / `description` 两行，原 frontmatter 里的 `tags` / `version` / 自定义字段与顺序
+都原样保留；旧格式里「何时使用」位于文档中段、后面还有正文的，编辑后后半段也不会丢。
 
 内置技能（随安装包分发，在 `app.asar` 里）是只读的——点 **Copy & edit** 会先复制一份到工作区，之后改的是
 那份副本：内置文件改了下次升级也会被覆盖。`Ctrl/⌘+S` 可以直接保存。
@@ -203,9 +205,25 @@ node webui/test/test-run-gate.js
 node webui/test/test-session-restore-queued.js
 ```
 
-已知边界：面板的结构化保存只提交 `name` / `whenToUse` / `content`，后端重建 frontmatter 时
-只保留 `name` + `description`，原文件里的 `tags` / `version` 等自定义字段可能被重写（包内文档标注为
-「尚未实测确认，未修复」）。
+新增回归（在上面的三个测试文件里）：结构化保存保留 `tags` / `version` / 自定义字段、
+拆分与往返不丢「何时使用」之后的章节、frontmatter 值换行压平；闸门侧覆盖唤醒回调抛错不打断
+`release()`、缺 resume 的排队项不占死槽位、`acquired.position` 正确；会话侧覆盖排队会话重复
+`start()` 被拒、`_begin()` 同步抛错时槽位兜底释放。
+
+**来源与留档**：包位于 `D:\vx_info_save\...\xml_agent-1.2.0-changes\`，共 24 个变更文件，
+合入前用 `manifest.json` 逐个校验 sha256 + 字节数（24/24 一致）。包内 `apply.ps1` /
+`verify.ps1` 的默认目标指向另一台机器的源树，`evidence.json` 的行号与 hash 对合入后的仓库
+已失效，因此没有纳入仓库；`CHANGES.md` 也只作为外部留档，未复制进 `docs/`。要追溯改动，
+看本节与 `e64259f` / `faeca18` / `6947eb1` 三个提交即可。
+
+**并发闸门的两个注意点**：队列只存在于进程内存，WebUI 重启后排队会话归一回 `created`；
+排队中点停止会直接移出队列，不会醒来后又启动。`maxConcurrentSessions` 每次判定都重读配置，
+但运行中调大只会让后续 `acquire` / `release` 生效——已有排队会话要等下一个会话结束才被唤醒，
+改完配置建议重启 WebUI。
+
+**已知限制（明确不修）**：结构化保存是整篇覆盖，换行统一为 LF，不保留原文件的换行风格；
+`whenToUse` 含换行时压成单行写进 `description`（正文小节仍保留多行）。微信插件的三项
+（抢前台后不归还焦点、魔法坐标、封号风险）保持不变，理由见上面 wechat 章节。
 
 ## 独立 CDP 端口
 
