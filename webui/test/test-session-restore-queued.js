@@ -42,6 +42,35 @@ async function main() {
     );
     check("排队中 isRunning 为 false", queued.isRunning() === false);
 
+    // 排队中的会话已登记唤醒回调，再 start 会造成同一个 session 被启动两次
+    const dup = new AgentSession({ workspace: "D:/tmp/xml-agent-test-ws", task: "t" });
+    dup.status = "queued";
+    dup.queuePosition = 1;
+    let blocked = false;
+    try {
+        dup.start();
+    } catch (error) {
+        blocked = /already queued/i.test(error.message);
+    }
+    check("queued 会话再次 start 被拒绝", blocked);
+
+    // _begin() 同步抛错时 run() 不会执行，必须在 start() 里兜底释放槽位
+    const { runGate } = require("../session/run-gate");
+    const broken = new AgentSession({ workspace: "D:/tmp/xml-agent-test-ws", task: "t" });
+    const brokenId = broken.id;
+    broken._begin = () => {
+        throw new Error("agent ctor failed");
+    };
+    let startThrew = false;
+    try {
+        broken.start();
+    } catch (error) {
+        startThrew = true;
+    }
+    check("_begin 抛错时 start 会向上抛", startThrew);
+    check("_begin 抛错后槽位被释放", runGate.isHeld(brokenId) === false);
+    check("_begin 抛错后状态为 error", broken.status === "error");
+
     console.log("");
     console.log("Total: " + pass + "/" + total);
 

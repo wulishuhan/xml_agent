@@ -22,7 +22,8 @@ class RunGate extends EventEmitter {
 
     /**
      * 当前允许并发的会话数。0 表示不限。
-     * 每次调用都重新读取配置，使运行期改动（保存即生效）立即生效。
+     * 每次判定都重读配置：运行中调小会立刻挡住新的 acquire；调大则在下一次
+     * acquire / release 触发 _drain 时才生效（配置改动建议重启 WebUI）。
      */
     limit() {
         let raw = null;
@@ -71,7 +72,8 @@ class RunGate extends EventEmitter {
         if (this.held.has(id)) {
             return true;
         }
-        if (this.limit() === 0 || this.held.size < this.limit()) {
+        const limit = this.limit();
+        if (limit === 0 || this.held.size < limit) {
             this.held.add(id);
             return true;
         }
@@ -114,18 +116,32 @@ class RunGate extends EventEmitter {
     _drain() {
         let last = null;
         while (this.waiting.length) {
-            if (this.limit() !== 0 && this.held.size >= this.limit()) {
+            const limit = this.limit();
+            if (limit !== 0 && this.held.size >= limit) {
                 break;
             }
+            // position 必须在 shift 之前取：出队后 positionOf 恒为 null。
+            const position = this.positionOf(this.waiting[0].id) || 1;
             const next = this.waiting.shift();
             if (!next || this.held.has(next.id)) {
                 continue;
             }
             this.held.add(next.id);
-            this.emit("acquired", { id: next.id, position: this.positionOf(next.id) });
+            this.emit("acquired", { id: next.id, position });
             last = next.id;
-            if (typeof next.resume === "function") {
+            if (typeof next.resume !== "function") {
+                // 没有启动回调却占着槽位会让队列永久卡死，直接回收。
+                this.held.delete(next.id);
+                this.emit("resume.error", { id: next.id, message: "missing resume handler" });
+                continue;
+            }
+            try {
                 next.resume();
+            } catch (error) {
+                // 唤醒回调抛错不能冒泡到 release()（否则会打断上一个会话的
+                // finally），也不能让这个 id 占着槽位；回收后继续唤醒下一个。
+                this.held.delete(next.id);
+                this.emit("resume.error", { id: next.id, message: error.message });
             }
         }
         return last;

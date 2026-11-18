@@ -85,6 +85,62 @@ async function main() {
     check("运行期调大后 c 被唤醒", cWoken === 1, String(cWoken));
     check("运行期调大后都持有槽位", gate5.isHeld("b") && gate5.isHeld("c"));
 
+    // 6. 唤醒回调抛错：不能冒泡打断 release()，槽位要回收，后面的继续被唤醒
+    setLimit(1);
+    let goodWoken = 0;
+    const gate6 = new RunGate();
+    const errors = [];
+    gate6.on("resume.error", (event) => errors.push(event));
+    gate6.acquire("a");
+    gate6.enqueue("bad", () => {
+        throw new Error("boom");
+    });
+    gate6.enqueue("good", () => {
+        goodWoken += 1;
+    });
+    let releaseThrew = false;
+    try {
+        gate6.release("a");
+    } catch (error) {
+        releaseThrew = true;
+    }
+    check("resume 抛错不会从 release 冒泡", releaseThrew === false);
+    check("抛错的会话不占槽位", gate6.isHeld("bad") === false);
+    check("后续排队者仍被唤醒", goodWoken === 1, String(goodWoken));
+    check(
+        "resume.error 事件上报",
+        errors.length === 1 && errors[0].id === "bad",
+        JSON.stringify(errors)
+    );
+    check("唤醒链继续后队列清空", gate6.queuedCount() === 0);
+
+    // 7. acquired 事件的 position 不该恒为 null
+    setLimit(1);
+    const gate7 = new RunGate();
+    const acquired = [];
+    gate7.on("acquired", (event) => acquired.push(event));
+    gate7.acquire("a");
+    gate7.enqueue("b", () => {});
+    gate7.release("a");
+    check(
+        "acquired.position 为队首位置 1",
+        acquired.length === 1 && acquired[0].position === 1,
+        JSON.stringify(acquired)
+    );
+
+    // 8. 缺少 resume 的排队项不会永久占死槽位
+    setLimit(1);
+    let nextWoken = 0;
+    const gate8 = new RunGate();
+    gate8.acquire("a");
+    gate8.enqueue("orphan", null);
+    gate8.enqueue("next", () => {
+        nextWoken += 1;
+    });
+    gate8.release("a");
+    check("无 resume 的排队项被回收", gate8.isHeld("orphan") === false);
+    check("后面的会话仍能启动", nextWoken === 1, String(nextWoken));
+
     console.log("");
     console.log("Total: " + pass + "/" + total);
 

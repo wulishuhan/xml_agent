@@ -258,6 +258,11 @@ class AgentSession extends EventEmitter {
         if (this.agent || this.status === "running") {
             throw new Error("Agent session is already running");
         }
+        if (this.status === "queued") {
+            // 排队中的会话已经登记了唤醒回调，再 start / resume 会让同一个
+            // session 被启动两次（HTTP 路由已挡，这里守住方法本身）。
+            throw new Error("Agent session is already queued");
+        }
         if (!this.task || !this.task.trim()) {
             throw new Error("Task is required before starting agent");
         }
@@ -275,7 +280,19 @@ class AgentSession extends EventEmitter {
             this.emit("queued", { id: this.id, position: this.queuePosition });
             return this;
         }
-        return this._begin();
+        try {
+            return this._begin();
+        } catch (error) {
+            // _begin() 里 new Agent() / 事件绑定若同步抛错，run() 根本不会执行，
+            // 它的 finally 也就没机会释放槽位 —— 这里兜底，否则队列永久卡死。
+            runGate.release(this.id);
+            this.status = "error";
+            this.error = error.message;
+            this.finishedAt = Date.now();
+            this.addOutput("stderr", "Failed to start agent: " + error.message);
+            this.emit("finished", this.getInfo());
+            throw error;
+        }
     }
 
     /**
