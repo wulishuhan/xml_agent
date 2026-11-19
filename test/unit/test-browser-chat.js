@@ -389,6 +389,88 @@ async function main() {
         );
     }
 
+    // ------------------------------------------------------------
+    // 10. GLM 的 fiber 兜底必须只向下遍历，不能爬到用户消息
+    // ------------------------------------------------------------
+    {
+        const glm = make(GlmProvider);
+        let capturedFn = null;
+        let capturedArg = null;
+        const fakeHandle = {
+            evaluate: async (fn, arg) => {
+                capturedFn = fn;
+                capturedArg = arg;
+                return {
+                    top: { value: '<read path="a.js"/>' },
+                    candidates: [{ value: '<read path="a.js"/>' }, { value: "正文文本" }],
+                    totalCandidates: 2,
+                };
+            },
+        };
+        const out = await glm.extractFromReactFiber(fakeHandle);
+
+        check(
+            "GLM fiber 兜底用只向下的 collectChildFiberCandidate",
+            capturedFn === collectChildFiberCandidate,
+            capturedFn === collectFiberCandidates ? "仍是三向 BFS" : ""
+        );
+        check(
+            "GLM fiber 兜底传入 action 标签清单",
+            Array.isArray(capturedArg) && capturedArg.length > 0
+        );
+        check(
+            "GLM fiber 兜底返回数组且形状与基类一致",
+            Array.isArray(out) && out.length === 2 && out[0].value === '<read path="a.js"/>'
+        );
+
+        // evaluate 抛错时要降级为空数组，不能让兜底把整轮取回复带崩
+        const throwingHandle = {
+            evaluate: async () => {
+                throw new Error("detached");
+            },
+        };
+        const degraded = await glm.extractFromReactFiber(throwingHandle);
+        check("GLM fiber 兜底异常时返回空数组", Array.isArray(degraded) && degraded.length === 0);
+
+        // z.ai 会把 loading 动画的内联 CSS 作为 children prop 挂在消息上，
+        // 必须过滤掉，否则 extractXML 拿到 CSS 会报 "No XML Action found"。
+        const cssNoise =
+            ".thinking-pulse { animation: thinking-pulse 1.6s ease-in-out; --uib-size: 28px; } @keyframes thinking-pulse { 0% { opacity: 0.3; } 50% { opacity: 1; } }";
+        const noisyHandle = {
+            evaluate: async () => ({
+                top: { value: cssNoise },
+                candidates: [
+                    { value: cssNoise },
+                    { value: '<read path="b.js"/>' },
+                    { value: "正常正文内容一段" },
+                ],
+                totalCandidates: 3,
+            }),
+        };
+        const filtered = await glm.extractFromReactFiber(noisyHandle);
+        check(
+            "GLM fiber 兜底过滤掉 CSS 噪声",
+            filtered.length === 2 && !filtered.some((c) => c.value === cssNoise),
+            JSON.stringify(filtered.map((c) => c.value.slice(0, 20)))
+        );
+        check(
+            "GLM fiber 兜底保留动作与正文",
+            filtered.some((c) => c.value === '<read path="b.js"/>') &&
+                filtered.some((c) => c.value === "正常正文内容一段")
+        );
+
+        // 其他平台不应被这次覆盖影响：基类仍用三向 collectFiberCandidates
+        const deepseek = make(DeepSeekProvider);
+        let baseFn = null;
+        await deepseek.extractFromReactFiber({
+            evaluate: async (fn) => {
+                baseFn = fn;
+                return [];
+            },
+        });
+        check("DeepSeek 仍用基类三向扫描（未被 GLM 覆盖污染）", baseFn === collectFiberCandidates);
+    }
+
     console.log("\nTotal: " + pass + "/" + total);
     if (pass !== total) {
         process.exit(1);
