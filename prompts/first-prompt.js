@@ -1,5 +1,6 @@
 const path = require("path");
 const { SYSTEM_PROMPT } = require("./system-prompt");
+const { getSystemPromptVariant } = require("./system-prompt-variants");
 const { buildPluginPromptSection } = require("./plugin-prompt");
 const { buildSkillPromptSection } = require("./skill-prompt");
 
@@ -82,8 +83,15 @@ function getFirstPrompt(currentWorkspace, manifest, task, options = {}) {
     const manifestText = clampManifest(manifest, options.manifestMaxChars);
     const project = projectLabel(currentWorkspace);
 
+    // 措辞变体：不传时取得原文基准，输出与旧版逐字一致（指纹测试与旧调用方都依赖这一点）。
+    // 会话层抽一次索引传进来，整场会话复用同一套措辞。
+    const systemPrompt =
+        options.systemPromptVariant === undefined
+            ? SYSTEM_PROMPT
+            : getSystemPromptVariant(options.systemPromptVariant);
+
     let prompt = `
-${SYSTEM_PROMPT}${pluginBlock}${skillBlock}${providerBlock}
+${systemPrompt}${pluginBlock}${skillBlock}${providerBlock}
 
 项目：${project}（本机目录，下面出现的路径都相对它）
 

@@ -75,26 +75,105 @@ function stringifyResult(result) {
     return JSON.stringify(compactValue(promptView(result), 0));
 }
 
-function getRuntimeOkPrompt(result) {
-    return `
+/**
+ * 回贴措辞变体池。
+ *
+ * 一轮任务里这类消息会发几十次，句式高度重复是自动化指纹的主要来源。
+ * 这里给出 4 套语义等价的模板：索引 0 是原文基准（不传 variant 时使用，
+ * 保证指纹测试与旧调用方逐字兼容），1-3 是改写版。
+ *
+ * 每套模板都必须保留三样东西，否则会破坏协议或测试：
+ * - 单行紧凑 JSON 结果（stringifyResult 的返回值，含 {"ok":...}）；
+ * - 至少一个可解析的 <answer><![CDATA[...]]></answer> 或 <done/>；
+ * - 整体足够短（成功 < 600 字符、失败 < 400 字符，见 test-first-prompt.js）。
+ */
+const OK_TEMPLATES = [
+    // 0 = 原文基准
+    (json) => `
 上一轮执行完了，结果：
-${stringifyResult(result)}
+${json}
 
 继续下一步，动作按第一条消息里的格式写（read / write / edit / exec / screenshot；只改几处就用 <edit>，不要整篇重写）。
 能回答用户了就只回 <answer><![CDATA[最终答案]]></answer>（这一轮不要带 <done/>）；任务结束且无需多说就回 <done/>。每次只发一段动作。
-`;
-}
-function getRuntimeErrorPrompt(result) {
-    return `
+`,
+    // 1 = 口语
+    (json) => `
+刚才那步做完了，实际返回：
+${json}
+
+接着往下走，动作还按开头第一条的格式写（read / write / edit / exec / screenshot；局部改动用 <edit>，别整篇覆盖）。
+能答复用户了就只回 <answer><![CDATA[最终答案]]></answer>（这轮别带 <done/>）；事情办完不用多说就回 <done/>。一次只发一段动作。
+`,
+    // 2 = 工单
+    (json) => `
+上一条指令的执行结果贴下面：
+${json}
+
+请继续下一步，动作格式参照首条消息（read / write / edit / exec / screenshot；小改动优先 <edit>，不要重写整个文件）。
+可以向用户交付时就只回 <answer><![CDATA[最终答案]]></answer>（本轮不要带 <done/>）；任务收尾且无需补充就回 <done/>。每轮只发一段动作。
+`,
+    // 3 = 简短
+    (json) => `
+执行完了，结果是：
+${json}
+
+下一步照第一条消息的写法给动作（read / write / edit / exec / screenshot；改几处用 <edit>，别整篇重写）。
+能答了就只回 <answer><![CDATA[最终答案]]></answer>（这轮不带 <done/>）；结束就回 <done/>。每次只发一段动作。
+`,
+];
+
+const ERROR_TEMPLATES = [
+    // 0 = 原文基准
+    (json) => `
 这一轮执行失败，真实返回：
-${stringifyResult(result)}
+${json}
 
 看错误自己修：缺依赖就装，路径或语法错了就改，必要时重跑验证。修不好就回 <answer><![CDATA[错误原因]]></answer>，如实说清楚。每次只发一段动作。
-`;
+`,
+    // 1 = 口语
+    (json) => `
+刚才这步没成功，报错原文：
+${json}
+
+照着报错自己处理：缺什么装什么，路径写错就改，不好说就重跑一次确认。实在不行就回 <answer><![CDATA[错误原因]]></answer>，如实讲清楚。一次只发一段动作。
+`,
+    // 2 = 工单
+    (json) => `
+上一条动作执行出错，返回如下：
+${json}
+
+请依据实际错误自行修正：依赖缺失就安装，路径或语法有误就调整，必要时重新执行验证。无法修复时回 <answer><![CDATA[错误原因]]></answer> 说明情况。每轮只发一段动作。
+`,
+    // 3 = 简短
+    (json) => `
+执行失败，返回：
+${json}
+
+按真实报错修：缺依赖就装，路径/语法错就改，必要时重跑。修不好就回 <answer><![CDATA[错误原因]]></answer>。每次只发一段动作。
+`,
+];
+
+/** 回贴模板总数（含索引 0 的原文基准）。 */
+const RUNTIME_PROMPT_VARIANT_COUNT = OK_TEMPLATES.length;
+
+function resolveTemplate(templates, variant) {
+    const resolved =
+        Number.isInteger(variant) && variant >= 0 && variant < templates.length ? variant : 0;
+    return templates[resolved];
 }
+
+function getRuntimeOkPrompt(result, options = {}) {
+    return resolveTemplate(OK_TEMPLATES, options.variant)(stringifyResult(result));
+}
+
+function getRuntimeErrorPrompt(result, options = {}) {
+    return resolveTemplate(ERROR_TEMPLATES, options.variant)(stringifyResult(result));
+}
+
 module.exports = {
     getRuntimeOkPrompt,
     getRuntimeErrorPrompt,
     compactValue,
     stringifyResult,
+    RUNTIME_PROMPT_VARIANT_COUNT,
 };

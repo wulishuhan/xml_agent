@@ -3,6 +3,7 @@ const { createProvider } = require("./providers");
 // 用命名空间引用，避免 resolveBrowserPath() 这类同名方法在阅读时被误认为递归。
 const providerOptions = require("./providers/options");
 const { getFirstPrompt } = require("./prompts/index");
+const { pickSystemPromptVariant } = require("./prompts/system-prompt-variants");
 const { createRuntime } = require("./runtime");
 const { createArtifactsChannel } = require("./agent/artifacts");
 const { normalizePresetImages } = require("./agent/inputs");
@@ -57,6 +58,13 @@ class Agent extends EventEmitter {
             options.retryJitter !== undefined
                 ? options.retryJitter
                 : agentConfig.browser.retryJitter;
+        // 措辞变体：每场会话抽一次，首轮提示词与每轮回贴共用同一套措辞。
+        // 这样会话之间首消息文本不同（降低文本指纹），会话内部保持一致（模型无需重新适应）。
+        // options.promptVariant 可显式指定，便于复现；未指定则随机抽。
+        this.promptVariant =
+            options.promptVariant !== undefined && options.promptVariant !== null
+                ? options.promptVariant
+                : pickSystemPromptVariant();
         // 疑似被限流时的冷却上限（空回复 / 发送未生效等）。
         this.throttleCooldownMs =
             options.throttleCooldownMs !== undefined
@@ -335,6 +343,7 @@ class Agent extends EventEmitter {
             let prompt = getFirstPrompt(currentWorkspace, manifest, this.task, {
                 registry: this.plugins,
                 skills: skills,
+                systemPromptVariant: this.promptVariant,
                 // 少数平台（如 Gemini）的渲染器会把裸 XML 标签整块丢掉，
                 // 需要 provider 自己声明"输出格式怎么适配"。
                 providerHint:

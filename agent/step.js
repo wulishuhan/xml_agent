@@ -186,16 +186,20 @@ async function runStep(agent, { prompt, providerErrorState }) {
         };
     }
 
+    // 回贴措辞跟随会话抽到的变体：会话内一致，会话间不同。
+    // mock / 老调用方没有 promptVariant 时传 undefined，函数内部退回原文基准。
+    const promptVariantOptions = { variant: agent.promptVariant };
+
     if (result.ok === false) {
         return {
             stop: false,
-            prompt: getRuntimeErrorPrompt(result),
+            prompt: getRuntimeErrorPrompt(result, promptVariantOptions),
         };
     }
 
     return {
         stop: false,
-        prompt: getRuntimeOkPrompt(result),
+        prompt: getRuntimeOkPrompt(result, promptVariantOptions),
     };
 }
 
