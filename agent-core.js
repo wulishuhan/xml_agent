@@ -34,7 +34,9 @@ class Agent extends EventEmitter {
         // 可选：用户随任务附带的图片（相对 workspace 或绝对路径）。
         // 这些图片会在 provider 启动后、发送第一条 prompt 之前上传给模型。
         this.images = normalizePresetImages(options.images);
-        // exec 权限控制：workspace 限制在当前工作区，all 无限制
+        // execScope 只约束文件类动作（read/write/edit 等）的路径解析：
+        // workspace 限定在工作区内解析相对路径，all 才放开绝对路径。
+        // 注意 exec 动作不读这个值——shell 命令仅设 cwd，不受工作区限制。
         this.execScope = options.execScope || "workspace";
         this.maxSteps = options.maxSteps ?? agentConfig.agent.maxSteps;
         this.maxProviderErrors = options.maxProviderErrors ?? agentConfig.agent.maxProviderErrors;
