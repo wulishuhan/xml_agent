@@ -110,7 +110,7 @@ async function runStep(agent, { prompt, providerErrorState }) {
         }
         return {
             stop: false,
-            prompt: getSendErrorPrompt(error),
+            prompt: getSendErrorPrompt(error, { variant: agent.promptVariant ?? 0 }),
         };
     }
 
@@ -130,7 +130,7 @@ async function runStep(agent, { prompt, providerErrorState }) {
         });
         return {
             stop: false,
-            prompt: getXmlErrorPrompt(error),
+            prompt: getXmlErrorPrompt(error, { variant: agent.promptVariant ?? 0 }),
         };
     }
 

@@ -8,6 +8,8 @@
  * 3. 每套回贴变体都保留紧凑 JSON 与可解析的 <answer>/<done/>，且长度受限；
  * 4. 索引 0 / 未提供索引时输出原文基准（指纹测试与旧调用方依赖这一点）；
  * 5. 每张重写的原文行都能在 SYSTEM_PROMPT 里精确命中（正文改动后变体不会静默退化）。
+ * 6. 补发类提示词（发送失败 / 格式错误）不含 Agent、Runtime、XML Action 等宿主术语，
+ *    不泄漏 Playwright 原始报错，同时保留"不假设成功 / 不编结果 / 一次一个动作"约束。
  *
  * 运行：node test/unit/test-prompt-variants.js
  */
@@ -27,6 +29,16 @@ const {
     RUNTIME_PROMPT_VARIANT_COUNT,
 } = require("../../prompts/runtime-prompt");
 const { extractXML } = require("../../parse/xml-parse");
+const {
+    getSendErrorPrompt,
+    humanReason,
+    SEND_ERROR_VARIANT_COUNT,
+} = require("../../prompts/send-error-prompt");
+const {
+    getXmlErrorPrompt,
+    describeParseError,
+    XML_ERROR_VARIANT_COUNT,
+} = require("../../prompts/xml-error-prompt");
 
 let pass = 0;
 let total = 0;
@@ -221,6 +233,114 @@ function main() {
             .map((m) => "v" + m.variant + ":" + JSON.stringify(m.key.slice(0, 30)))
             .join(", ")
     );
+
+    console.log("\n=== 6. 发送失败 / 格式错误提示词：无宿主术语 + 四套变体 ===");
+    // 这两段是"补发"文本：发送失败时模型连消息都没收到、解析失败时模型刚绕过格式。
+    // 旧版把 `Agent 调用模型`、`Runtime`、`XML Action` 和 Playwright 原始报错直接写进
+    // prompt，等于自报"这是自动化框架"，且逐字节重复。这里守住三条：
+    // 不含宿主术语、原文报错不泄漏、协议约束（不假设成功 / 不编结果 / 一次一个动作）仍在。
+    const HOST_WORDS = [
+        "Agent",
+        "Runtime",
+        "XML Action",
+        "调用模型",
+        "Playwright",
+        "remote-debugging",
+    ];
+    const sendErr = Object.assign(
+        new Error("Provider failed 3 consecutive times: page.goto: Timeout 30000ms exceeded"),
+        { code: "EMPTY_RESPONSE" }
+    );
+    const xmlErr = new Error("Unknown XML Action: foo");
+
+    check(
+        "EMPTY_RESPONSE 归类为回复为空",
+        humanReason(sendErr).indexOf("空") !== -1,
+        humanReason(sendErr)
+    );
+    check(
+        "输入框未清空归类为没发出去",
+        humanReason(new Error("input box was not cleared")).indexOf("没发出去") !== -1
+    );
+    check(
+        "超时归类为连接超时",
+        humanReason(new Error("page.goto: Timeout 30000ms exceeded")).indexOf("超时") !== -1
+    );
+    check(
+        "解析错误不泄漏 XML Action 术语",
+        describeParseError(xmlErr).indexOf("XML Action") === -1,
+        describeParseError(xmlErr)
+    );
+    check("解析错误保留误写的动作名", describeParseError(xmlErr).indexOf("foo") !== -1);
+    check(
+        "参数类错误原样保留",
+        describeParseError(new Error("path is required")) === "path is required"
+    );
+
+    check("发送失败变体数量 >= 2", SEND_ERROR_VARIANT_COUNT >= 2);
+    check("格式错误变体数量 >= 2", XML_ERROR_VARIANT_COUNT >= 2);
+    check(
+        "发送失败默认与索引 0 一致",
+        getSendErrorPrompt(sendErr) === getSendErrorPrompt(sendErr, { variant: 0 })
+    );
+    check(
+        "格式错误默认与索引 0 一致",
+        getXmlErrorPrompt(xmlErr) === getXmlErrorPrompt(xmlErr, { variant: 0 })
+    );
+    check(
+        "发送失败非法索引退回 0",
+        getSendErrorPrompt(sendErr, { variant: 99 }) === getSendErrorPrompt(sendErr, { variant: 0 })
+    );
+    check(
+        "格式错误非法索引退回 0",
+        getXmlErrorPrompt(xmlErr, { variant: -3 }) === getXmlErrorPrompt(xmlErr, { variant: 0 })
+    );
+
+    const sendSeen = new Set();
+    for (let index = 0; index < SEND_ERROR_VARIANT_COUNT; index += 1) {
+        const text = getSendErrorPrompt(sendErr, { variant: index });
+        check("发送失败 " + index + " 与更早变体不同", !sendSeen.has(text));
+        sendSeen.add(text);
+        check("发送失败 " + index + " 长度 < 200", text.length < 200, "len=" + text.length);
+        for (const word of HOST_WORDS) {
+            check("发送失败 " + index + " 不含宿主术语：" + word, text.indexOf(word) === -1);
+        }
+        check(
+            "发送失败 " + index + " 声明上一步不算数",
+            /不算数|等于没做|当作没发生|当作没做/.test(text)
+        );
+        check("发送失败 " + index + " 禁止编造结果", /编.{0,6}结果|虚构.{0,6}结果/.test(text));
+        check("发送失败 " + index + " 要求再给一段动作", text.indexOf("动作") !== -1);
+    }
+
+    const xmlSeen = new Set();
+    for (let index = 0; index < XML_ERROR_VARIANT_COUNT; index += 1) {
+        const text = getXmlErrorPrompt(xmlErr, { variant: index });
+        check("格式错误 " + index + " 与更早变体不同", !xmlSeen.has(text));
+        xmlSeen.add(text);
+        check("格式错误 " + index + " 长度 < 200", text.length < 200, "len=" + text.length);
+        for (const word of HOST_WORDS) {
+            check("格式错误 " + index + " 不含宿主术语：" + word, text.indexOf(word) === -1);
+        }
+        check(
+            "格式错误 " + index + " 要求一次只给一个动作",
+            /一个动作|一次一个|一轮只给一个|仅输出一个/.test(text)
+        );
+        const examples = text.match(/<[a-zA-Z-]+[^>]*\/>/g) || [];
+        check(
+            "格式错误 " + index + " 至少一个可解析示例",
+            examples.length >= 1 &&
+                examples.every((snippet) => {
+                    try {
+                        extractXML(snippet);
+                        return true;
+                    } catch (error) {
+                        return false;
+                    }
+                }),
+            "count=" + examples.length
+        );
+    }
 
     console.log("");
     console.log("Total: " + pass + "/" + total);

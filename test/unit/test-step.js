@@ -274,6 +274,79 @@ async function main() {
         );
     }
 
+    // ------------------------------------------------------------
+    // 9. 补发提示词跟随会话变体（step 必须把 agent.promptVariant 透传下去）
+    //
+    // 旧版这两段是单一固定文本，同样的字句反复发送，是"脚本在批量调用"的
+    // 典型特征。变体在 agent-core 抽签后存在 agent.promptVariant 上，若 step
+    // 忘了透传，抽签就形同虚设，这里把它变成红灯。
+    // ------------------------------------------------------------
+    {
+        const {
+            getSendErrorPrompt,
+        } = require("../../prompts/send-error-prompt");
+        const { getXmlErrorPrompt } = require("../../prompts/xml-error-prompt");
+
+        const variantAgent = makeAgent({
+            promptVariant: 2,
+            provider: {
+                async send() {
+                    throw new Error("boom");
+                },
+            },
+        });
+        const sendResult = await runStep(variantAgent, {
+            prompt: "PROMPT",
+            providerErrorState: { count: 0, max: 5 },
+        });
+        const expectedSend = getSendErrorPrompt(new Error("boom"), { variant: 2 });
+        check(
+            "发送失败提示词跟随会话变体",
+            sendResult.prompt === expectedSend,
+            "got=" + JSON.stringify(String(sendResult.prompt).trim().slice(0, 20))
+        );
+        check(
+            "发送失败提示词与索引 0 不同",
+            sendResult.prompt !== getSendErrorPrompt(new Error("boom"), { variant: 0 })
+        );
+
+        const xmlVariantAgent = makeAgent({
+            promptVariant: 2,
+            provider: {
+                async send() {
+                    return "这不是 XML";
+                },
+            },
+        });
+        const xmlResult = await runStep(xmlVariantAgent, {
+            prompt: "PROMPT",
+            providerErrorState: { count: 0, max: 5 },
+        });
+        const expectedXml = getXmlErrorPrompt(new Error("No XML Action found"), { variant: 2 });
+        check("格式错误提示词跟随会话变体", xmlResult.prompt === expectedXml);
+        check(
+            "格式错误提示词与索引 0 不同",
+            xmlResult.prompt !== getXmlErrorPrompt(new Error("No XML Action found"), { variant: 0 })
+        );
+
+        // 未设置 promptVariant（老调用方 / 直接构造的 Agent）必须退回索引 0
+        const noVariantAgent = makeAgent({
+            provider: {
+                async send() {
+                    throw new Error("boom");
+                },
+            },
+        });
+        const fallback = await runStep(noVariantAgent, {
+            prompt: "PROMPT",
+            providerErrorState: { count: 0, max: 5 },
+        });
+        check(
+            "未设置变体时退回索引 0",
+            fallback.prompt === getSendErrorPrompt(new Error("boom"), { variant: 0 })
+        );
+    }
+
     console.log("");
     console.log("Total: " + pass + "/" + total);
 
