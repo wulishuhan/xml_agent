@@ -45,6 +45,16 @@ function tempDir(prefix) {
     return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+// Windows 下 os.tmpdir()（C:\WINDOWS\TEMP）与 realpath（C:\WINDOWS\Temp）大小写不同，
+// 指向同一目录。用 path.relative 判断「是否在其内」，避免字符串前缀的大小写脆弱性。
+function isInside(root, target) {
+    const relative = path.relative(root, target);
+    return (
+        relative === "" ||
+        (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep))
+    );
+}
+
 function writeFile(target, content) {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content, "utf8");
@@ -278,7 +288,7 @@ async function main() {
         const result = skills.writeSkill("user:novel-writing", next, options);
         assert.strictEqual(fs.readFileSync(result.path, "utf8"), next);
         assert.ok(
-            result.path.indexOf(path.join(storeRoot, "skills")) === 0,
+            isInside(path.join(storeRoot, "skills"), result.path),
             "必须写回 user 层自己的目录"
         );
     });

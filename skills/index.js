@@ -65,13 +65,15 @@ function realPath(target) {
 }
 
 function isInsidePath(root, target) {
-    const a = path.resolve(root);
-    const b = path.resolve(target);
-    if (a === b) {
+    // 用 path.relative 而非字符串前缀：Windows 下磁盘真实大小写（realpath 的
+    // C:\WINDOWS\Temp）与 path.resolve 保留的输入大小写（C:\WINDOWS\TEMP）不同，
+    // startsWith 会把同一目录判成「不在其内」，导致同步 overwrite 静默跳过。
+    // path.relative 在 Windows 上大小写不敏感，与 runtime.js 的沙箱判定口径一致。
+    const relative = path.relative(path.resolve(root), path.resolve(target));
+    if (!relative) {
         return true;
     }
-    const prefix = a.endsWith(path.sep) ? a : a + path.sep;
-    return b.startsWith(prefix);
+    return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep);
 }
 
 function toRelativePath(root, target) {
@@ -560,7 +562,7 @@ function installSkill(id, workspace, options = {}) {
             id,
             installed: false,
             alreadyInstalled: true,
-            path: target,
+            path: realPath(target) || target,
             workspacePath: relativePath,
             message: "Skill is already in this workspace",
         };
@@ -574,7 +576,7 @@ function installSkill(id, workspace, options = {}) {
         installed: true,
         alreadyInstalled: false,
         overwritten,
-        path: target,
+        path: realPath(target) || target,
         workspacePath: relativePath,
         message: overwritten ? "Skill updated in workspace" : "Skill installed to workspace",
     };

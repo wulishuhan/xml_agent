@@ -16,12 +16,26 @@
 */
 
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 const ROOT = path.join(__dirname, "..", "..");
+const registryModule = require(path.join(ROOT, "plugins/registry"));
 const actionTag = require(path.join(ROOT, "providers/action-tag"));
 const fenceUtils = require(path.join(ROOT, "providers/markdown-fence-utils"));
 const fiber = require(path.join(ROOT, "providers/dom/fiber"));
+
+// 用独立的空 storeRoot 构造 registry：插件启停状态存在用户机器的
+// plugins-state.json 里（wechat 可能被禁用），直接用全局单例会让本测试
+// 依赖那台机器的历史状态。空 storeRoot 下所有内置插件按默认启用。
+const isolatedStoreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "action-tag-registry-"));
+const isolatedRegistry = registryModule.createRegistry({
+    storeRoot: isolatedStoreRoot,
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+});
+isolatedRegistry.load();
+registryModule.setRegistryForTests(isolatedRegistry);
 
 let pass = 0;
 let total = 0;
