@@ -152,8 +152,43 @@ function pickSystemPromptVariant() {
     return Math.floor(Math.random() * REWRITES.length);
 }
 
+/**
+ * 自检：每张重写的 key 必须能在 SYSTEM_PROMPT 里精确命中整行。
+ * 正文被改动却忘了同步映射时，getSystemPromptVariant 会静默把那行退回原文，
+ * 变体悄悄退化却没有任何报错。这里把失配显式暴露出来，交给测试固化成红灯。
+ * @returns {{ variant: number, key: string }[]} 失配清单，空数组表示全部命中
+ */
+function getVariantMismatches() {
+    const lines = new Set(SYSTEM_PROMPT.split("\n"));
+    const mismatches = [];
+    REWRITES.forEach((rewrite, index) => {
+        Object.keys(rewrite).forEach((key) => {
+            if (!lines.has(key)) {
+                mismatches.push({ variant: index, key });
+            }
+        });
+    });
+    return mismatches;
+}
+
+// 模块加载时提醒一次（不抛错，避免提示词微调直接让生产环境崩）；
+// 真正的强制校验在 test/unit/test-prompt-variants.js。
+const initialMismatches = getVariantMismatches();
+if (initialMismatches.length) {
+    console.warn(
+        "[prompt-variants] " +
+            initialMismatches.length +
+            " 条重写的原文行已失配，对应变体会静默退化：" +
+            initialMismatches
+                .slice(0, 3)
+                .map((m) => "v" + m.variant + ":" + JSON.stringify(m.key.slice(0, 24)))
+                .join(", ")
+    );
+}
+
 module.exports = {
     getSystemPromptVariant,
     pickSystemPromptVariant,
+    getVariantMismatches,
     SYSTEM_PROMPT_VARIANT_COUNT,
 };

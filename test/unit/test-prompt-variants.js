@@ -6,7 +6,8 @@
  * 1. 每套首消息变体都保留全部 XML 示例，且示例可解析；
  * 2. 每套变体都不含宿主特征、长度受限、措辞确实彼此不同；
  * 3. 每套回贴变体都保留紧凑 JSON 与可解析的 <answer>/<done/>，且长度受限；
- * 4. 索引 0 / 未提供索引时输出原文基准（指纹测试与旧调用方依赖这一点）。
+ * 4. 索引 0 / 未提供索引时输出原文基准（指纹测试与旧调用方依赖这一点）；
+ * 5. 每张重写的原文行都能在 SYSTEM_PROMPT 里精确命中（正文改动后变体不会静默退化）。
  *
  * 运行：node test/unit/test-prompt-variants.js
  */
@@ -16,6 +17,7 @@ const { SYSTEM_PROMPT } = require("../../prompts/system-prompt");
 const {
     getSystemPromptVariant,
     pickSystemPromptVariant,
+    getVariantMismatches,
     SYSTEM_PROMPT_VARIANT_COUNT,
 } = require("../../prompts/system-prompt-variants");
 const { getFirstPrompt } = require("../../prompts/first-prompt");
@@ -207,6 +209,18 @@ function main() {
             getRuntimeOkPrompt(many, { variant: index }).indexOf("1000 items in total") !== -1
         );
     }
+
+    // 5. 变体映射的 key 必须全部命中原文行：正文若被改动而忘了同步映射表，
+    //    失配的那行会静默退回原文、变体悄悄退化，这里把它变成明确的红灯。
+    const mismatches = getVariantMismatches();
+    check(
+        "所有变体重写的原文行都精确命中 SYSTEM_PROMPT",
+        mismatches.length === 0,
+        mismatches
+            .slice(0, 3)
+            .map((m) => "v" + m.variant + ":" + JSON.stringify(m.key.slice(0, 30)))
+            .join(", ")
+    );
 
     console.log("");
     console.log("Total: " + pass + "/" + total);
