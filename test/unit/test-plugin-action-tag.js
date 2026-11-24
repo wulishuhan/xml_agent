@@ -28,8 +28,17 @@ const fiber = require(path.join(ROOT, "providers/dom/fiber"));
 
 // 用独立的空 storeRoot 构造 registry：插件启停状态存在用户机器的
 // plugins-state.json 里（wechat 可能被禁用），直接用全局单例会让本测试
-// 依赖那台机器的历史状态。空 storeRoot 下所有内置插件按默认启用。
+// 依赖那台机器的历史状态。这里用独立 storeRoot，并显式启用被测插件：
+// v1.3.0 起 browser / wechat 的 enabledByDefault 改为 false，不能靠默认。
 const isolatedStoreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "action-tag-registry-"));
+fs.writeFileSync(
+    path.join(isolatedStoreRoot, "plugins-state.json"),
+    JSON.stringify({
+        browser: { enabled: true },
+        wechat: { enabled: true },
+        fetch: { enabled: true },
+    })
+);
 const isolatedRegistry = registryModule.createRegistry({
     storeRoot: isolatedStoreRoot,
     logger: { info() {}, warn() {}, error() {}, debug() {} },

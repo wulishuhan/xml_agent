@@ -37,8 +37,8 @@ async function main() {
     check("retryJitter 默认 0.3", defaults.browser.retryJitter === 0.3);
     check("throttleCooldownMs 默认 60000", defaults.browser.throttleCooldownMs === 60000);
     check("maxConcurrentSessions 默认 1", defaults.browser.maxConcurrentSessions === 1);
-    // 技能自动安装：默认开，只同步 builtin + user，不覆盖工作区已有副本
-    check("skills.autoInstall 默认 true", defaults.skills.autoInstall === true);
+    // 技能自动安装：v1.3.0 起默认关，避免无关技能清单占用首条提示词篇幅
+    check("skills.autoInstall 默认 false", defaults.skills.autoInstall === false);
     check(
         "skills.autoInstallSources 默认 builtin+user",
         JSON.stringify(defaults.skills.autoInstallSources) === '["builtin","user"]'

@@ -6,6 +6,7 @@
     "engines": { "xmlAgent": ">=1.1.0" },
     "author": "xml-agent",
     "description": "操作微信桌面版：打开会话 / 发送消息 / 读取当前会话（Windows，OCR 校验会话标题后才允许发送）",
+    "enabledByDefault": false,
     "permissions": ["system:window", "system:screen", "workspace:write"],
     "activation": { "keywords": ["微信", "wechat", "WeChat", "群聊", "发消息", "会话"] },
     "configSchema": {

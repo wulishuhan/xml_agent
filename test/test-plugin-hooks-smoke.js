@@ -22,6 +22,11 @@ const fs = require("fs");
 
 const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-hook-"));
 const ws = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-hookws-"));
+// v1.3.0 起 audit-log 默认禁用；本测试验证它启用后的钩子行为，先写显式启用状态。
+fs.writeFileSync(
+    path.join(storeRoot, "plugins-state.json"),
+    JSON.stringify({ "audit-log": { enabled: true } })
+);
 
 const { createRegistry, setRegistryForTests } = require("../plugins/registry");
 const reg = createRegistry({

@@ -55,6 +55,12 @@ function writePlugin(dir, name, manifest, indexSource) {
 async function main() {
     const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-ui-store-"));
     const userDir = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-ui-user-"));
+    // v1.3.0 起 audit-log 等默认禁用；本测试要验证它们的面板与接口，
+    // 先写显式启用状态（等价于用户在面板点启用）。
+    fs.writeFileSync(
+        path.join(storeRoot, "plugins-state.json"),
+        JSON.stringify({ "audit-log": { enabled: true } })
+    );
     const silentLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
     try {

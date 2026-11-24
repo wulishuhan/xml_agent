@@ -6,6 +6,7 @@
     "engines": { "xmlAgent": ">=1.1.0" },
     "author": "xml-agent",
     "description": "驱动一个独立的 Chromium 浏览器（Edge/Chrome，独立配置目录）：打开网页、点击、填表、取正文、截图",
+    "enabledByDefault": false,
     "permissions": ["network:http", "system:screen", "workspace:write"],
     "activation": {
         "keywords": ["浏览器", "browser", "网页", "打开网址", "抓页面", "截图网页", "填表"]

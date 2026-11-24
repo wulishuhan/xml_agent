@@ -6,6 +6,7 @@
     "engines": { "xmlAgent": ">=1.2.0" },
     "author": "xml-agent",
     "description": "把会话 A 的记忆（过程记录 + 模型对话线程）压缩后转到会话 B，并生成一份摘要让模型 read",
+    "enabledByDefault": false,
     "permissions": ["sessions:read", "sessions:write", "workspace:write"],
     "activation": "always",
     "configSchema": {

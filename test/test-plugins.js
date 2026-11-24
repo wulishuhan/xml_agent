@@ -84,6 +84,19 @@ async function main() {
     const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-plugin-store-"));
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-plugin-ws-"));
     const userDir = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-plugin-user-"));
+    // v1.3.0 起 fetch / audit-log 等默认禁用（精简默认提示词）。本测试覆盖
+    // "插件启用后"的发现、权限、动作注册等行为，先写入显式启用状态，
+    // 等价于用户在插件面板点了启用。
+    fs.writeFileSync(
+        path.join(storeRoot, "plugins-state.json"),
+        JSON.stringify({
+            fetch: { enabled: true },
+            "audit-log": { enabled: true },
+            "memory-transfer": { enabled: true },
+            browser: { enabled: true },
+            wechat: { enabled: true },
+        })
+    );
     const server = await startServer();
     const port = server.address().port;
 

@@ -9,6 +9,17 @@ const path = require("path");
 const http = require("http");
 
 const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-plugin-api-"));
+// v1.3.0 起这些内置插件默认禁用；本测试要验证"启用后"的 API 行为，先写显式启用状态。
+fs.writeFileSync(
+    path.join(storeRoot, "plugins-state.json"),
+    JSON.stringify({
+        fetch: { enabled: true },
+        "audit-log": { enabled: true },
+        "memory-transfer": { enabled: true },
+        browser: { enabled: true },
+        wechat: { enabled: true },
+    })
+);
 process.env.XML_AGENT_STORE_ROOT = storeRoot;
 process.env.PORT = String(34000 + Math.floor(Math.random() * 2000));
 

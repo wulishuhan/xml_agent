@@ -385,8 +385,10 @@ const FIELDS = [
     {
         // 是否在 Agent 启动时把启用的非工作区技能自动复制进当前工作区，
         // 让模型能 read 到（read 被沙箱限制在工作区内）。
+        // v1.3.0 起默认关闭：避免与任务无关的技能清单占用首条提示词篇幅；
+        // 需要某技能时在 Skills 面板手动装进工作区，或把此项设为 true。
         path: "skills.autoInstall",
-        default: true,
+        default: false,
         type: BOOL,
         env: ["SKILLS_AUTO_INSTALL"],
         message: "skills.autoInstall must be a boolean",

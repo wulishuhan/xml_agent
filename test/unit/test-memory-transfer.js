@@ -874,9 +874,20 @@ check("读写都授权时能完成转移", () => {
 // 3. 插件本身
 // ---------------------------------------------------------------
 
+// v1.3.0 起 memory-transfer 的 enabledByDefault 改为 false（精简默认提示词）。
+// 这些用例测的是插件"被启用后"的行为，所以在临时 store 里先写启用状态，
+// 与用户在插件面板点"启用"后的真实状态一致。
+function enableMemoryTransferPlugin(storeRoot) {
+    fs.writeFileSync(
+        path.join(storeRoot, "plugins-state.json"),
+        JSON.stringify({ "memory-transfer": { enabled: true } })
+    );
+}
+
 check("插件注册了动作 / 接口 / 面板，且动作声明了两个会话权限", () => {
     const { PluginRegistry } = require("../../plugins/registry");
     const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-plugin-"));
+    enableMemoryTransferPlugin(storeRoot);
     try {
         const registry = new PluginRegistry({ enabled: true, storeRoot });
         registry.load();
@@ -910,6 +921,7 @@ check("插件注册了动作 / 接口 / 面板，且动作声明了两个会话�
 check("插件接口 POST /transfer 与动作走同一条实现", async () => {
     const { PluginRegistry } = require("../../plugins/registry");
     const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-api-"));
+    enableMemoryTransferPlugin(storeRoot);
     // 插件的能力门面由宿主装配，测试无法注入 store，因此这里用不会撞车的 id，
     // 避免和真实会话目录里的记录互相干扰。
     const stamp = Date.now();
@@ -964,6 +976,7 @@ check("插件接口 POST /transfer 与动作走同一条实现", async () => {
 check("插件接口也能落摘要：走 HTTP 的 mode=digest 不能退化成空会话", async () => {
     const { PluginRegistry } = require("../../plugins/registry");
     const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-digestapi-"));
+    enableMemoryTransferPlugin(storeRoot);
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-ws-"));
     const stamp = Date.now();
     const sourceId = "mt-dgsrc-" + stamp;
@@ -998,6 +1011,7 @@ check("插件动作真的把摘要写进工作区（模型才 read 得到）", a
     const { PluginRegistry } = require("../../plugins/registry");
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-ws-"));
     const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-store-"));
+    enableMemoryTransferPlugin(storeRoot);
     const stamp = Date.now();
     const sourceId = "mt-digest-src-" + stamp;
     const targetId = "mt-digest-dst-" + stamp;
@@ -1037,6 +1051,7 @@ check("目标工作区与当前不同时，摘要不落盘且只给警告", asyn
     const { PluginRegistry } = require("../../plugins/registry");
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-ws2-"));
     const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-mt-store2-"));
+    enableMemoryTransferPlugin(storeRoot);
     const stamp = Date.now();
     const sourceId = "mt-digest-x-" + stamp;
     try {

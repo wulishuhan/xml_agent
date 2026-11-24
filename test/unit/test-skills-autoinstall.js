@@ -18,6 +18,9 @@ const path = require("path");
 
 const storeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "autoinstall-store-"));
 process.env.XML_AGENT_STORE_ROOT = storeRoot;
+// v1.3.0 起 skills.autoInstall 默认关闭；本测试专门验证"开启后"的同步行为，
+// 所以在任何 require 之前显式打开（agent-config 在模块加载时读取该环境变量）。
+process.env.SKILLS_AUTO_INSTALL = "1";
 
 const skills = require("../../skills");
 const { buildSkillPromptSection } = require("../../prompts/skill-prompt");

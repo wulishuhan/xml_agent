@@ -6,6 +6,7 @@
     "engines": { "xmlAgent": ">=1.1.0" },
     "author": "xml-agent",
     "description": "HTTP 请求动作：域名白名单 + 超时 + 响应体积上限，不跟随重定向（防 SSRF 借道跳转）",
+    "enabledByDefault": false,
     "permissions": ["network:http"],
     "activation": "always",
     "configSchema": {

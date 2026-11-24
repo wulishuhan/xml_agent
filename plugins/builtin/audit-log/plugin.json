@@ -6,6 +6,7 @@
     "engines": { "xmlAgent": ">=1.1.0" },
     "author": "xml-agent",
     "description": "把动作执行、权限拒绝、任务结束写成分文件的 JSONL 审计日志（默认按天切分）",
+    "enabledByDefault": false,
     "permissions": [],
     "activation": "always",
     "configSchema": {
