@@ -471,6 +471,109 @@ async function main() {
         check("DeepSeek 仍用基类三向扫描（未被 GLM 覆盖污染）", baseFn === collectFiberCandidates);
     }
 
+    // ------------------------------------------------------------
+    // 11. ChatGPT 复用页面落在旧会话时，新任务自动开一条全新会话
+    //     （失声会话对长短消息都不出正文，重试无法自救）
+    // ------------------------------------------------------------
+    {
+        function makeFakePage(url, gotoError) {
+            const state = {
+                currentUrl: url,
+                gotos: [],
+                url() {
+                    return state.currentUrl;
+                },
+                async goto(target) {
+                    state.gotos.push(target);
+                    if (gotoError) {
+                        throw gotoError;
+                    }
+                    state.currentUrl = target;
+                },
+                isClosed() {
+                    return false;
+                },
+                async bringToFront() {},
+            };
+            return state;
+        }
+
+        async function startWith(opts) {
+            const provider = new ChatGPTProvider(
+                Object.assign({ autoStart: false }, opts.providerOpts || {})
+            );
+            const page = makeFakePage(opts.pageUrl, opts.gotoError);
+            provider.checkCdpServer = async () => true;
+            provider.connectCdp = async () => ({ contexts: () => [{}] });
+            provider.ensurePage = async () => {
+                provider.page = page;
+            };
+            provider.waitForInput = async () => {};
+            await provider.start();
+            return { provider, page };
+        }
+
+        const OLD = "https://chatgpt.com/c/6b050548-4140-83ec-986e-1d69ec04548a";
+
+        const fresh = await startWith({ pageUrl: OLD });
+        check(
+            "新任务复用旧会话页时自动 goto 首页开新会话",
+            fresh.page.gotos.length === 1 && fresh.page.gotos[0] === "https://chatgpt.com",
+            JSON.stringify(fresh.page.gotos)
+        );
+        check(
+            "开新会话后清掉被基类回写的旧会话 id",
+            fresh.provider.conversationId === null &&
+                fresh.provider.currentConversationId === null,
+            JSON.stringify({
+                conversationId: fresh.provider.conversationId,
+                currentConversationId: fresh.provider.currentConversationId,
+            })
+        );
+
+        const explicit = await startWith({
+            pageUrl: OLD,
+            providerOpts: { conversationId: "6b050548-4140-83ec-986e-1d69ec04548a" },
+        });
+        check(
+            "显式续接会话时不重置（仍留在指定会话）",
+            explicit.page.gotos.length === 0 &&
+                explicit.provider.conversationId === "6b050548-4140-83ec-986e-1d69ec04548a"
+        );
+
+        const homepage = await startWith({ pageUrl: "https://chatgpt.com/" });
+        check(
+            "复用页面本来就在首页时不做多余跳转",
+            homepage.page.gotos.length === 0
+        );
+
+        const disabled = await startWith({
+            pageUrl: OLD,
+            providerOpts: { freshChatOnStart: false },
+        });
+        check(
+            "freshChatOnStart=false 时保留旧行为（不自动跳转）",
+            disabled.page.gotos.length === 0
+        );
+
+        // 跳转失败不能把整轮任务带崩：最坏退回在现有页面上重试
+        let failingThrew = null;
+        let failingResult = null;
+        try {
+            failingResult = await startWith({
+                pageUrl: OLD,
+                gotoError: new Error("navigation blocked"),
+            });
+        } catch (error) {
+            failingThrew = error;
+        }
+        check(
+            "首页跳转失败时 start() 不抛错、退回原页面",
+            failingThrew === null && !!failingResult && failingResult.page.gotos.length === 1,
+            failingThrew ? failingThrew.message : ""
+        );
+    }
+
     console.log("\nTotal: " + pass + "/" + total);
     if (pass !== total) {
         process.exit(1);

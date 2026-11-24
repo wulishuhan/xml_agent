@@ -123,10 +123,70 @@ class ChatGPTProvider extends BrowserChatProvider {
                 ".wcDTda_fallbackTextarea",
             ],
         });
+        // 是否"显式"要求续接某条会话。必须在 super() 之后、基类 start() 可能改写
+        // conversationId 之前记下来：新任务（没传 conversationId）不允许被
+        // 复用页面里残留的旧会话 id 冒名顶替。
+        this.hadExplicitConversationId = !!(options && options.conversationId);
+        // 新任务是否在复用页面落进旧会话时自动开一条全新会话。默认开；
+        // 显式续接会话（传了 conversationId）时这段逻辑一定不会触发。
+        this.freshChatOnStart =
+            options.freshChatOnStart !== undefined ? options.freshChatOnStart !== false : true;
     }
 
     get name() {
         return "ChatGPT";
+    }
+
+    /**
+     * 复用页面时，如果它停在一条旧会话上，新任务先回到首页开一条全新会话。
+     *
+     * 背景（真机复现）：ChatGPT 有一条会话进入"失声"状态后，对任何消息都不再
+     * 产出正文——短消息、长 prompt 都一样，界面显示生成完成、正文却始终为空。
+     * 在失声会话里重试只会把同一条死线程再撞若干次，永远好不了。
+     *
+     * 新任务的第一条 prompt 自带完整系统提示词与动作协议，本来就不需要旧线程；
+     * 回到首页（https://chatgpt.com/）拿一条干净会话即可稳定恢复。
+     * 已验证：从 /c/<id> goto 首页后消息数为 0、输入框就绪，新会话对 2.8k 字符
+     * 首条 prompt 约 12s 正常返回 XML 动作。
+     */
+    async start() {
+        await super.start();
+
+        if (!this.freshChatOnStart || this.hadExplicitConversationId || !this.isPageAlive()) {
+            return;
+        }
+
+        let url = "";
+        try {
+            url = this.page.url() || "";
+        } catch (error) {
+            return;
+        }
+
+        // 基类的 start() 会把页面 URL 里的会话 id 回写进 conversationId；
+        // 那是复用到的旧会话，不是本次任务想要的，一并清掉。
+        if (!this.getConversationIdFromUrl(url)) {
+            return;
+        }
+
+        console.log(
+            "[ChatGPT] Reused page is inside an old conversation (" +
+                url +
+                "); opening a fresh chat for this new task"
+        );
+        this.conversationId = null;
+        this.currentConversationId = null;
+        try {
+            await this.page.goto(this.buildTargetUrl(), {
+                waitUntil: "domcontentloaded",
+                timeout: this.navigationTimeout,
+            });
+            await this.waitForInput();
+            console.log("[ChatGPT] Fresh chat ready at " + this.page.url());
+        } catch (error) {
+            // 重置失败不阻断任务：仍可在当前页面上尝试，最坏退回原来的行为。
+            console.warn("[ChatGPT] Failed to open a fresh chat: " + error.message);
+        }
     }
 
     async getAssistantCount() {
