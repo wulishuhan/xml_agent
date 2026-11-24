@@ -377,63 +377,84 @@ class ChatGPTProvider extends BrowserChatProvider {
     }
 
     /**
-    三级降级提交：键盘回车 → 发送按钮 → 输入元素自身回车。
-    Enter 优先是因为新版的发送按钮有时在动画中途不可点。
-    */
+     * 提交消息：键盘回车 → 发送按钮 → 输入元素回车，三级降级。
+     *
+     * 关键是每一级都以「输入框真的清空」为成功判据，而不是「按下去没抛错」。
+     * 只判后者会踩一个很贵的坑：新版页面在编辑器尚未就绪时，Enter 能按下、
+     * 但不提交，1821 字符留在输入框里，随后一路等回复直到整轮超时
+     * （实测 user 消息 0 条、助手消息 0 条、耗满 420s 上限）。这种情况下
+     * 页面上其实一直挂着一个可点的「发送」按钮，点一下就能发出去。
+     */
     async deliverMessage() {
-        let sent = false;
-        let sendError = null;
-
-        try {
-            await this.page.keyboard.press("Enter");
-            console.log("[ChatGPT] Sent Enter via keyboard");
-            sent = true;
-        } catch (error) {
-            console.warn("[ChatGPT] Keyboard Enter failed: " + error.message);
-            sendError = error;
-        }
-
-        if (!sent) {
-            for (const selector of SEND_BUTTON_SELECTORS) {
-                try {
+        const attempts = [
+            {
+                label: "keyboard Enter",
+                run: () => this.page.keyboard.press("Enter"),
+            },
+            ...SEND_BUTTON_SELECTORS.map((selector) => ({
+                label: "send button " + selector,
+                run: async () => {
                     const button = this.page.locator(selector).first();
 
-                    if ((await button.count()) > 0 && (await button.isVisible())) {
-                        await button.click();
-                        console.log("[ChatGPT] Clicked send button: " + selector);
-                        sent = true;
-                        break;
+                    if ((await button.count()) === 0) {
+                        return false;
                     }
-                } catch (error) {
-                    continue;
-                }
-            }
-        }
+                    if (!(await button.isVisible())) {
+                        return false;
+                    }
+                    await button.click({ timeout: 3000 });
+                    return true;
+                },
+            })),
+            {
+                label: "input Enter",
+                run: async () => {
+                    const input = await this.findVisibleInput(INPUT_SELECTORS);
 
-        if (!sent) {
-            try {
-                const input = await this.findVisibleInput(INPUT_SELECTORS);
-
-                if (input) {
+                    if (!input) {
+                        return false;
+                    }
                     await input.press("Enter");
-                    console.log("[ChatGPT] Pressed Enter on current input element");
-                    sent = true;
-                }
+                    return true;
+                },
+            },
+        ];
+
+        const failures = [];
+
+        for (const attempt of attempts) {
+            let fired = false;
+
+            try {
+                // run() 显式返回 false 表示"这次方式在当前 DOM 上不可用"，直接跳过
+                fired = (await attempt.run()) !== false;
             } catch (error) {
-                console.warn("[ChatGPT] Input Enter failed: " + error.message);
-
-                if (!sendError) {
-                    sendError = error;
-                }
+                failures.push(attempt.label + ": " + error.message);
+                continue;
             }
-        }
 
-        if (!sent) {
-            throw new Error(
-                "ChatGPT failed to send message - all send methods failed. Last error: " +
-                    (sendError ? sendError.message : "unknown")
+            if (!fired) {
+                continue;
+            }
+
+            // 提交成功时输入框会被立刻清空，所以这一步通常瞬间返回
+            if (await this.waitForInputClear(2500)) {
+                console.log("[ChatGPT] Sent via " + attempt.label);
+                return;
+            }
+
+            failures.push(attempt.label + ": input did not clear");
+            console.warn(
+                "[ChatGPT] " + attempt.label + " did not submit the message; falling back"
             );
         }
+
+        // 措辞特意带上 "did not take effect"：step.js 据此把它归为疑似限流，
+        // 走更长的冷却，而不是按普通抖动快速重试。
+        throw new Error(
+            "ChatGPT failed to send message - send did not take effect (input never cleared). Tried: " +
+                failures.join("; ")
+        );
     }
 }
 

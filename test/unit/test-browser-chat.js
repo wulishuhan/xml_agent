@@ -574,6 +574,112 @@ async function main() {
         );
     }
 
+    // ------------------------------------------------------------
+    // 12. ChatGPT 提交必须以「输入框真的清空」为准，不能以「按键没抛错」为准
+    //
+    // 真机踩到的坑：新会话里 Enter 按下去了，但编辑器未就绪、没提交，
+    // 1821 字符一直留在输入框，user 消息 0 条，然后一路静等到整轮超时。
+    // 正确行为是逐级降级，每级都用输入清空来验收，全失败就抛错交给重试。
+    // ------------------------------------------------------------
+    {
+        const SEND_SEL = 'button[aria-label="发送"]';
+
+        function makeSender(opts) {
+            const log = [];
+            const clears = (opts.clears || []).slice();
+            let clearCalls = 0;
+            const provider = new ChatGPTProvider({ autoStart: false });
+
+            provider.page = {
+                keyboard: {
+                    press: async (key) => {
+                        log.push("keyboard:" + key);
+                    },
+                },
+                locator: (selector) => {
+                    const handle = {
+                        count: async () => (selector === SEND_SEL && opts.button ? 1 : 0),
+                        first() {
+                            return handle;
+                        },
+                        isVisible: async () => Boolean(opts.button),
+                        click: async () => {
+                            log.push("click:" + selector);
+                        },
+                    };
+                    return handle;
+                },
+            };
+            provider.findVisibleInput = async () => ({
+                press: async () => {
+                    log.push("input-enter");
+                },
+            });
+            provider.waitForInputClear = async () => {
+                clearCalls += 1;
+                return clears.length ? clears.shift() === true : false;
+            };
+
+            return { provider, log, clearCalls: () => clearCalls };
+        }
+
+        // A. 回车即清空：只发一次键盘回车，不去点按钮
+        const okSender = makeSender({ clears: [true], button: true });
+        let okThrew = null;
+        try {
+            await okSender.provider.deliverMessage();
+        } catch (error) {
+            okThrew = error;
+        }
+        check(
+            "回车生效时只按一次键盘回车、不点发送按钮",
+            okThrew === null &&
+                okSender.log.length === 1 &&
+                okSender.log[0] === "keyboard:Enter",
+            JSON.stringify(okSender.log)
+        );
+
+        // B. 回车没清空，降级点发送按钮后清空：必须点中，且只点一次
+        const btnSender = makeSender({ clears: [false, true], button: true });
+        let btnThrew = null;
+        try {
+            await btnSender.provider.deliverMessage();
+        } catch (error) {
+            btnThrew = error;
+        }
+        const clicks = btnSender.log.filter((item) => item.indexOf("click:") === 0);
+        check(
+            "回车未清空时降级点发送按钮并成功",
+            btnThrew === null && clicks.length === 1 && clicks[0] === "click:" + SEND_SEL,
+            JSON.stringify(btnSender.log)
+        );
+        check(
+            "降级后仍以输入清空作为验收（共检测两次）",
+            btnSender.clearCalls() === 2,
+            "calls=" + btnSender.clearCalls()
+        );
+
+        // C. 全都不清空：必须抛错，不能静默返回（否则就是 420s 空等）
+        const deadSender = makeSender({ clears: [false, false], button: false });
+        let deadThrew = null;
+        try {
+            await deadSender.provider.deliverMessage();
+        } catch (error) {
+            deadThrew = error;
+        }
+        check("所有提交方式都失效时抛错而不是静默返回", deadThrew !== null);
+        check(
+            "抛错信息含 did not take effect（step.js 据此走限流冷却）",
+            Boolean(deadThrew) && /did not take effect/.test(deadThrew.message),
+            deadThrew ? deadThrew.message.slice(0, 80) : ""
+        );
+        check(
+            "失败前仍尝试过输入元素回车这一级",
+            deadSender.log.indexOf("input-enter") !== -1,
+            JSON.stringify(deadSender.log)
+        );
+    }
+
     console.log("\nTotal: " + pass + "/" + total);
     if (pass !== total) {
         process.exit(1);
