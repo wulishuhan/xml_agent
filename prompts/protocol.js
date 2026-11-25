@@ -46,7 +46,12 @@ function runtimeModule(protocol) {
 }
 
 function getFirstPromptForProtocol(workspace, task, options = {}, protocol) {
-    return firstModule(protocol).getFirstPrompt(workspace, task, options);
+    return firstModule(protocol).getFirstPrompt(
+        workspace,
+        task,
+        // 插件用法示例必须按协议渲染，否则 XML 会话会看到 JSON 示例（反之亦然）。
+        Object.assign({}, options, { protocol: normalizeProtocol(protocol) })
+    );
 }
 
 /** 返回 { prompt, exportName } —— exportName 是对应模块里错误提示词的导出函数名。 */

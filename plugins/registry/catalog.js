@@ -103,6 +103,8 @@ module.exports = {
                 action: entry.name,
                 group: prompt.group,
                 usage: prompt.usage,
+                usageXml: prompt.usageXml,
+                usageJson: prompt.usageJson,
                 note: prompt.note,
                 priority: prompt.priority,
             });

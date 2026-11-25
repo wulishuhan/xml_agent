@@ -9,6 +9,10 @@
 */
 
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const { buildPluginPromptSection } = require("../../prompts/plugin-prompt");
+const { buildSkillPromptSection } = require("../../prompts/skill-prompt");
 
 const {
     normalizeProtocol,
@@ -283,6 +287,95 @@ async function main() {
         assert.ok(!xmlPrompt.includes("JSON 动作对象"), "XML 续接提示不该出现 JSON 指令");
         assert.ok(xmlPrompt.includes("按开头"), "XML 续接提示应指向首条格式");
         assert.ok(jsonPrompt.includes("JSON 动作对象"), "JSON 续接提示应给出 JSON 指令");
+    });
+
+    // ---- 6. 插件 / 技能注入内容按协议渲染（审计发现的双向串协议）----
+    // 插件 usage 历史上是 JSON 写的，XML 会话会照抄；技能文档里曾有裸 <exec/>，
+    // JSON 会话会被带偏。两侧都钉死：注入什么格式，取决于当前协议。
+    const fakeContributions = [
+        {
+            plugin: "fetch",
+            action: "fetch",
+            group: "network",
+            priority: 50,
+            note: "抓网页",
+            usage: '{"action":"fetch","params":{"url":"http://127.0.0.1:3000/api/health","method":"GET"}}',
+        },
+        {
+            plugin: "screenshot",
+            action: "screenshot",
+            group: "system",
+            priority: 80,
+            note: "截图",
+            usage: '{"action":"screenshot","params":{"targets":[{"source":"screen","path":"a.png"}]}}',
+            usageXml: '<screenshot><target source="screen" path="a.png"/></screenshot>',
+        },
+    ];
+    const fakeRegistry = { listPromptContributions: () => fakeContributions };
+
+    check("插件提示词：XML 协议把简单 JSON 用法折算成 XML 标签", () => {
+        const section = buildPluginPromptSection(fakeRegistry, { protocol: "xml" });
+        assert.ok(section.includes("<fetch url="), section);
+        assert.ok(section.includes("<screenshot><target"), "复杂参数应走 usageXml");
+        assert.ok(!section.includes('"action":"fetch"'), "XML 区块不该出现 JSON 示例");
+        assert.ok(!section.includes('"action":"screenshot"'), "XML 区块不该出现 JSON 示例");
+    });
+
+    check("插件提示词：JSON 协议保持 JSON 用法，不出现 XML 标签", () => {
+        const section = buildPluginPromptSection(fakeRegistry, { protocol: "json" });
+        assert.ok(section.includes('"action":"fetch"'), section);
+        assert.ok(!section.includes("<fetch "), "JSON 区块不该出现 XML 标签");
+        assert.ok(!section.includes("<screenshot>"), "JSON 区块不该出现 XML 标签");
+    });
+
+    check("首轮提示词注入插件时，XML 协议不夹带 JSON 示例", () => {
+        const prompt = getFirstPromptForProtocol(
+            "D:/tmp/ws",
+            "t",
+            { registry: fakeRegistry },
+            "xml"
+        );
+        assert.ok(prompt.includes("<fetch url="), "应折算成 XML 用法");
+        assert.ok(!prompt.includes('"action":"fetch"'), "不该夹带 JSON 示例");
+    });
+
+    check("插件提示词：老插件的 XML 用法在 JSON 协议下降级，不照抄", () => {
+        const legacy = [
+            {
+                plugin: "legacy",
+                action: "legacy-do",
+                group: "plugin",
+                priority: 50,
+                note: "早期插件",
+                usage: '<legacy-do path="a.txt"/>',
+            },
+        ];
+        const section = buildPluginPromptSection(
+            { listPromptContributions: () => legacy },
+            { protocol: "json" }
+        );
+        assert.ok(!section.includes("<legacy-do"), "JSON 区块不该输出 XML 示例");
+        assert.ok(section.includes("首条消息给的 JSON 协议"));
+    });
+
+    check("技能段只说按首条消息协议，不写死 XML 动作语法", () => {
+        const section = buildSkillPromptSection([
+            {
+                name: "demo",
+                workspacePath: ".agent/skills/demo.md",
+                description: "示范",
+                enabled: true,
+                active: true,
+            },
+        ]);
+        assert.ok(section.includes("首条消息给的协议"));
+        assert.ok(!/<(read|write|edit|exec|answer|done)[\s/>]/.test(section));
+    });
+
+    check("内置技能文档不含 XML 动作示例（JSON 协议不会被带偏）", () => {
+        const file = path.join(__dirname, "../../skills/novel-writing/SKILL.md");
+        const text = fs.readFileSync(file, "utf8");
+        assert.ok(!/<(read|write|edit|exec|answer|done|screenshot)[\s/>]/.test(text));
     });
 
     console.log("\nTotal: " + pass + "/" + total);

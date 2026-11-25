@@ -421,6 +421,9 @@ function defineAction(def, options = {}) {
             prompt: {
                 group: String(prompt.group || "plugin").trim() || "plugin",
                 usage,
+                // 可选：插件直接声明各协议下的用法示例；缺省时由提示词层折算或降级。
+                usageXml: String(prompt.usageXml || "").trim(),
+                usageJson: String(prompt.usageJson || "").trim(),
                 note: String(prompt.note || "").trim(),
                 priority: Number.isFinite(Number(prompt.priority)) ? Number(prompt.priority) : 50,
             },

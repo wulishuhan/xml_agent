@@ -181,6 +181,9 @@ const ACTION = {
         prompt: {
             group: "system",
             usage: '{"action":"screenshot","params":{"targets":[{"source":"window","windowTitle":"Visual Studio Code","path":"screenshots/vscode.png"},{"source":"screen","path":"screenshots/desktop.png"}]}}',
+            // targets 是数组，无法从 JSON 示例机械折算成 XML 属性，显式给出 XML 写法。
+            usageXml:
+                '<screenshot><target source="window" windowTitle="Visual Studio Code" path="screenshots/vscode.png"/><target source="screen" path="screenshots/desktop.png"/></screenshot>',
             note:
                 "params.targets 是 1-8 个目标对象的数组，可截取桌面 / 指定窗口 / CDP 浏览器页面；" +
                 "window 来源必须提供 windowTitle 或 title，path 必须是相对 Workspace 的路径，省略时存到 screenshots/。",

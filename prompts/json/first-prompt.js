@@ -18,6 +18,7 @@ function getFirstPrompt(currentWorkspace, task, options = {}) {
         pluginSection = buildPluginPromptSection(options.registry, {
             task: task,
             maxPromptChars: options.maxPromptChars,
+            protocol: options.protocol,
         });
     } catch (error) {
         pluginSection = "";
