@@ -4,6 +4,11 @@ const { createProvider } = require("./providers");
 const providerOptions = require("./providers/options");
 const { getFirstPrompt } = require("./prompts/index");
 const { pickSystemPromptVariant } = require("./prompts/system-prompt-variants");
+const {
+    getFirstPromptForProtocol,
+    pickSystemPromptVariantForProtocol,
+} = require("./prompts/protocol");
+const { normalizeProtocol } = require("./parse/action");
 const { createRuntime } = require("./runtime");
 const { createArtifactsChannel } = require("./agent/artifacts");
 const { normalizePresetImages } = require("./agent/inputs");
@@ -37,6 +42,13 @@ class Agent extends EventEmitter {
         // workspace 限定在工作区内解析相对路径，all 才放开绝对路径。
         // 注意 exec 动作不读这个值——shell 命令仅设 cwd，不受工作区限制。
         this.execScope = options.execScope || "workspace";
+        // 动作协议：xml（默认）/ json。两套协议共用执行层，只影响提示词与解析。
+        this.protocol = normalizeProtocol(
+            options.protocol !== undefined ? options.protocol : agentConfig.agent.protocol
+        );
+        // XML 协议可选的工作区清单（数组）；JSON 协议忽略。未传则首轮不注入清单，
+        // 模型第一步自行 read 目录即可。
+        this.workspaceManifest = Array.isArray(options.manifest) ? options.manifest : null;
         this.maxSteps = options.maxSteps ?? agentConfig.agent.maxSteps;
         this.maxProviderErrors = options.maxProviderErrors ?? agentConfig.agent.maxProviderErrors;
         // 整轮任务的墙钟上限。maxSteps 只管步数，浏览器 provider 每步十几秒，
@@ -65,7 +77,7 @@ class Agent extends EventEmitter {
         this.promptVariant =
             options.promptVariant !== undefined && options.promptVariant !== null
                 ? options.promptVariant
-                : pickSystemPromptVariant();
+                : pickSystemPromptVariantForProtocol(this.protocol);
         // 疑似被限流时的冷却上限（空回复 / 发送未生效等）。
         this.throttleCooldownMs =
             options.throttleCooldownMs !== undefined
@@ -340,16 +352,23 @@ class Agent extends EventEmitter {
             if (this.stopRequested || this.status !== "running") {
                 return this.getResult();
             }
-            let prompt = getFirstPrompt(currentWorkspace, this.task, {
-                registry: this.plugins,
-                skills: skills,
-                systemPromptVariant: this.promptVariant,
-                // 少数平台需要 provider 声明 JSON 动作的输出格式约束。
-                providerHint:
-                    typeof this.provider.getActionMarkupHint === "function"
-                        ? this.provider.getActionMarkupHint()
-                        : "",
-            });
+            let prompt = getFirstPromptForProtocol(
+                currentWorkspace,
+                this.task,
+                {
+                    registry: this.plugins,
+                    skills: skills,
+                    systemPromptVariant: this.promptVariant,
+                    // XML 协议可选注入工作区清单（JSON 协议忽略此字段）。
+                    manifest: this.protocol === "xml" ? this.workspaceManifest : undefined,
+                    // 少数平台需要 provider 声明动作的输出格式约束（按协议取）。
+                    providerHint:
+                        typeof this.provider.getActionMarkupHint === "function"
+                            ? this.provider.getActionMarkupHint(this.protocol)
+                            : "",
+                },
+                this.protocol
+            );
             const providerErrorState = {
                 count: 0,
                 max: this.maxProviderErrors,

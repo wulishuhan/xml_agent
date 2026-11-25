@@ -189,6 +189,38 @@
                     <div v-if="activeTab === 'agent'" class="tab-panel">
                         <h3 class="tab-section-title">{{ t("agentConfig") }}</h3>
                         <div class="settings-field">
+                            <label>{{ t("actionProtocol") }}</label>
+                            <div
+                                class="settings-segmented"
+                                role="radiogroup"
+                                :aria-label="t('actionProtocol')"
+                            >
+                                <button
+                                    type="button"
+                                    class="segmented-option"
+                                    :class="{ active: agentProtocol === 'xml' }"
+                                    role="radio"
+                                    :aria-checked="agentProtocol === 'xml'"
+                                    @click="agentProtocol = 'xml'"
+                                >
+                                    <span class="segmented-title">XML</span>
+                                    <span class="segmented-sub">{{ t("protocolXmlSub") }}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="segmented-option"
+                                    :class="{ active: agentProtocol === 'json' }"
+                                    role="radio"
+                                    :aria-checked="agentProtocol === 'json'"
+                                    @click="agentProtocol = 'json'"
+                                >
+                                    <span class="segmented-title">JSON</span>
+                                    <span class="segmented-sub">{{ t("protocolJsonSub") }}</span>
+                                </button>
+                            </div>
+                            <div class="settings-hint">{{ t("actionProtocolHint") }}</div>
+                        </div>
+                        <div class="settings-field">
                             <label>{{ t("maxSteps") }}</label>
                             <input v-model.number="agentMaxSteps" type="number" min="1" />
                             <div class="settings-hint">{{ t("maxStepsHint") }}</div>
@@ -371,6 +403,10 @@
             agentConfig: "Agent 配置",
             runtimeConfig: "运行时配置",
             sessionConfig: "会话存储配置",
+            actionProtocol: "动作协议",
+            actionProtocolHint: "XML 为默认协议，提示词更短；JSON 为可选协议。切换后对新任务生效。",
+            protocolXmlSub: "默认 · 提示词精简",
+            protocolJsonSub: "可选 · Schema 校验",
             maxSteps: "最大步骤数",
             maxStepsHint: "Agent 单次任务允许执行的最大步骤数",
             maxProviderErrors: "最大 Provider 错误次数",
@@ -448,6 +484,10 @@
             agentConfig: "Agent Configuration",
             runtimeConfig: "Runtime Configuration",
             sessionConfig: "Session Storage",
+            actionProtocol: "Action Protocol",
+            actionProtocolHint: "XML is the default with a shorter prompt; JSON is optional. Applies to new tasks.",
+            protocolXmlSub: "Default · compact prompt",
+            protocolJsonSub: "Optional · schema validated",
             maxSteps: "Max Steps",
             maxStepsHint: "Maximum number of steps per agent task",
             maxProviderErrors: "Max Provider Errors",
@@ -534,6 +574,7 @@
     const settingsPath = ref("");
     const message = ref("");
     // Agent配置状态
+    const agentProtocol = ref("xml");
     const agentMaxSteps = ref(100);
     const agentMaxProviderErrors = ref(3);
     const runtimeMaxFileSize = ref(5 * 1024 * 1024);
@@ -627,10 +668,11 @@
     async function loadAgentConfig() {
         try {
             const config = await getAgentConfig();
-            if (config.agent) {
-                agentMaxSteps.value = config.agent.maxSteps || 100;
-                agentMaxProviderErrors.value = config.agent.maxProviderErrors || 3;
-            }
+        if (config.agent) {
+            agentProtocol.value = config.agent.protocol ?? "xml";
+            agentMaxSteps.value = config.agent.maxSteps || 100;
+            agentMaxProviderErrors.value = config.agent.maxProviderErrors || 3;
+        }
             if (config.runtime) {
                 runtimeMaxFileSize.value = config.runtime.maxFileSize || 5 * 1024 * 1024;
                 runtimeMaxReadSize.value = config.runtime.maxReadSize || 2 * 1024 * 1024;
@@ -711,10 +753,11 @@
     }
     function buildAgentConfigPayload() {
         return {
-            agent: {
-                maxSteps: agentMaxSteps.value,
-                maxProviderErrors: agentMaxProviderErrors.value,
-            },
+        agent: {
+            protocol: agentProtocol.value,
+            maxSteps: agentMaxSteps.value,
+            maxProviderErrors: agentMaxProviderErrors.value,
+        },
             runtime: {
                 maxFileSize: runtimeMaxFileSize.value,
                 maxReadSize: runtimeMaxReadSize.value,

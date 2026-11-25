@@ -81,6 +81,8 @@ async function runAgent(options = {}) {
         workspace,
         task: "变体端到端验证",
         provider: "fake",
+        // 本文件钉的是 JSON 协议提示词（Schema / 四变体 / 无 Manifest），显式固定。
+        protocol: "json",
         createProvider: () => makeProvider(sent, REPLY_SCRIPT),
         maxSteps: 10,
         ...options,
@@ -101,6 +103,7 @@ async function main() {
                 workspace,
                 task: "x",
                 provider: "fake",
+                protocol: "json",
                 createProvider: () => makeProvider([], REPLY_SCRIPT),
             });
             assert.ok(

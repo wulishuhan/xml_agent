@@ -83,7 +83,24 @@ class GeminiProvider extends BrowserChatProvider {
 
     这条平台级约束由 prompts/first-prompt.js 拼进首轮提示词。
     */
-    getActionMarkupHint() {
+    getActionMarkupHint(protocol) {
+        // 不传协议时保持 JSON 行为（历史调用方与单测依赖此默认）。
+        if (protocol === "xml") {
+            return [
+                "本平台会丢弃裸的 XML 标签：直接把 <answer>、<read/> 这类标签写在正文里，",
+                "页面渲染后标签会消失，Agent 收不到你的动作。",
+                "因此每一个动作都必须放进 ```xml 代码块里输出，例如：",
+                "",
+                "```xml",
+                '<read path="package.json"/>',
+                "```",
+                "",
+                "说明：",
+                "- 代码块里的内容会原样保留；一次只给一个动作。",
+                "- <write> / <answer> 的正文仍按协议放在 CDATA 中。",
+                "- 不要在代码块之外输出任何裸标签。",
+            ].join("\n");
+        }
         return [
             "需要执行动作时，只输出一个 JSON 对象，格式为：",
             "",

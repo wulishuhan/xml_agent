@@ -36,6 +36,8 @@ function makeAgent(overrides = {}) {
         step: 1,
         status: "running",
         stopRequested: false,
+        // 本文件围绕 JSON 协议写死；生产默认协议是 xml，这里显式声明以固定行为。
+        protocol: "json",
         answer: null,
         history: [],
         events,

@@ -6,9 +6,13 @@
 
 - **LLM 负责理解任务和规划**
 - **Runtime 负责安全执行**（LLM 不直接操作电脑）
-- **JSON Action** 作为 Agent 与 Workspace 之间的通信协议（项目名 XML Agent 保留为历史名称）
+- **XML Action（默认）或 JSON Action（可选）** 作为 Agent 与 Workspace 之间的通信协议，两套协议共用同一执行层
 
 通过这种架构，可以构建安全、可扩展、可审计的工程型 AI Agent。
+
+> **动作协议可切换**：默认用 XML（提示词更短），也可在设置面板切到 JSON。协议只影响提示词与解析，
+> 执行层（runtime / actions / 插件）完全一致。CLI 用 `--protocol xml|json` 或环境变量
+> `AGENT_ACTION_PROTOCOL` 指定。两套提示词分放 `prompts/xml/` 与 `prompts/json/`。
 
 ---
 
@@ -425,9 +429,18 @@ Agent Continue
 
 `Agent.stop()` 会先结束本会话启动的所有子进程（见 Runtime），再关闭浏览器。
 
-## Action 协议（JSON）
+## Action 协议（XML 默认 / JSON 可选）
 
-模型每轮只输出一个 JSON envelope：
+两套协议解析后都归一成 `{ action, params }` 信封，走同一个 Runtime：
+
+- **XML（默认）**：`parse/xml-action.js` 用 fast-xml-parser 解析 `<read path="..."/>` 等标签，
+  把节点属性/CDATA 归一成 `params`。提示词在 `prompts/xml/`，首条更短。
+- **JSON（可选）**：`parse/json-action.js` 解析 `{"action":"read","params":{...}}`。
+  提示词在 `prompts/json/`，带 JSON Schema 校验。
+- `parse/action.js` 按协议分发，非法协议名退回 XML。切换入口：设置面板 / CLI `--protocol` /
+  环境变量 `AGENT_ACTION_PROTOCOL`。
+
+模型每轮只输出一个动作（XML 标签或 JSON envelope）：
 
 ```json
 { "action": "read", "params": { "path": "." } }

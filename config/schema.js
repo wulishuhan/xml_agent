@@ -62,6 +62,7 @@ const FLOAT = "float";
 const BOOL = "bool";
 const STRING = "string";
 const BROWSER_TYPE = "browserType";
+const ENUM = "enum";
 const ANY = "any";
 
 /**
@@ -101,6 +102,15 @@ const FIELDS = [
         min: 0,
         env: ["AGENT_RUN_TIMEOUT_MS"],
         message: "agent.runTimeoutMs must be a non-negative integer",
+    },
+    {
+        // 动作协议：xml（默认）或 json。两套协议共用执行层，只影响提示词与解析。
+        path: "agent.protocol",
+        default: "xml",
+        type: ENUM,
+        options: ["xml", "json"],
+        env: ["AGENT_ACTION_PROTOCOL"],
+        message: "agent.protocol must be one of: xml, json",
     },
     {
         path: "runtime.maxFileSize",
@@ -562,6 +572,11 @@ function parseEnvValue(field, raw) {
     if (field.type === BROWSER_TYPE) {
         return normalizeBrowserType(raw);
     }
+    if (field.type === ENUM) {
+        const options = Array.isArray(field.options) ? field.options : [];
+        const value = String(raw).trim().toLowerCase();
+        return options.indexOf(value) === -1 ? undefined : value;
+    }
     if (typeof raw === "string" && raw !== "") {
         return raw;
     }
@@ -657,6 +672,10 @@ function validateValue(field, value) {
     }
     if (field.type === BROWSER_TYPE) {
         return BROWSER_TYPES.indexOf(value) === -1 ? field.message : null;
+    }
+    if (field.type === ENUM) {
+        const options = Array.isArray(field.options) ? field.options : [];
+        return options.indexOf(value) === -1 ? field.message : null;
     }
     if (field.type === STRING) {
         return typeof value === "string" ? null : field.message;

@@ -61,6 +61,8 @@ function makeAgent(options) {
                 workspace,
                 task: "timeout check",
                 provider: "fake",
+                // 本文件的脚本回复是 JSON 动作，显式固定协议以免受默认 xml 影响。
+                protocol: "json",
                 createProvider: () => makeProvider(),
             },
             options

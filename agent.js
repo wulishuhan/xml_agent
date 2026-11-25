@@ -10,6 +10,7 @@ function parseArgs() {
 
     let workspace = null;
     let provider = "chatgpt";
+    let protocol = undefined;
     let background = false;
     const taskParts = [];
 
@@ -36,6 +37,16 @@ function parseArgs() {
             continue;
         }
 
+        if (arg === "--protocol") {
+            protocol = args[++i];
+            continue;
+        }
+
+        if (arg.startsWith("--protocol=")) {
+            protocol = arg.substring("--protocol=".length);
+            continue;
+        }
+
         if (arg === "--background") {
             background = true;
             continue;
@@ -47,6 +58,7 @@ function parseArgs() {
     return {
         workspace,
         provider,
+        protocol,
         task: taskParts.join(" ").trim(),
         background,
     };
@@ -86,7 +98,7 @@ function attachLogging(agent) {
 }
 
 async function main() {
-    const { workspace, task, provider: providerName, background } = parseArgs();
+    const { workspace, task, provider: providerName, protocol, background } = parseArgs();
 
     if (!workspace) {
         throw new Error("Workspace is required");
@@ -130,6 +142,7 @@ async function main() {
         workspace,
         provider: providerName,
         task,
+        protocol,
         maxSteps: agentConfig.agent.maxSteps,
         maxProviderErrors: agentConfig.agent.maxProviderErrors,
     });

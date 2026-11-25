@@ -12,14 +12,14 @@
 
 const { nextDelay } = require("./retry");
 const {
-    getJsonErrorPrompt,
     getDonePrompt,
     getSendErrorPrompt,
     getRuntimeErrorPrompt,
     getRuntimeOkPrompt,
 } = require("../prompts/index");
+const { getErrorPromptForProtocol } = require("../prompts/protocol");
 const { createHistoryRecord } = require("../workspace/history");
-const { extractAction } = require("../parse/json-action");
+const { extractActionForProtocol } = require("../parse/action");
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -116,7 +116,7 @@ async function runStep(agent, { prompt, providerErrorState }) {
 
     let action;
     try {
-        action = extractAction(response);
+        action = extractActionForProtocol(response, agent.protocol);
         agent.emitEvent("action.parsed", {
             step: agent.step,
             action: action.action,
@@ -130,7 +130,11 @@ async function runStep(agent, { prompt, providerErrorState }) {
         });
         return {
             stop: false,
-            prompt: getJsonErrorPrompt(error, { variant: agent.promptVariant ?? 0 }),
+            prompt: getErrorPromptForProtocol(
+                error,
+                { variant: agent.promptVariant ?? 0 },
+                agent.protocol
+            ),
         };
     }
 
