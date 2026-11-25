@@ -3,9 +3,8 @@
 
 这里的函数会被 Playwright 序列化后送进页面执行（`elementHandle.evaluate(fn)`），
 因此它们**必须自包含**：不能引用模块作用域的变量、常量或 require 的结果。
-action 标签清单同样不能在页面里 require，但可以传参 ——
-调用方把 `getActionTagNames()`（内置 ∪ 插件动作）当第二个参数传进来，
-不传时退回内置动作清单。
+action envelope 检测同样不能在页面里 require；页面内的扫描规则镜像
+parse/json-candidate.js，保证围栏、嵌套 params 与字符串转义的处理一致。
 
 两种扫描策略对应两类页面：
 
@@ -17,17 +16,60 @@ action 标签清单同样不能在页面里 require，但可以传参 ——
 */
 
 /**
-三向 BFS 收集候选字符串，按"是否含 Action > 深度浅 > 长度"打分排序。
+三向 BFS 收集候选字符串，按"是否含 Action envelope > 深度浅 > 长度"打分排序。
 返回最多 8 条去重候选。
-
-`actionTagNames` 由调用方传入：插件动作是开放集合，页面里没法 require，
-只能在 evaluate 时把清单当参数送进来（不传就用内置动作兜底）。
 */
-function collectFiberCandidates(element, actionTagNames) {
-    const actionTags =
-        Array.isArray(actionTagNames) && actionTagNames.length
-            ? actionTagNames
-            : ["write", "edit", "read", "exec", "answer", "done", "screenshot"];
+function collectFiberCandidates(element) {
+    function hasActionEnvelope(text) {
+        if (typeof text !== "string" || !text.trim()) {
+            return false;
+        }
+        var envelopes = 0;
+        for (var start = 0; start < text.length; start++) {
+            if (text[start] !== "{") continue;
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            for (var index = start; index < text.length; index++) {
+                var char = text[index];
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (char === "\\") {
+                        escaped = true;
+                    } else if (char === '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (char === '"') {
+                    inString = true;
+                } else if (char === "{") {
+                    depth++;
+                } else if (char === "}") {
+                    depth--;
+                    if (depth === 0) {
+                        try {
+                            var parsed = JSON.parse(text.slice(start, index + 1));
+                            if (
+                                parsed &&
+                                typeof parsed === "object" &&
+                                !Array.isArray(parsed) &&
+                                typeof parsed.action === "string" &&
+                                parsed.params &&
+                                typeof parsed.params === "object" &&
+                                !Array.isArray(parsed.params)
+                            ) {
+                                envelopes++;
+                            }
+                        } catch (error) {}
+                        break;
+                    }
+                }
+            }
+        }
+        return envelopes === 1;
+    }
 
     const fiberKey = Object.keys(element).find((key) => key.startsWith("__reactFiber"));
     const propsKey = Object.keys(element).find((key) => key.startsWith("__reactProps"));
@@ -42,16 +84,6 @@ function collectFiberCandidates(element, actionTagNames) {
     const MAX_NODES = 2500;
     const MAX_DEPTH = 40;
 
-    function containsAction(value) {
-        for (const tag of actionTags) {
-            if (value.indexOf("<" + tag) !== -1) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     function addCandidate(value, source, key, depth) {
         if (typeof value !== "string") {
             return;
@@ -63,10 +95,9 @@ function collectFiberCandidates(element, actionTagNames) {
             return;
         }
 
-        const action = containsAction(trimmed);
+        const action = hasActionEnvelope(trimmed);
 
-        // 动作可能很短（<wechat-status/>），这类必须留下；
-        // 短的非动作字符串才是噪声。
+        // 动作可能很短，这类必须留下；短的非动作字符串才是噪声。
         if (!action && trimmed.length < 40) {
             return;
         }
@@ -174,7 +205,7 @@ function collectFiberCandidates(element, actionTagNames) {
 只沿 child 向下走。返回 `{ top, candidates, totalCandidates }`，
 `top` 是得分最高的唯一候选，供调用方直接取正文。
 */
-function collectChildFiberCandidate(element, actionTagNames) {
+function collectChildFiberCandidate(element) {
     function findReactKey(el, prefix) {
         if (!el) return null;
         for (const k in el) {
@@ -188,28 +219,62 @@ function collectChildFiberCandidate(element, actionTagNames) {
 
     const candidates = [];
 
-    const actionTags =
-        Array.isArray(actionTagNames) && actionTagNames.length
-            ? actionTagNames
-            : ["write", "edit", "read", "exec", "answer", "done", "screenshot"];
-    const LT = String.fromCharCode(60);
-
-    function hasAction(text) {
-        if (typeof text !== "string") return false;
-        for (const tag of actionTags) {
-            if (text.indexOf(LT + tag) !== -1) return true;
+    function hasActionEnvelope(text) {
+        if (typeof text !== "string" || !text.trim()) return false;
+        var envelopes = 0;
+        for (var start = 0; start < text.length; start++) {
+            if (text[start] !== "{") continue;
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            for (var index = start; index < text.length; index++) {
+                var char = text[index];
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (char === "\\") {
+                        escaped = true;
+                    } else if (char === '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+                if (char === '"') {
+                    inString = true;
+                } else if (char === "{") {
+                    depth++;
+                } else if (char === "}") {
+                    depth--;
+                    if (depth === 0) {
+                        try {
+                            var parsed = JSON.parse(text.slice(start, index + 1));
+                            if (
+                                parsed &&
+                                typeof parsed === "object" &&
+                                !Array.isArray(parsed) &&
+                                typeof parsed.action === "string" &&
+                                parsed.params &&
+                                typeof parsed.params === "object" &&
+                                !Array.isArray(parsed.params)
+                            ) {
+                                envelopes++;
+                            }
+                        } catch (e) {}
+                        break;
+                    }
+                }
+            }
         }
-        return false;
+        return envelopes === 1;
     }
 
     function recordString(source, key, value, depth) {
         if (typeof value !== "string") return;
 
-        const isAction = hasAction(value);
+        const isAction = hasActionEnvelope(value);
 
-        // 100 字符的门槛是按 <write> + CDATA 那种长动作定的；
-        // 插件动作往往只有几十个字符（<browse-nav url="…"/>），
-        // 按长度一刀切会把它们全丢掉，所以命中动作时豁免长度限制。
+        // 100 字符的门槛是按长动作定的；JSON 动作命中时豁免长度限制，
+        // 避免短 envelope 被当成噪声丢掉。
         if (!isAction && value.length < 100) return;
 
         // 分数：Action 特征优先，深度浅优先，长度次要

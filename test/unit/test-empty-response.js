@@ -17,6 +17,9 @@ const { GlmProvider } = require("../../providers/glm");
 const { DeepSeekProvider } = require("../../providers/deepseek");
 const { EMPTY_RESPONSE_CODE } = require("../../providers/browser-chat");
 
+const READY_ACTION = JSON.stringify({ action: "answer", params: { text: "ok" } });
+const DONE_ACTION = JSON.stringify({ action: "done", params: {} });
+
 let pass = 0;
 let total = 0;
 
@@ -76,7 +79,7 @@ async function main() {
     {
         let calls = 0;
         const provider = makeProvider(GlmProvider, {
-            getResponseByKey: async (key) => (++calls > 3 ? "<answer>ok</answer>" : ""),
+            getResponseByKey: async (key) => (++calls > 3 ? READY_ACTION : ""),
         });
 
         const key = await provider.waitForNewResponseKey(["glm:0:old"]);
@@ -106,7 +109,7 @@ async function main() {
                 }
                 return ["glm:0:old", "glm:1:c"];
             },
-            getResponseByKey: async (key) => (key === "glm:1:c" ? "<answer>done</answer>" : ""),
+            getResponseByKey: async (key) => (key === "glm:1:c" ? DONE_ACTION : ""),
         });
 
         let error = null;
@@ -135,7 +138,7 @@ async function main() {
         const provider = makeProvider(GlmProvider, {
             // 签名每轮都变 = 思考内容还在增长
             getPendingSignature: async () => String(++signature),
-            getResponseByKey: async () => (++calls > 12 ? "<answer>ok</answer>" : ""),
+            getResponseByKey: async () => (++calls > 12 ? READY_ACTION : ""),
         });
 
         let error = null;

@@ -1,14 +1,15 @@
 /**
-内置动作：done
+ * 内置动作：done
+ *
+ * meta.terminal = "end"：Agent 编排器据此结束循环，
+ * 不再特判 action === "done"。
+ */
 
-从 runtime.js 迁出（P0 动作定义对象化）。
-
-meta.terminal = "end"：Agent 编排器据此结束循环，
-不再特判 action === "done"。
-*/
+const { BUILTIN_ACTION_SCHEMAS } = require("../parse/action-schema");
 
 module.exports = {
     name: "done",
+    schema: BUILTIN_ACTION_SCHEMAS.done,
     validate() {
         // done 不需要任何参数
     },
@@ -21,7 +22,7 @@ module.exports = {
     meta: {
         prompt: {
             group: "core",
-            usage: "<done/>",
+            usage: '{"action":"done","params":{}}',
             note: "结束 Agent 生命周期；不能代替 answer。",
             priority: 115,
         },

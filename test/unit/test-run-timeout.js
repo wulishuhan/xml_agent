@@ -35,7 +35,7 @@ async function check(name, fn) {
 }
 
 /** 只做最小契约的 provider：默认每步返回一个必然失败但不致命的 read。 */
-function makeProvider(script = ['<read path="not-exist.txt"/>']) {
+function makeProvider(script = ['{"action":"read","params":{"path":"not-exist.txt"}}']) {
     let index = 0;
 
     return {
@@ -103,7 +103,11 @@ async function main() {
         const agent = makeAgent({
             runTimeoutMs: 60 * 1000,
             maxSteps: 5,
-            createProvider: () => makeProvider(["<answer><![CDATA[ok]]></answer>", "<done/>"]),
+            createProvider: () =>
+                makeProvider([
+                    '{"action":"answer","params":{"content":"ok"}}',
+                    '{"action":"done","params":{}}',
+                ]),
         });
 
         const result = await agent.run();

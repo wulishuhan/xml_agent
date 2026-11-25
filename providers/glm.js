@@ -1,8 +1,8 @@
 const { BrowserChatProvider } = require("./browser-chat");
 const { renderGlmMessage } = require("./dom/glm-message");
 const { collectChildFiberCandidate } = require("./dom/fiber");
-const { getActionTagNames } = require("./action-tag");
-const { balanceMarkdownFences, extractXmlFromCandidate } = require("./markdown-fence-utils");
+const { hasActionEnvelope } = require("./action-tag");
+const { balanceMarkdownFences, extractJsonActionCandidate } = require("./markdown-fence-utils");
 
 const GLM_CONVERSATION_PATTERN = new RegExp("/(?:c|s)/([0-9a-zA-Z-]+)");
 
@@ -14,7 +14,7 @@ const RESPONSE_SELECTOR = ".chat-assistant";
  * 新版 z.ai 用内联 <style> 字符串驱动 thinking/loading 动画，这些字符串
  * 以 React children prop 的形式出现在消息子树里。特征很明确：
  * CSS 选择器/规则块（`.x{...}`、`@keyframes`、`--var:`）配 `px`/`animation:` 等声明，
- * 且不含任何 XML 动作标签。命中就当噪声丢掉，避免污染正文提取。
+ * 且不含任何 JSON Action envelope。命中就当噪声丢掉，避免污染正文提取。
  *
  * @param {string} value
  * @returns {boolean}
@@ -23,8 +23,8 @@ function isStyleNoise(value) {
     if (typeof value !== "string") {
         return false;
     }
-    // 真正的回复一定带 XML 动作标签，带动作的一律不当噪声
-    if (/<\s*(read|write|edit|exec|answer|done|screenshot)\b/.test(value)) {
+    // 真正的回复会带 Action envelope，带动作的一律不当噪声
+    if (hasActionEnvelope(value)) {
         return false;
     }
     const cssSignals = [
@@ -228,24 +228,21 @@ class GlmProvider extends BrowserChatProvider {
      * 覆盖基类的三向 BFS 兜底。
      *
      * 基类 collectFiberCandidates 会沿 sibling / return 跨出当前回复节点，
-     * 爬到相邻的用户消息上——z.ai 里用户 prompt 也带 <read>/<write> 等动作示例，
+     * 爬到相邻的用户消息上——z.ai 里用户 prompt 也带 Action 示例，
      * 于是"回复正文还没生成（DOM 重建为空）"时会把用户 prompt 当成本次回复抓回来，
-     * 表现为 extractXML 报 "received 7"（提示词里的示例动作数）。
+     * 表现为解析层收到多个 envelope。
      * Qwen 早就因同样的问题收窄成只向下遍历，这里保持一致。
      */
     async extractFromReactFiber(elementHandle) {
         try {
-            const result = await elementHandle.evaluate(
-                collectChildFiberCandidate,
-                getActionTagNames()
-            );
+            const result = await elementHandle.evaluate(collectChildFiberCandidate);
             if (!result || !Array.isArray(result.candidates)) {
                 return [];
             }
             // z.ai 把 loading 动画的内联 CSS 作为 React 组件的 children prop
-            // 挂在消息节点上。它长度动辄几百字符、又不含任何 Action 标签，
+            // 挂在消息节点上。它长度动辄几百字符、又不含任何 Action envelope，
             // 会被 collectChildFiberCandidate 当成正文候选（key=children）。
-            // 这种样式噪声一旦被 extractOne 返回，extractXML 就会拿到 CSS 报错。
+            // 这种样式噪声一旦被 extractOne 返回，解析层就会拿到 CSS 报错。
             const candidates = result.candidates.filter((c) => !isStyleNoise(c && c.value));
             return candidates;
         } catch (error) {
@@ -270,10 +267,10 @@ class GlmProvider extends BrowserChatProvider {
             const domText = await this.buildFromDom(index);
 
             if (domText && domText.trim()) {
-                const xmlFromDom = extractXmlFromCandidate(domText);
+                const jsonFromDom = extractJsonActionCandidate(domText);
 
-                if (xmlFromDom) {
-                    return balanceMarkdownFences(xmlFromDom);
+                if (jsonFromDom) {
+                    return balanceMarkdownFences(jsonFromDom);
                 }
 
                 return balanceMarkdownFences(domText);
@@ -283,10 +280,10 @@ class GlmProvider extends BrowserChatProvider {
             const fiberCandidates = await this.extractFromReactFiber(message);
 
             for (const candidate of fiberCandidates) {
-                const xml = extractXmlFromCandidate(candidate.value);
+                const json = extractJsonActionCandidate(candidate.value);
 
-                if (xml) {
-                    return balanceMarkdownFences(xml);
+                if (json) {
+                    return balanceMarkdownFences(json);
                 }
             }
 
@@ -526,7 +523,7 @@ class GlmProvider extends BrowserChatProvider {
 module.exports = {
     GlmProvider,
     balanceMarkdownFences,
-    extractXmlFromCandidate,
+    extractJsonActionCandidate,
     // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
     // 注意 GLM 的会话 URL 同时存在 /c/<id> 与 /s/<id> 两种写法。
     meta: {

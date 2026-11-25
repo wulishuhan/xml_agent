@@ -166,7 +166,7 @@ module.exports = {
         return deniedSecretsFacade();
     },
 
-    _createRunContext({ record, entry, host, attrs, signal }) {
+    _createRunContext({ record, entry, host, params, signal }) {
         const config = this.getConfig(record.name);
         const secrets = capabilities.createSecrets({ file: this._secretsFile() });
         // 脱敏始终用全量密钥值（只是把字面量替换成 ***，不向插件暴露任何东西）
@@ -188,7 +188,7 @@ module.exports = {
                 source: record.source,
             },
             action: entry.name,
-            attrs,
+            params,
             workspace,
             signal,
             config,

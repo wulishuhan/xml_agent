@@ -61,7 +61,8 @@ function buildSkillPromptSection(skills, options = {}) {
         "可用技能（Skill）",
         "",
         "技能文档是「这类任务该怎么做」的完整规范。任务与某个技能匹配时，",
-        "先用 read 把它读完再动手；不匹配就不要读 —— 它会占掉大量上下文。",
+        "先用 read 把它读完再动手；返回 truncated=true 时，用 nextOffset 作为 offset 继续 read，直到 truncated=false。",
+        "不匹配就不要读 —— 它会占掉大量上下文。",
         "",
         lines.join("\n"),
     ].join("\n");

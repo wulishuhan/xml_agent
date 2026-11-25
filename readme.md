@@ -1,12 +1,12 @@
 # XML Agent
 
-一个基于 Node.js 实现的工程型 AI Agent Framework（当前版本 **1.1.1**）。
+一个基于 Node.js 实现的工程型 AI Agent Framework（当前版本 **1.3.0**）。
 
 核心设计理念：
 
 - **LLM 负责理解任务和规划**
 - **Runtime 负责安全执行**（LLM 不直接操作电脑）
-- **XML Action** 作为 Agent 与 Workspace 之间的通信协议
+- **JSON Action** 作为 Agent 与 Workspace 之间的通信协议（项目名 XML Agent 保留为历史名称）
 
 通过这种架构，可以构建安全、可扩展、可审计的工程型 AI Agent。
 
@@ -71,7 +71,7 @@ npm run webui:dev
 - 附件条显示缩略图 + 原始文件名（点缩略图看原图）；上传接口存盘时会加时间戳后缀防重名，界面显示时去掉。
 - 图片按会话暂存：切到别的会话再切回来，没发出去的图片还在；发送后清空，不会重复上传。
 - 真正上传给模型发生在 provider 启动之后、第一条 prompt 之前（`images.uploaded` / `images.missing` 事件可查），失败不阻断任务。
-- 附件落在 `<workspace>/uploads/`，回读走 `GET /api/uploads/:name?workspace=...`（只允许该目录下的一级文件）。顶层的 `uploads/` 不进工作区清单，避免白占提示词预算；记忆转移不搬图片，它是一次性运行时状态。
+- 附件落在 `<workspace>/uploads/`，回读走 `GET /api/uploads/:name?workspace=...`（只允许该目录下的一级文件）。顶层的 `uploads/` 不注入首轮提示词；记忆转移不搬图片，它是一次性运行时状态。
 
 ### 技能（Skills）
 
@@ -328,7 +328,7 @@ npm run electron:build
 
 桌面版在任务**正常完成**（status 为 `completed`）后发送系统通知，最小化或后台时也能收到反馈。
 
-- 只在任务真正完成时通知：走完 `<done/>` 流程、状态变为 `completed` 时触发；用户点 Stop、任务报错或被中断**不会**通知。
+- 只在任务真正完成时通知：走完 `{"action":"done","params":{}}` 流程、状态变为 `completed` 时触发；用户点 Stop、任务报错或被中断**不会**通知。
 - 防误弹：前端以"本次订阅期间是否真正观察到运行中状态"（`sawRunning`）为守卫，只有"运行中 → 完成"的状态转变才发送。
 - 实现分布：`electron/notifier.js`（通知内容与状态判断）、`electron/main.js`（`showDesktopNotification()` 与 IPC `notify:task-done` / `notify:send`）、`electron/preload.js`（`contextBridge` 暴露）、`webui/frontend/src/services/desktop-notify.js`（仅 Electron 环境调用，Web 版静默跳过）。
 - **Windows 关键点**：需在 `app.whenReady()` 中调用 `app.setAppUserModelId("com.shuhan.xmlagent")`，否则 Toast 通知会被系统静默丢弃。
@@ -363,7 +363,7 @@ processes/          子进程登记表（停止会话时按进程树结束）
 plugins/            插件系统（registry / sdk / capabilities / builtin）
 providers/          模型后端（registry.js：元数据 + 契约校验；dom/ 提取工具）
 config/             schema.js（配置单一来源）+ agent-config.js（投影）
-parse/              XML 协议解析（校验委托动作表）
+parse/              JSON Action 提取与参数校验（json-action / action-schema）
 prompts/            系统提示与插件提示词构建
 workspace/          manifest / history / report
 webui/
@@ -389,9 +389,9 @@ User Task
    v
  LLM Provider
    |
-   | XML Action
+   | JSON Action（{action, params}）
    v
- XML Parser
+ JSON Extractor / Schema Validator
    |
    v
  Runtime
@@ -421,9 +421,23 @@ Agent Continue
 
 入口：`agent.js`（编排器本体在 `agent-core.js`，单步闭环在 `agent/step.js`）。
 
-职责：接收任务 → 初始化 Workspace → 加载 Provider → 调用 LLM → 解析 XML Action → 调用 Runtime → 管理生命周期。
+职责：接收任务 → 初始化 Workspace → 加载 Provider → 调用 LLM → 提取并校验 JSON Action → 调用 Runtime → 管理生命周期。
 
 `Agent.stop()` 会先结束本会话启动的所有子进程（见 Runtime），再关闭浏览器。
+
+## Action 协议（JSON）
+
+模型每轮只输出一个 JSON envelope：
+
+```json
+{ "action": "read", "params": { "path": "." } }
+```
+
+- 可以输出裸 JSON，也可以输出单个 `json` 代码块；不要混入说明、XML 或多个动作。
+- 顶层固定为 `action`（字符串）与 `params`（对象）。内置动作和插件动作都使用这一结构。
+- `parse/json-candidate.js` 从回复中提取候选 envelope，`parse/json-action.js` 的 `extractAction()` 校验结构并路由到内置动作表或插件注册表。
+- `params` 由 `parse/action-schema.js` 的 JSON Schema 校验；内置 schema 也在各 `actions/*.js` 中引用。插件 schema 是标准 JSON Schema，注册时存入 `plugins/registry/catalog.js` 的动作目录，由它完成解析期校验，执行时再由 `plugins/registry/invoke.js` 校验并分发。
+- 字符串必须按 JSON 规则转义（例如正文中的双引号写成 `\"`，换行写成 `\n`）。当前没有 XML parser、CDATA、`attrs` 或 `fastPath`。
 
 ## Runtime
 
@@ -432,7 +446,7 @@ Agent Continue
 - 截图动作：`plugins/builtin/screenshot`（v1.1.0 起是内置插件，不是内置动作）
 - 子进程登记：`processes/registry.js`
 
-Runtime 是系统的执行核心，LLM 不直接操作电脑，所有操作必须通过 XML Action。内置动作与插件动作走同一条分发链路（内置表 → 插件表），因此新增能力不需要改 `runtime.js`。
+Runtime 是系统的执行核心，LLM 不直接操作电脑，所有操作必须通过 JSON Action。内置动作与插件动作走同一条分发链路（内置表 → 插件表），因此新增能力不需要改 `runtime.js`。
 
 **进程生命周期**：`exec`（含 `--background`）启动的子进程统一登记到 `processes/registry.js`；用户点「停止」时 `Agent.stop()` 先按进程树结束它们（Windows `taskkill /T /F`，POSIX 进程组 `SIGTERM` → `SIGKILL`），再关浏览器。不登记句柄的话，`--background` 的 detached 进程会成为孤儿占着端口，前台长命令也要等满 `maxExecTimeout`（默认 5 分钟）。
 
@@ -440,10 +454,15 @@ Runtime 是系统的执行核心，LLM 不直接操作电脑，所有操作必�
 
 读取文件或目录：
 
-```xml
-<read path="package.json"/>
-<read path="src"/>
+```json
+{ "action": "read", "params": { "path": "package.json" } }
 ```
+
+```json
+{ "action": "read", "params": { "path": "src" } }
+```
+
+文件正文按字符分页，每页最多 4000 字符。返回中的 `truncated=true` 表示尚未读完，下一次把 `nextOffset` 作为 `offset` 继续读取，直到 `truncated=false`；也可以用 `limit` 指定 1–4000 的页长。目录读取不分页，仍只返回一层 `entries`。
 
 只处理文本文件：检测到 NUL 字节会返回 `binary: true` 的错误，而不是把乱码塞进提示词（二进制内容请用 `exec` 处理）。路径解析按真实路径校验，工作区内的符号链接 / junction 指向外部时会被拒绝。
 
@@ -451,33 +470,34 @@ Runtime 是系统的执行核心，LLM 不直接操作电脑，所有操作必�
 
 写入文件（自动创建父目录，仅限 Workspace 内）：
 
-```xml
-<write path="src/test.js"><![CDATA[
-console.log("hello");
-]]></write>
+```json
+{ "action": "write", "params": { "path": "src/test.js", "content": "console.log(\"hello\");\n" } }
 ```
 
-路径里的 XML 实体（`&amp;`、`&lt;`…）会被解码，与 `read` 的行为一致；目标是已存在的目录时返回明确错误，不会抛出底层 `EPERM`。Windows 下的保留设备名（`CON`、`NUL`、`COM1`…）与 `file.txt:stream` 这类数据流写法会被拒绝——它们不会真正落盘，却会让写入"看似成功"。
+`content` 是 JSON 字符串，双引号、反斜杠与换行必须按 JSON 规则转义；解析后的正文逐字写入，不做 XML 实体或 CDATA 处理。目标是已存在的目录时返回明确错误，不会抛出底层 `EPERM`。Windows 下的保留设备名（`CON`、`NUL`、`COM1`…）与 `file.txt:stream` 这类数据流写法会被拒绝——它们不会真正落盘，却会让写入"看似成功"。
 
 ### edit
 
 局部修改已存在的文件：给出"要替换的原文"和"改成什么"，其余内容逐字节保留。
 
-```xml
-<edit path="src/app.js">
-  <change>
-    <old><![CDATA[const port = 3000;]]></old>
-    <new><![CDATA[const port = process.env.PORT || 3000;]]></new>
-  </change>
-</edit>
+```json
+{
+    "action": "edit",
+    "params": {
+        "path": "src/app.js",
+        "changes": [
+            { "old": "const port = 3000;", "new": "const port = process.env.PORT || 3000;" }
+        ]
+    }
+}
 ```
 
-- 一次可以带多个 `<change>`（上限 20），按顺序执行；`<new>` 留空表示删除这段内容。
-- `old` 必须在文件里出现且唯一。出现多次时报错并给出行号，可以多写几行上下文收窄，或用 `all="true"` 全部替换。
+- `changes` 是 `{ old, new }` 对象数组（上限 20），按顺序执行；`new` 为空字符串表示删除这段内容。
+- `old` 必须在文件里出现且唯一。出现多次时报错并给出行号，可以多写几行上下文收窄，或在 `params` 中设 `all: true` 全部替换。
 - 匹配分两档：先精确匹配；不中再忽略行首缩进与行尾空白找一次。后者命中会按原位置的缩进差补齐 `new` 的缩进，并在结果里标 `matched: "loose"`；锚点归一化后不足 16 字符时不启用，避免短串误命中别处。
-- 任何一处 `<change>` 失败就整体不落盘（与 `write` 同样的原子写：临时文件 + 改名），不会留下改了一半的文件；JSON 改坏会被拒绝。
+- 任何一处 change 失败就整体不落盘（与 `write` 同样的原子写：临时文件 + 改名），不会留下改了一半的文件；JSON 改坏会被拒绝。
 - 结果带 `diff`，只列被替换的行（超过 40 行 / 2000 字符截断），模型据此自检，不必再整篇 `read`。
-- 文件不存在时返回 `File does not exist; use <write> to create it`——新建与整体重写仍然归 `write`。
+- 文件不存在时返回 `File does not exist; use write to create it`——新建与整体重写仍然归 `write`。
 
 为什么需要它：同一个改动用 `write` 表达，模型得重新生成整个文件。token 花在复述没变的代码上，更要紧的是任何一处手误都会改到本来没问题的地方，而 diff 里根本看不出来。
 
@@ -485,14 +505,14 @@ console.log("hello");
 
 执行命令（工作目录固定为 Workspace，超时上限 `runtime.maxExecTimeout`，默认 300 秒）：
 
-```xml
-<exec command="npm test"/>
+```json
+{ "action": "exec", "params": { "command": "npm test" } }
 ```
 
 命令末尾加 `--background` 可后台运行（exec 会剥掉该旗标再执行）。只认**命令结尾**的这个标记，命令中间出现同名字符串不会被改写：
 
-```xml
-<exec command="node server.js --background"/>
+```json
+{ "action": "exec", "params": { "command": "node server.js --background" } }
 ```
 
 输出上限 `runtime.maxExecOutputSize`（默认 1MB）。超限时保留**首尾**两段（失败摘要通常在末尾），并置 `outputTruncated: true`；子进程缓冲上限是它的 8 倍，超过缓冲才会杀进程，此时会明确说明"剩余输出已丢弃"。
@@ -503,13 +523,30 @@ console.log("hello");
 
 截取桌面 / 指定窗口 / CDP 浏览器页面，一次最多 8 个目标；成功后自动上传给模型：
 
-```xml
-<screenshot source="screen" path="screenshots/desktop.png"/>
-<screenshot>
-  <target source="window" windowTitle="Visual Studio Code" path="screenshots/vscode.png"/>
-  <target source="screen" path="screenshots/desktop.png"/>
-</screenshot>
+```json
+{
+    "action": "screenshot",
+    "params": { "targets": [{ "source": "screen", "path": "screenshots/desktop.png" }] }
+}
 ```
+
+```json
+{
+    "action": "screenshot",
+    "params": {
+        "targets": [
+            {
+                "source": "window",
+                "windowTitle": "Visual Studio Code",
+                "path": "screenshots/vscode.png"
+            },
+            { "source": "screen", "path": "screenshots/desktop.png" }
+        ]
+    }
+}
+```
+
+`targets` 固定为 1–8 个目标对象的数组；`source` 支持 `screen`、`window`、`browser_page`。窗口目标必须给 `windowTitle` 或 `title`；浏览器页面目标可用 `url` / `selector` / `fullPage`。
 
 自 v1.1.0 起它由内置插件 `plugins/builtin/screenshot` 提供（不再是 `actions/` 里的内置动作），因此：
 
@@ -521,11 +558,20 @@ console.log("hello");
 
 操作桌面版微信：打开会话、发消息、读当前会话。四个动作：
 
-```xml
-<wechat-status/>
-<wechat-open to="文件传输助手"/>
-<wechat-send text="收到，我晚点回你"/>
-<wechat-read path="screenshots/wechat.png"/>
+```json
+{ "action": "wechat-status", "params": {} }
+```
+
+```json
+{ "action": "wechat-open", "params": { "to": "文件传输助手" } }
+```
+
+```json
+{ "action": "wechat-send", "params": { "text": "收到，我晚点回你" } }
+```
+
+```json
+{ "action": "wechat-read", "params": { "path": "screenshots/wechat.png" } }
 ```
 
 **发送刻意分成两步**，这不是啰嗦，是被现实逼的：
@@ -571,14 +617,31 @@ console.log("hello");
 驱动一个**独立**的 Chromium（Edge/Chrome，独立端口 + 独立 user-data-dir），
 和 provider 用的那个浏览器不是同一个窗口——那个窗口里跑的是模型自己：
 
-```xml
-<browse-nav url="https://example.com"/>
-<browse-click selector="a.more"/>
-<browse-fill selector="#q" text="关键字"/>
-<browse-text selector="main"/>
-<browse-shot path="screenshots/page.png"/>
-<browse-eval script="document.title"/>   <!-- 默认关闭，需配置 allowEval=true -->
+```json
+{ "action": "browse-nav", "params": { "url": "https://example.com" } }
 ```
+
+```json
+{ "action": "browse-click", "params": { "selector": "a.more" } }
+```
+
+```json
+{ "action": "browse-fill", "params": { "selector": "#q", "text": "关键字" } }
+```
+
+```json
+{ "action": "browse-text", "params": { "selector": "main" } }
+```
+
+```json
+{ "action": "browse-shot", "params": { "path": "screenshots/page.png" } }
+```
+
+```json
+{ "action": "browse-eval", "params": { "script": "document.title" } }
+```
+
+`browse-eval` 默认关闭，需在插件配置中设 `allowEval: true`。
 
 边界：只允许 `http/https`（`file://`、`javascript:`、`chrome://` 一律拒绝）；
 正文按 `maxTextChars`（默认 4000）截断；`browse-eval` 默认关闭；插件卸载时关掉它启动的进程。
@@ -592,19 +655,19 @@ console.log("hello");
 
 返回最终答案：
 
-```xml
-<answer><![CDATA[
-项目分析完成。
-]]></answer>
+```json
+{ "action": "answer", "params": { "content": "项目分析完成。" } }
 ```
 
 ### done
 
 结束 Agent 生命周期：
 
-```xml
-<done/>
+```json
+{ "action": "done", "params": {} }
 ```
+
+`answer` 独占一轮；下一轮再单独输出 `done`，不能把两者放在同一轮。
 
 ## Provider
 
@@ -649,28 +712,22 @@ meta: {
 目录：`prompts/`
 
 - `system-prompt.js`：Agent 基础能力与规则
-- `first-prompt.js`：首次调用时注入 Workspace、Manifest、用户任务
+- `first-prompt.js`：首次调用时组合系统协议、插件/技能/Provider 约束、项目名与用户任务；不再发送 Workspace Manifest
 - `runtime-prompt.js`：根据 Runtime 返回生成下一轮 Prompt
-- `xml-error-prompt.js` / `send-error-prompt.js` / `done-prompt.js`：异常与终止处理
+- `json-error-prompt.js` / `send-error-prompt.js` / `done-prompt.js`：JSON 格式错误、发送异常与终止处理
 
-### 为什么提示词写成「正常人求助」的口吻
+### 提示词组织原则
 
-网页版平台的提示词不是真的 system 消息，而是**一条普通用户消息**。同一段内容，
-如果写成「你是一个运行在 Node.js Runtime 上的 Agent，必须…／不允许…」，
-在平台的风控分类器里就是典型的角色劫持 / 脚本注入模板，同一账号频繁这么发很容易被限流甚至封号
-（DeepSeek 网页版实测风险最高）。所以这里的写法按三条规矩来，改提示词时别破坏：
+网页版 Provider 的 prompt 不是真正的 system 消息，而是**一条普通用户消息**。因此提示词直接描述任务、协议和当前项目，不堆角色设定，也不暴露无关的宿主路径与调试细节。
 
-| 规矩           | 具体做法                                                                                               | 钉住它的测试                        |
-| -------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| 说人话         | 第一人称陈述任务（"我在本机维护一个项目，你每次只发一段动作"），不写角色设定、不堆"必须/不允许"        | `test/unit/test-first-prompt.js` §5 |
-| 不外发宿主细节 | 不出现盘符路径、`127.0.0.1`、`CDP` / `remote-debugging`、`Node.js Runtime`；工作区只给项目名           | 同上                                |
-| 尽量短         | 系统提示 1.5k 字符（原 4.7k，去掉重复示例与修辞性禁令）；每轮回包 400 字符量级；工作区清单 8k 字符封顶 | §6 + `clampManifest`                |
+| 原则       | 具体做法                                                                                              | 钉住它的测试                        |
+| ---------- | ----------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| 任务导向   | 第一人称陈述任务与目标，协议部分明确每轮只输出一个 JSON envelope                                      | `test/unit/test-first-prompt.js` §5 |
+| 必要上下文 | 工作区只给项目名；目录结构由模型通过 `read` 按需发现，不发送全量 Manifest                             | 同上                                |
+| 控制体积   | 系统协议约 4.2k 字符；read 正文每页最多 4000 字符；执行结果使用紧凑 JSON，并按 4000 字符 / 200 项截断 | §6 + `prompts/runtime-prompt.js`    |
 
-首轮提示词（含插件/技能清单）从 6.5k 字符降到 2.5k 左右，每轮回包从 ~700 降到 ~440，
-长结果用紧凑 JSON 并按 4000 字符 / 200 项截断（`prompts/runtime-prompt.js`）。
-
-> 提示词只能降低「内容特征」的命中率。真正决定封号的是**行为**：轮次频率、出错重试节奏、
-> 单账号同时挂几个会话。这部分不在提示词里，改提示词不会让自动化访问变得合规。
+首轮消息由系统协议、任务和可选的插件/技能/Provider 区块组成；不再同步扫描整个工作区。
+每轮执行回包保持精简，大结果由 `prompts/runtime-prompt.js` 截断后再发给模型。
 
 ## Workspace
 
@@ -688,17 +745,23 @@ Agent 操作的目标目录。**文件类动作**（`read` / `write` / `edit` �
 
 # 插件系统
 
-从 1.1.0 起，**新增一个 XML 动作不再需要修改核心文件**——写一个插件目录即可。
+插件动作与内置动作使用同一套 JSON Action 协议：**新增一个 JSON 动作不需要修改核心文件**——写一个插件目录即可。
 
 ```
 plugins/                     内置插件（随包分发）
-    sdk.js                   插件契约层（清单/动作定义/schema/版本区间/自检）
-    registry.js              发现 / 校验 / 加载 / 隔离 / 权限 / 执行 / 钩子
+    sdk.js                   插件契约层（清单/动作定义/JSON Schema/版本区间/自检）
+    registry.js              注册表门面与单例
+    registry/                按职责拆分的加载、校验、上下文、执行与持久化模块
+        catalog.js           动作目录与解析期 JSON Schema 校验
+        invoke.js            插件动作权限校验、执行、超时与钩子
+        context.js           setup / run 上下文装配
     capabilities.js          作用域门面（workspace fs、受控 http、storage、secrets）
     builtin/
         fetch/               action 插件（HTTP 请求，域名白名单）
         audit-log/           hook 插件（JSONL 审计日志，按保留期自动清理）
         screenshot/          action 插件（截屏，引擎随插件自带）
+        browser/             action 插件（独立 Chromium 浏览器）
+        wechat/              action 插件（Windows 桌面微信）
         memory-transfer/     action 插件（会话记忆压缩+摘要后转移：记录 + 模型对话线程）
 
 ~/.xml-agent/plugins/<name>/ 用户插件
@@ -708,8 +771,8 @@ plugins/                     内置插件（随包分发）
 
 ## 使用
 
-- 插件默认启用。`XML_AGENT_PLUGINS=0` 可一键回到"仅内置动作"。
-- 内置 `fetch` 动作：`<fetch url="http://127.0.0.1:3000/api" method="GET"/>`，只允许访问插件配置 `allowHosts` 白名单内的主机（默认 `127.0.0.1` / `localhost`）。
+- 插件是否默认启用由各自 `plugin.json` 的 `enabledByDefault` 决定；`XML_AGENT_PLUGINS=0` 可一键回到"仅内置动作"。
+- 内置 `fetch` 动作：`{"action":"fetch","params":{"url":"http://127.0.0.1:3000/api","method":"GET"}}`，只允许访问插件配置 `allowHosts` 白名单内的主机（默认 `127.0.0.1` / `localhost`；该插件默认停用，需在 Plugins 面板启用）。
 - 内置 `audit-log` 插件把动作执行、权限拒绝、会话结束写成 JSONL，落在
   `~/.xml-agent/plugin-data/audit-log/audit-YYYYMMDD.jsonl`（插件私有数据目录，不进 workspace）。
   配置 `keepDays`（默认 14）控制保留期：超出窗口的整日日志在启动或跨天时自动删除，设为 0 表示不清理。
@@ -793,16 +856,27 @@ Web 端上下文横幅的「转移并新开」按钮走的就是这个模式。
   "改过的文件"与总数最后才动；
 - 目标会话的 `workspace` 与当前工作区不同时**不落盘**（写到别处模型也 read 不到），
   只在 `warnings` 里说明，转移本身照常成功；
-- 摘要目录已加进工作区清单的忽略表：不占提示词预算，但按 task 里给的相对路径仍能 `read` 到；
+- 摘要目录不注入首轮提示词，但按 task 里给的相对路径仍能 `read` 到；
 - 只读预览：`POST /api/plugins/memory-transfer/api/digest {"from":"aaa"}` 直接返回这份 markdown。
 
-```xml
-<!-- 上下文满了换会话：只带任务 + 一页摘要，省略 to 会自动新开一个 -->
-<memory-transfer from="aaa" mode="digest"/>
-
-<!-- 想把过程记录也带过去 -->
-<memory-transfer from="aaa" to="bbb" mode="records" compress="auto" digest="auto"/>
+```json
+{ "action": "memory-transfer", "params": { "from": "aaa", "mode": "digest" } }
 ```
+
+```json
+{
+    "action": "memory-transfer",
+    "params": {
+        "from": "aaa",
+        "to": "bbb",
+        "mode": "records",
+        "compress": "auto",
+        "digest": "auto"
+    }
+}
+```
+
+第一条用于上下文满了换会话：只带任务 + 一页摘要，省略 `to` 会自动新开一个；第二条把过程记录也带过去。
 
 ```bash
 curl -X POST http://127.0.0.1:3000/api/plugins/memory-transfer/api/transfer \
@@ -840,12 +914,12 @@ WebUI 启动时把 `SessionManager` 注入注册表，插件通过 `ctx.sessions
 
 估算口径（`webui/session/context-budget.js`）：
 
-| 组成        | 怎么算                                                            | 精度 |
-| ----------- | ----------------------------------------------------------------- | ---- |
-| 首轮提示词  | 系统提示词（精确）+ task + 工作区清单（上限 8K 字符）             | 近似 |
-| 每轮 prompt | 拿 `runtime.result` 里的 result 跑一遍真实的 `getRuntimeOkPrompt` | 精确 |
-| 模型回复    | 累加 `provider.response.length`                                   | 精确 |
-| 图片        | 每张按 1200 token                                                 | 近似 |
+| 组成        | 怎么算                                                                                | 精度 |
+| ----------- | ------------------------------------------------------------------------------------- | ---- |
+| 首轮提示词  | `SYSTEM_PROMPT.length` + task + 300 字符固定拼装开销；不含动态插件/技能/Provider 区块 | 近似 |
+| 每轮 prompt | 拿 `runtime.result` 里的 result 跑一遍真实的 `getRuntimeOkPrompt`                     | 精确 |
+| 模型回复    | 累加 `provider.response.length`                                                       | 精确 |
+| 图片        | 每张按 1200 token                                                                     | 近似 |
 
 token 折算：中文 1 字 ≈ 1 token、英文 4 字符 ≈ 1 token、其他 2 字符。
 对中文偏高估（实际约 1.5 字/token），偏高估意味着**早一点提醒**，这个场景偏保守是安全的。
@@ -880,7 +954,7 @@ SSE 的 `context` 事件在**连接建立时**推一次、之后**跨阈值时**
 
 - 已结束的会话若被 `memory-compress` 压缩过（`event` 被删），prompt 重建不了，
   只能用记录 content 当上下界，结果里 `degraded: true`；
-- 首轮提示词里的工作区清单是经验值、不扫盘：为 3% 的精度同步读几千个文件不划算；
+- 首轮估算不包含动态插件/技能/Provider 区块，也不扫盘；需要精确值时可通过 `options.firstPromptChars` 覆盖；
 - 估的是 provider 侧「历史文本」的量，平台自己的系统包装与工具调用格式不计入。
 
 ## 记忆能力的边界：哪些在核心，哪些在插件
@@ -896,7 +970,7 @@ SSE 的 `context` 事件在**连接建立时**推一次、之后**跨阈值时**
 | 转移编排（四种模式、拒绝条件、降级）        | `webui/session/memory-transfer.js`                     | 要同时操作 store + manager + provider 语义，只有宿主能做 |
 | 权限判定（`sessions:*`、`workspace:write`） | `plugins/sdk.js`、`plugins/registry/settings.js`       | 权限模型属于框架                                         |
 | 摘要落盘（到底写到哪个工作区）              | `plugins/registry/shared.js`                           | 框架适配层：把相对路径映射进工作区沙箱                   |
-| 动作 `<memory-transfer/>`、`/api/...`、面板 | `plugins/builtin/memory-transfer/`                     | 纯插件：禁用或换掉它，上面这些都还成立                   |
+| 动作 `memory-transfer`、`/api/...`、面板    | `plugins/builtin/memory-transfer/`                     | 纯插件：禁用或换掉它，上面这些都还成立                   |
 | 上下文横幅 + 常驻转移菜单                   | `webui/frontend`                                       | 界面属于核心，只通过插件接口调用                         |
 
 三条边界规则：
@@ -989,7 +1063,7 @@ POST /api/plugins/<name>/api/<path>
 ## 插件开发文档
 
 - 开发契约（清单字段、动作定义、schema、ctx 能力、钩子、错误码、安全声明）：`docs/PLUGIN_API.md`
-- 设计与演进（现状诊断、P0 前置重构、四类插件、权限模型、路线图）：`docs/PLUGIN_DESIGN.md`
+- 当前 JSON 架构与历史演进（文件职责、动作分发、权限模型、v1.1.0 设计蓝图）：`docs/PLUGIN_DESIGN.md`
 - 回归测试：`npm run test:plugins`（离线，不需要浏览器与大模型）
 
 ---
@@ -1073,7 +1147,7 @@ WebUI 侧边栏提供存储占用指示条与告警提示，悬停可查看详�
 
 顶部 "Trace" 查看当前会话的执行轨迹，按"每次运行"分段（Run 1、Run 2…），每个 Run 内部按 step 展示：
 
-- Action parsed（解析出的 XML 动作）
+- Action parsed（解析出的 JSON 动作 envelope 与已校验 params）
 - Runtime result（动作执行结果，带 ok / failed 徽标）
 - Provider request / response、provider error / retry
 - Agent started / completed / stopped / error（记录在 Run 级别）
@@ -1096,7 +1170,7 @@ npm run format:check  # 检查格式
 ```bash
 npm run test:offline    # 离线全量 = unit + core + plugins + api + desktop
 npm run test:unit       # 纯离线单测（停止语义、审计清理、日志落盘、动作超时、测试清单与依赖声明守卫…）
-npm run test:core       # 内置动作 / 配置 / 路由面 / XML 解析
+npm run test:core       # 内置动作 / 配置 / 路由面 / JSON Action 解析
 npm run test:plugins    # 插件系统
 npm run test:api        # 起真实 HTTP 服务的接口测试（随机端口，临时 workspace）
 npm run test:desktop    # 桌面端：设置读写、通知、exe 修补、图片路径
@@ -1118,7 +1192,7 @@ npm run test:electron   # 需要 Electron 运行时
 
 # 设计原则
 
-- **LLM 不直接执行**：所有操作通过 XML Action 交由 Runtime 执行，避免权限失控。
+- **LLM 不直接执行**：所有操作通过 JSON Action 交由 Runtime 执行，避免权限失控。
 - **Runtime 是安全边界**：控制文件访问、命令执行、路径权限、超时与子进程生命周期。
 - **Provider 与 Agent 解耦**：新增模型无需修改 Agent 核心逻辑。
 - **能力可插拔**：动作、hook、provider、UI 都可以由插件贡献，核心不持有具体业务能力。
@@ -1128,12 +1202,12 @@ npm run test:electron   # 需要 Electron 运行时
 
 # 当前能力
 
-- ✅ XML Agent 协议
+- ✅ JSON Action 协议（单 envelope、JSON Schema 参数校验、内置与插件统一分发）
 - ✅ Workspace 安全管理（路径沙箱、超时、进程树级别的停止）
 - ✅ 文件读写与命令执行（含后台执行与停止语义）
 - ✅ `edit` 局部修改（锚点替换，不必整篇重写）
 - ✅ 多模型 Provider（ChatGPT / DeepSeek / Qwen / GLM / Gemini）
-- ✅ Runtime 与 XML 错误恢复
+- ✅ Runtime 与 JSON 格式 / 执行错误恢复
 - ✅ BrowserAgent 页面自愈
 - ✅ Chrome / Microsoft Edge CDP 支持（自动探测、启动参数适配、独立端口、一键切换）
 - ✅ Web 版浏览器设置面板（保存即生效）
@@ -1157,12 +1231,12 @@ npm run test:electron   # 需要 Electron 运行时
 
 # 文档索引
 
-| 文档                                       | 内容                                                             |
-| :----------------------------------------- | :--------------------------------------------------------------- |
-| `docs/PLUGIN_API.md`                       | 插件开发契约：清单字段、动作定义、schema、ctx 能力、钩子、错误码 |
-| `docs/PLUGIN_DESIGN.md`                    | 插件化设计：现状诊断、P0 重构、四类插件、权限模型、路线图        |
-| `docs/ARCHITECTURE_FLOW.md`                | 架构与数据流：模块职责、动作分发、子进程生命周期                 |
-| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.3.0.md` | 各版本更新日志                                                   |
+| 文档                                       | 内容                                                                          |
+| :----------------------------------------- | :---------------------------------------------------------------------------- |
+| `docs/PLUGIN_API.md`                       | 插件开发契约：清单字段、JSON Action 定义、JSON Schema、ctx 能力、钩子、错误码 |
+| `docs/PLUGIN_DESIGN.md`                    | 当前 JSON 架构与文件职责，以及 v1.1.0 XML 方案的历史演进记录                  |
+| `docs/ARCHITECTURE_FLOW.md`                | 架构与数据流：模块职责、动作分发、子进程生命周期                              |
+| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.3.0.md` | 各版本更新日志                                                                |
 
 ---
 

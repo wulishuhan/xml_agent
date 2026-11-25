@@ -54,10 +54,17 @@ async function main() {
     const task = [
         "这是一个能力测试任务。你具备 screenshot 能力，可以把截图保存到 workspace 并上传给你自己查看。",
         "请严格按以下步骤执行：",
-        "第 1 步：只输出下面这一个 XML 动作，不要输出任何其它内容：",
-        '<screenshot source="screen" path="screenshots/deepseek-shot.png"/>',
+        "第 1 步：只输出下面这一个 JSON 动作，不要输出任何其它内容：",
+        JSON.stringify({
+            action: "screenshot",
+            params: {
+                targets: [{ source: "screen", path: "screenshots/deepseek-shot.png" }],
+            },
+        }),
         "第 2 步：系统会把刚才的截图上传给你。请描述你在这张截图中看到的主要内容（例如有哪些窗口/应用），",
-        "然后用 <answer><![CDATA[你看到的内容描述]]></answer> 回复。",
+        "然后用 " +
+            JSON.stringify({ action: "answer", params: { content: "你看到的内容描述" } }) +
+            " 回复。",
     ].join(String.fromCharCode(10));
     console.log("[step2] creating Agent (deepseek)...");
     const agent = new Agent({

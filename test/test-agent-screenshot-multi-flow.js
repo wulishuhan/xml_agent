@@ -39,11 +39,11 @@ async function run() {
         agent.status = "running";
         const action = {
             action: "screenshot",
-            node: {
-                target: [
-                    { "@_source": "screen", "@_path": "shots/m1.png" },
-                    { "@_source": "screen", "@_path": "shots/m2.png" },
-                    { "@_source": "screen", "@_path": "shots/m3.png" },
+            params: {
+                targets: [
+                    { source: "screen", path: "shots/m1.png" },
+                    { source: "screen", path: "shots/m2.png" },
+                    { source: "screen", path: "shots/m3.png" },
                 ],
             },
         };
@@ -64,10 +64,10 @@ async function run() {
         assert.strictEqual(uploadEvents.length, 1);
         assert.strictEqual(uploadEvents[0].uploadCount, 3);
         assert.strictEqual(uploadEvents[0].paths.length, 3);
-        // 单图回归：旧写法仍只上传 1 张
+        // 单图回归：单个 targets 元素仍只上传 1 张
         const single = await agent.runtime.run({
             action: "screenshot",
-            node: { "@_source": "screen", "@_path": "shots/single.png" },
+            params: { targets: [{ source: "screen", path: "shots/single.png" }] },
         });
         const singleUploaded = await agent.attachScreenshotToProvider(single);
         assert.strictEqual(singleUploaded.uploaded, true);

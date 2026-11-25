@@ -36,7 +36,7 @@ async function main() {
     const startedAt = Date.now();
     const pending = runtime.run({
         action: "exec",
-        node: { "@_command": 'node -e "setTimeout(function(){}, 60000)"' },
+        params: { command: 'node -e "setTimeout(function(){}, 60000)"' },
     });
 
     // 等命令真正启动（exec 外面还有一层 shell，只等 300ms 足够）

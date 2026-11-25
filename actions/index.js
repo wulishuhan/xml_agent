@@ -1,20 +1,21 @@
 /**
-内置动作表
-
-把 read / write / edit / exec / answer / done 六个内置动作统一成"动作定义对象"
-（与插件动作同一个形状），从而让：
-- runtime.js 只剩"查表 + 执行"，不再有动作的具体实现；
-- parse/xml-parse.js 的校验走同一张表，而不是另一份 switch；
-- agent-core.js 的终止语义（answer / done）与产物上传（collectImages）由元数据驱动。
-
-顺序为 read, write, edit, exec, answer, done：write 与 edit 相邻（一个建/重写，
-一个局部改），其余保持 1.1.0 的相对次序。
-
-> screenshot 自 v1.1.0 起是内置插件（plugins/builtin/screenshot），
-> 因此不在这张表里；它通过 plugins/registry 注册，由 Runtime 的插件分支执行。
-*/
+ * 内置动作表
+ *
+ * 把 read / write / edit / exec / answer / done 六个内置动作统一成"动作定义对象"
+ * （与插件动作同一个形状），从而让：
+ * - runtime.js 只剩"查表 + 执行"，不再有动作的具体实现；
+ * - JSON 动作解析层通过同一张表校验 params；
+ * - agent-core.js 的终止语义（answer / done）与产物上传（collectImages）由元数据驱动。
+ *
+ * 顺序为 read, write, edit, exec, answer, done：write 与 edit 相邻（一个建/重写，
+ * 一个局部改），其余保持 1.1.0 的相对次序。
+ *
+ * > screenshot 自 v1.1.0 起是内置插件（plugins/builtin/screenshot），
+ * > 因此不在这张表里；它通过 plugins/registry 注册，由 Runtime 的插件分支执行。
+ */
 
 const sdk = require("../plugins/sdk");
+const { validateParams } = require("../parse/action-schema");
 
 const DEFINITIONS = [
     require("./read"),
@@ -28,10 +29,10 @@ const DEFINITIONS = [
 let table = null;
 
 /**
-内置动作表：Map<name, definition>。
-定义对象由 sdk.defineAction 归一化，因此与插件动作共享同一套元数据形状
-（prompt / permission / terminal / timeoutMs / summary / collectImages / fastPath）。
-*/
+ * 内置动作表：Map<name, definition>。
+ * 定义对象由 sdk.defineAction 归一化，因此与插件动作共享同一套元数据形状
+ * （prompt / permission / terminal / timeoutMs / summary / collectImages）。
+ */
 function getBuiltinActions() {
     if (table) {
         return table;
@@ -44,10 +45,6 @@ function getBuiltinActions() {
             raw.meta && typeof raw.meta.collectImages === "function"
                 ? raw.meta.collectImages
                 : null;
-        // 若某个内置动作自带 parse 层需要的归一化函数，一并带出去
-        if (typeof raw.normalizeScreenshotTargets === "function") {
-            definition.normalizeScreenshotTargets = raw.normalizeScreenshotTargets;
-        }
         map.set(definition.name, definition);
     }
     table = map;
@@ -67,29 +64,30 @@ function getBuiltinActionNames() {
 }
 
 /**
-解析层校验：找不到动作时抛 "Unknown XML Action: xxx"（与迁移前一致）。
-*/
-function validateBuiltinAction(name, node) {
+ * 用动作的 JSON Schema 校验 params，再执行语义校验。
+ * 返回 { ok, value, error }；value 已应用 Schema 默认值。
+ */
+function validateBuiltinAction(name, params) {
     const definition = getBuiltinAction(name);
     if (!definition) {
-        throw new Error("Unknown XML Action: " + name);
+        return { ok: false, error: "Unknown action: " + name };
     }
-    if (typeof definition.validate === "function") {
-        definition.validate(node);
+    const checked = validateParams(definition.schema, params);
+    if (!checked.ok) {
+        return checked;
     }
-}
-
-/**
-内置动作的 fastPath 列表（手写快速解析器），按定义顺序返回。
-*/
-function getBuiltinFastPaths() {
-    const result = [];
-    for (const definition of getBuiltinActions().values()) {
-        if (typeof definition.meta.fastPath === "function") {
-            result.push({ action: definition.name, parse: definition.meta.fastPath });
+    try {
+        if (typeof definition.validate === "function") {
+            definition.validate(checked.value);
         }
+    } catch (error) {
+        return {
+            ok: false,
+            value: checked.value,
+            error: error && error.message ? error.message : String(error),
+        };
     }
-    return result;
+    return checked;
 }
 
 module.exports = {
@@ -98,5 +96,4 @@ module.exports = {
     hasBuiltinAction,
     getBuiltinActionNames,
     validateBuiltinAction,
-    getBuiltinFastPaths,
 };

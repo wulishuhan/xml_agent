@@ -17,6 +17,15 @@ const path = require("path");
 
 const engine = require("./engine/browser");
 
+function objectSchema(properties, required = []) {
+    return {
+        type: "object",
+        additionalProperties: false,
+        required,
+        properties,
+    };
+}
+
 function setup(ctx) {
     const config = ctx.config || {};
     const port = Number(config.cdpPort) || 9333;
@@ -44,24 +53,25 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "browse-nav",
-        schema: {
-            attrs: {
-                url: { type: "string", required: true, nonEmpty: true, maxLength: 2000 },
+        schema: objectSchema(
+            {
+                url: { type: "string", minLength: 1, maxLength: 2000, pattern: "\\S" },
                 waitFor: {
                     type: "string",
                     enum: ["domcontentloaded", "load", "networkidle"],
                     default: "domcontentloaded",
                 },
             },
+            ["url"]
+        ),
+        validate(params) {
+            engine.assertHttpUrl(params.url);
         },
-        validate(node) {
-            engine.assertHttpUrl(node["@_url"]);
-        },
-        async run(node, runCtx) {
-            const url = engine.assertHttpUrl(runCtx.attrs.url);
+        async run(params, runCtx) {
+            const url = engine.assertHttpUrl(params.url);
             const page = await withPage();
             await page.goto(url, {
-                waitUntil: runCtx.attrs.waitFor || "domcontentloaded",
+                waitUntil: params.waitFor,
                 timeout: navTimeout,
             });
             const info = await engine.pageInfo(page);
@@ -84,7 +94,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "browser",
-                usage: '<browse-nav url="https://example.com"/>',
+                usage: '{"action":"browse-nav","params":{"url":"https://example.com"}}',
                 note: "在独立浏览器里打开一个 http/https 页面，返回标题与正文（截断到上限）。",
                 priority: 90,
             },
@@ -106,14 +116,15 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "browse-click",
-        schema: {
-            attrs: {
-                selector: { type: "string", required: true, nonEmpty: true, maxLength: 500 },
+        schema: objectSchema(
+            {
+                selector: { type: "string", minLength: 1, maxLength: 500, pattern: "\\S" },
             },
-        },
-        async run(node, runCtx) {
+            ["selector"]
+        ),
+        async run(params, runCtx) {
             const page = await withPage();
-            await page.click(runCtx.attrs.selector, { timeout: navTimeout });
+            await page.click(params.selector, { timeout: navTimeout });
             await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
             const info = await engine.pageInfo(page);
             return { ok: true, action: "browse-click", url: info.url, title: info.title };
@@ -121,7 +132,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "browser",
-                usage: '<browse-click selector="a.more"/>',
+                usage: '{"action":"browse-click","params":{"selector":"a.more"}}',
                 note: "在当前页面点击一个 CSS 选择器命中的元素（先 browse-nav 再点）。",
                 priority: 80,
             },
@@ -134,21 +145,22 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "browse-fill",
-        schema: {
-            attrs: {
-                selector: { type: "string", required: true, nonEmpty: true, maxLength: 500 },
-                text: { type: "string", required: true },
+        schema: objectSchema(
+            {
+                selector: { type: "string", minLength: 1, maxLength: 500, pattern: "\\S" },
+                text: { type: "string" },
             },
-        },
-        async run(node, runCtx) {
+            ["selector", "text"]
+        ),
+        async run(params, runCtx) {
             const page = await withPage();
-            await page.fill(runCtx.attrs.selector, runCtx.attrs.text, { timeout: navTimeout });
-            return { ok: true, action: "browse-fill", selector: runCtx.attrs.selector };
+            await page.fill(params.selector, params.text, { timeout: navTimeout });
+            return { ok: true, action: "browse-fill", selector: params.selector };
         },
         meta: {
             prompt: {
                 group: "browser",
-                usage: '<browse-fill selector="#q" text="关键字"/>',
+                usage: '{"action":"browse-fill","params":{"selector":"#q","text":"关键字"}}',
                 note: "往输入框里填入文本（不提交；需要提交再 browse-click 提交按钮）。",
                 priority: 70,
             },
@@ -161,14 +173,12 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "browse-text",
-        schema: {
-            attrs: {
-                selector: { type: "string", maxLength: 500 },
-            },
-        },
-        async run(node, runCtx) {
+        schema: objectSchema({
+            selector: { type: "string", maxLength: 500 },
+        }),
+        async run(params, runCtx) {
             const page = await withPage();
-            const selector = runCtx.attrs.selector;
+            const selector = params.selector;
             const raw = selector
                 ? await page.innerText(selector, { timeout: navTimeout })
                 : await page.evaluate(() => (document.body ? document.body.innerText : ""));
@@ -186,7 +196,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "browser",
-                usage: '<browse-text selector="main"/>',
+                usage: '{"action":"browse-text","params":{"selector":"main"}}',
                 note: "取当前页面或某个元素的可见文本；省略 selector 时取整页正文。",
                 priority: 75,
             },
@@ -211,18 +221,16 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "browse-shot",
-        schema: {
-            attrs: {
-                path: { type: "string", maxLength: 200 },
-                fullPage: { type: "boolean", default: false },
-            },
-        },
-        async run(node, runCtx) {
+        schema: objectSchema({
+            path: { type: "string", maxLength: 200 },
+            fullPage: { type: "boolean", default: false },
+        }),
+        async run(params, runCtx) {
             const page = await withPage();
-            const shot = resolveShot(runCtx, runCtx.attrs.path);
+            const shot = resolveShot(runCtx, params.path);
             await page.screenshot({
                 path: shot.absolute,
-                fullPage: runCtx.attrs.fullPage === true,
+                fullPage: params.fullPage,
             });
             const info = await engine.pageInfo(page);
             return {
@@ -236,7 +244,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "browser",
-                usage: '<browse-shot path="screenshots/page.png" fullPage="false"/>',
+                usage: '{"action":"browse-shot","params":{"path":"screenshots/page.png","fullPage":false}}',
                 note: "给当前页面截图并存进 workspace，图片会随动作一起给你。",
                 priority: 65,
             },
@@ -250,12 +258,13 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "browse-eval",
-        schema: {
-            attrs: {
-                script: { type: "string", required: true, nonEmpty: true },
+        schema: objectSchema(
+            {
+                script: { type: "string", minLength: 1, pattern: "\\S" },
             },
-        },
-        async run(node, runCtx) {
+            ["script"]
+        ),
+        async run(params, runCtx) {
             if (!allowEval) {
                 return {
                     ok: false,
@@ -267,7 +276,7 @@ function setup(ctx) {
             const raw = await page.evaluate((code) => {
                 // eslint-disable-next-line no-new-func
                 return new Function("return (" + code + ")")();
-            }, runCtx.attrs.script);
+            }, params.script);
             const sliced = engine.shorten(
                 typeof raw === "string" ? raw : JSON.stringify(raw),
                 maxTextChars
@@ -282,7 +291,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "browser",
-                usage: '<browse-eval script="document.title"/>',
+                usage: '{"action":"browse-eval","params":{"script":"document.title"}}',
                 note: "在页面里执行一个表达式并返回结果（默认关闭，需要用户显式开启 allowEval）。",
                 priority: 20,
             },

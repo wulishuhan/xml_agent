@@ -1,27 +1,27 @@
 /**
-内置动作：edit —— 局部修改文件
-
-write 是"整篇重写"：为了改一行，模型必须把整个文件重新生成一遍。
-代价有两层：token 花在复述没变的代码上；任何一处手误都会把原本没问题的
-部分一起改坏，而 diff 里根本看不出哪些是"顺手改到的"。
-
-edit 只要求给出"要改的那一段（old）"和"改成什么（new）"，
-其余内容逐字节保留。一次动作可以带多个 <change>，按顺序执行。
-
-匹配规则（依次尝试）：
-1. 精确匹配：old 在文件里必须出现；出现多次要让 old 带更多上下文，
-   或用 all="true" 表示"全部替换"。
-2. 宽松匹配：精确匹配 0 次时，忽略行首缩进与行尾空白再找一次
-   （old 长度不足 MIN_LOOSE_LENGTH 时不启用，避免短串误命中别处）。
-   命中后按原文位置替换，并把缩进差补到 new 的每一行上。
-
-任何一处 <change> 失败就整体放弃、不落盘 —— 改到一半的文件比没改更难收拾。
-*/
+ * 内置动作：edit —— 局部修改文件
+ *
+ * write 是"整篇重写"：为了改一行，模型必须把整个文件重新生成一遍。
+ * 代价有两层：token 花在复述没变的代码上；任何一处手误都会把原本没问题的
+ * 部分一起改坏，而 diff 里根本看不出哪些是"顺手改到的"。
+ *
+ * edit 只要求给出"要改的那一段（old）"和"改成什么（new）"，
+ * 其余内容逐字节保留。一次动作可以带多个 change，按顺序执行。
+ *
+ * 匹配规则（依次尝试）：
+ * 1. 精确匹配：old 在文件里必须出现；出现多次要让 old 带更多上下文，
+ *    或用 all=true 表示"全部替换"。
+ * 2. 宽松匹配：精确匹配 0 次时，忽略行首缩进与行尾空白再找一次
+ *   （old 长度不足 MIN_LOOSE_LENGTH 时不启用，避免短串误命中别处）。
+ *   命中后按原文位置替换，并把缩进差补到 new 的每一行上。
+ *
+ * 任何一处 change 失败就整体放弃、不落盘 —— 改到一半的文件比没改更难收拾。
+ */
 
 const fs = require("fs");
 const path = require("path");
 const agentConfig = require("../config/agent-config");
-const { getText, decodeXmlEntities } = require("../parse/xml-text");
+const { BUILTIN_ACTION_SCHEMAS } = require("../parse/action-schema");
 const { validateContent } = require("./content-check");
 
 // 宽松匹配的最短长度：太短的锚点剥掉缩进后容易命中别处，宁可报"找不到"。
@@ -32,28 +32,6 @@ const MAX_CHANGES = 20;
 const MAX_DIFF_LINES = 40;
 const MAX_DIFF_CHARS = 2000;
 const MAX_DIFF_LINE_CHARS = 200;
-
-const CDATA_OPEN = "<![CDATA[";
-const CDATA_CLOSE = "]]>";
-
-/**
-CDATA 两侧的换行是排版产物，不是正文。
-
-模型习惯写成
-  <old><![CDATA[
-  const a = 1;
-  ]]></old>
-开头和结尾那两个换行都不属于"要匹配的原文"。old 与 new 用同一套规则
-剥掉（仅当内容以换行开头时，首尾各剥一个），两边口径一致，
-替换结果才不会莫名多出或少掉一个空行。
-*/
-function trimBlock(text) {
-    const value = typeof text === "string" ? text : String(text === undefined ? "" : text);
-    if (!value.startsWith("\n") && !value.startsWith("\r\n")) {
-        return value;
-    }
-    return value.replace(/^\r?\n/, "").replace(/\r?\n$/, "");
-}
 
 /** 新内容按目标文件的换行风格写入，避免在 CRLF 文件里混进 LF。 */
 function toFileEol(value, eol) {
@@ -89,11 +67,11 @@ function lineOf(text, offset) {
 }
 
 /**
-生成"忽略缩进与行尾空白"的视图，并记录每个字符回到原文的下标。
-
-为什么要映射：宽松匹配是在归一化后的字符串上找位置的，而替换必须落在原文
-的确切区间上。map[i] 是归一化第 i 个字符在原文中的下标，map[length] 是原文长度。
-*/
+ * 生成"忽略缩进与行尾空白"的视图，并记录每个字符回到原文的下标。
+ *
+ * 为什么要映射：宽松匹配是在归一化后的字符串上找位置的，而替换必须落在原文
+ * 的确切区间上。map[i] 是归一化第 i 个字符在原文中的下标，map[length] 是原文长度。
+ */
 function normalizeForMatch(text) {
     const chars = [];
     const map = [];
@@ -176,12 +154,12 @@ function leadingIndent(line) {
 }
 
 /**
-算出"模型写的 old 与文件里那段原文"的缩进差。
-
-只看第一行是不够的：块的第一行往往没有缩进（`if (x) {` 就在行首），
-真正的差异在块内部 —— 只看第一行会得出"没差别"，于是把模型的缩进原样插进去。
-所以逐行比对，取出现次数最多的那一种差值（按行投票），空行不参与。
-*/
+ * 算出"模型写的 old 与文件里那段原文"的缩进差。
+ *
+ * 只看第一行是不够的：块的第一行往往没有缩进（`if (x) {` 就在行首），
+ * 真正的差异在块内部 —— 只看第一行会得出"没差别"，于是把模型的缩进原样插进去。
+ * 所以逐行比对，取出现次数最多的那一种差值（按行投票），空行不参与。
+ */
 function detectIndentShift(oldText, matched) {
     const oldLines = oldText.split(/\r?\n/);
     const fileLines = matched.split(/\r?\n/);
@@ -260,7 +238,7 @@ function notFoundHint(text, oldText) {
         return "";
     }
     return (
-        " The closest line of <old> appears at line " +
+        " The closest line of old appears at line " +
         lineOf(text, index) +
         ", but the block around it differs — re-read the file and copy the exact text."
     );
@@ -282,9 +260,9 @@ function clipLine(line) {
 }
 
 /**
-回显这次改动，让模型不必再 read 一次整个文件就能确认结果。
-不是标准 unified diff（没有上下文行），只列被替换的行 —— 够用且便宜。
-*/
+ * 回显这次改动，让模型不必再 read 一次整个文件就能确认结果。
+ * 不是标准 unified diff（没有上下文行），只列被替换的行 —— 够用且便宜。
+ */
 function renderDiff(entries) {
     const out = [];
     let delta = 0;
@@ -319,307 +297,55 @@ function renderDiff(entries) {
     return text.length > MAX_DIFF_CHARS ? text.slice(0, MAX_DIFF_CHARS) + "\n… 已截断" : text;
 }
 
-// ------------------------------------------------------------
-// 节点归一化：快速解析器与通用解析器给出的结构不同，统一成 change 列表
-// ------------------------------------------------------------
-
-function normalizeChanges(node) {
-    if (!node || typeof node !== "object") {
-        return [];
-    }
-    const raw = node.change;
-    const items = raw === undefined || raw === null ? [node] : Array.isArray(raw) ? raw : [raw];
-    const changes = [];
-    for (const item of items) {
-        if (!item || typeof item !== "object") {
-            continue;
-        }
-        // <new></new> 与 <new/> 都会被解析成空串（= 删除这段）；
-        // 只有整个 <new> 缺失时才是 undefined，那属于写法错误。
-        const hasNew = item.new !== undefined && item.new !== null;
-        changes.push({
-            old: trimBlock(getText(item.old)),
-            new: hasNew ? trimBlock(getText(item.new)) : null,
-        });
-    }
-    return changes;
-}
-
-function isAll(node) {
-    const value = node && node["@_all"];
-    if (value === undefined || value === null) {
-        return false;
-    }
-    const text = String(value).trim().toLowerCase();
-    return text === "true" || text === "1" || text === "yes";
-}
-
-// ------------------------------------------------------------
-// 手写快速解析器
-// ------------------------------------------------------------
-
-function readAttribute(openTag, name) {
-    for (const quote of ['"', "'"]) {
-        const marker = name + "=" + quote;
-        const start = openTag.indexOf(marker);
-        if (start === -1) {
-            continue;
-        }
-        const valueStart = start + marker.length;
-        const valueEnd = openTag.indexOf(quote, valueStart);
-        if (valueEnd === -1) {
-            continue;
-        }
-        return decodeXmlEntities(openTag.slice(valueStart, valueEnd));
-    }
-    return "";
-}
-
-/**
-识别 pos 处的 <name ...> / </name>。
-返回 { closing, selfClosing, end } 或 null。
-*/
-function matchTag(body, pos, name) {
-    if (body.charAt(pos) !== "<") {
-        return null;
-    }
-    const closing = body.substring(pos, pos + name.length + 2) === "</" + name;
-    if (!closing) {
-        if (body.substring(pos, pos + name.length + 1) !== "<" + name) {
-            return null;
-        }
-        const next = body.charAt(pos + name.length + 1);
-        // <new> 不能匹配到 <newline> 这种前缀相同的标签
-        if (next !== "" && "> \t\r\n/".indexOf(next) === -1) {
-            return null;
-        }
-    }
-    const end = body.indexOf(">", pos);
-    if (end === -1) {
-        return null;
-    }
-    return {
-        closing,
-        selfClosing: body.charAt(end - 1) === "/",
-        end: end + 1,
-    };
-}
-
-/**
-扫描 <edit> 的正文，tokens 顺序无关（<change> 可写可不写）。
-返回 [{ old, new }] 或 null（写法无法识别时交给通用解析器）。
-*/
-function scanChanges(body) {
-    const pairs = [];
-    let current = null;
-    let field = null;
-    let pieces = [];
-
-    const finishField = () => {
-        if (!field) {
-            return;
-        }
-        // 分段解码：CDATA 段是字面文本（`&amp;` 保持原样），
-        // 段落外的文本遵循 XML 规则解码。按段而不是按字符，
-        // 否则单字符的 "&" 永远匹配不到 "&amp;" 这个整体。
-        const value = pieces
-            .map((piece) => (piece.cdata ? piece.text : decodeXmlEntities(piece.text)))
-            .join("");
-        if (current) {
-            current[field] = value;
-        }
-        field = null;
-        pieces = [];
-    };
-    const pushPiece = (text, cdata) => {
-        const last = pieces[pieces.length - 1];
-        if (last && last.cdata === cdata) {
-            last.text += text;
-            return;
-        }
-        pieces.push({ text, cdata });
-    };
-    const ensureCurrent = () => {
-        if (!current) {
-            current = { old: undefined, new: undefined };
-        }
-        return current;
-    };
-
-    let pos = 0;
-    const len = body.length;
-    while (pos < len) {
-        const ch = body.charAt(pos);
-        if (ch === "<" && body.startsWith(CDATA_OPEN, pos)) {
-            const end = body.indexOf(CDATA_CLOSE, pos + CDATA_OPEN.length);
-            if (end === -1) {
-                return null;
-            }
-            pushPiece(body.slice(pos + CDATA_OPEN.length, end), true);
-            pos = end + CDATA_CLOSE.length;
-            continue;
-        }
-        if (ch === "<") {
-            const changeTag = matchTag(body, pos, "change");
-            if (changeTag) {
-                finishField();
-                if (changeTag.closing) {
-                    if (current) {
-                        pairs.push(current);
-                        current = null;
-                    }
-                } else {
-                    ensureCurrent();
-                }
-                pos = changeTag.end;
-                continue;
-            }
-            let handled = false;
-            for (const name of ["old", "new"]) {
-                const tag = matchTag(body, pos, name);
-                if (!tag) {
-                    continue;
-                }
-                finishField();
-                // 扁平写法里可以连续出现多组 <old>/<new>：见到新的 <old> 就收口上一组
-                if (
-                    name === "old" &&
-                    !tag.closing &&
-                    !tag.selfClosing &&
-                    current &&
-                    current.old !== undefined
-                ) {
-                    pairs.push(current);
-                    current = null;
-                }
-                const target = ensureCurrent();
-                if (tag.closing) {
-                    if (target[name] === undefined) {
-                        target[name] = "";
-                    }
-                } else if (tag.selfClosing) {
-                    target[name] = "";
-                } else {
-                    field = name;
-                    pieces = [];
-                }
-                pos = tag.end;
-                handled = true;
-                break;
-            }
-            if (handled) {
-                continue;
-            }
-        }
-        if (field) {
-            pushPiece(ch, false);
-        }
-        pos += 1;
-    }
-    finishField();
-    if (current) {
-        pairs.push(current);
-    }
-    const changes = pairs.filter((pair) => pair.old !== undefined || pair.new !== undefined);
-    if (!changes.length) {
-        return null;
-    }
-    return changes;
-}
-
-/**
-手写解析 <edit path="...">...</edit>。
-返回 { action, node } 或 null（null 表示交给通用解析器）。
-理由与 write 相同：正文里可能出现任意文本，通用 XML 解析器对未加 CDATA 的
-`<` / `&` 很敏感，而这里只需要认出几个固定标签。
-*/
-function tryExtractEditManually(text) {
-    if (!text || typeof text !== "string") {
-        return null;
-    }
-    const trimmed = text.trim();
-    if (trimmed.indexOf("<edit") !== 0) {
-        return null;
-    }
-    const CLOSE_TAG = "</edit>";
-    if (!trimmed.endsWith(CLOSE_TAG)) {
-        return null;
-    }
-    const firstGt = trimmed.indexOf(">");
-    if (firstGt === -1) {
-        return null;
-    }
-    const openTag = trimmed.slice(0, firstGt + 1);
-    const filePath = readAttribute(openTag, "path");
-    if (!filePath) {
-        return null;
-    }
-    const body = trimmed.slice(firstGt + 1, trimmed.length - CLOSE_TAG.length);
-    const changes = scanChanges(body);
-    if (!changes) {
-        return null;
-    }
-    const node = { "@_path": filePath };
-    const all = readAttribute(openTag, "all");
-    if (all) {
-        node["@_all"] = all;
-    }
-    node.change = changes;
-    return { action: "edit", node };
-}
-
-// ------------------------------------------------------------
-
 module.exports = {
     name: "edit",
-    validate(node) {
-        if (!node || typeof node !== "object") {
+    schema: BUILTIN_ACTION_SCHEMAS.edit,
+    validate(params) {
+        if (!params || typeof params !== "object" || Array.isArray(params)) {
             throw new Error("edit action is invalid");
         }
-        if (!node["@_path"]) {
+        if (!params.path) {
             throw new Error("edit requires path");
         }
-        const changes = normalizeChanges(node);
+        const changes = Array.isArray(params.changes) ? params.changes : [];
         if (!changes.length) {
-            throw new Error("edit requires at least one <change> with <old>/<new>");
+            throw new Error("edit requires at least one change with old/new");
         }
         for (const change of changes) {
-            if (change.new === null) {
-                throw new Error("edit change requires <new> (use an empty <new> to delete)");
+            if (!change || typeof change !== "object" || typeof change.new !== "string") {
+                throw new Error("edit change requires new (use an empty new to delete)");
             }
-            if (!change.old.trim()) {
-                throw new Error(
-                    "edit change requires non-empty <old> (use write to create a file)"
-                );
+            if (typeof change.old !== "string" || !change.old.trim()) {
+                throw new Error("edit change requires non-empty old (use write to create a file)");
             }
         }
     },
-    run(node, ctx) {
-        const filePath = node?.["@_path"];
+    run(params, ctx) {
+        const filePath = params?.path;
         if (!filePath) {
             throw new Error("edit requires path");
         }
         const fullPath = ctx.runtime.resolvePath(filePath);
-        const changes = normalizeChanges(node);
+        const changes = Array.isArray(params?.changes) ? params.changes : [];
         const fail = (error, extra) =>
             Object.assign({ ok: false, action: "edit", path: filePath, error }, extra || {});
 
         if (!changes.length) {
-            return fail("edit requires at least one <change> with <old>/<new>");
+            return fail("edit requires at least one change with old/new");
         }
         if (changes.length > MAX_CHANGES) {
             return fail("Too many changes in one edit (max " + MAX_CHANGES + ")");
         }
         for (const change of changes) {
-            if (change.new === null) {
-                return fail("edit change requires <new> (use an empty <new> to delete)");
+            if (!change || typeof change !== "object" || typeof change.new !== "string") {
+                return fail("edit change requires new (use an empty new to delete)");
             }
-            if (!change.old.trim()) {
-                return fail("edit change requires non-empty <old> (use write to create a file)");
+            if (typeof change.old !== "string" || !change.old.trim()) {
+                return fail("edit change requires non-empty old (use write to create a file)");
             }
         }
         if (!fs.existsSync(fullPath)) {
-            return fail("File does not exist; use <write> to create it");
+            return fail("File does not exist; use write to create it");
         }
         if (fs.statSync(fullPath).isDirectory()) {
             return fail("Path is an existing directory, not a file");
@@ -631,7 +357,7 @@ module.exports = {
 
         let text = buffer.toString("utf8");
         const eol = text.indexOf("\r\n") !== -1 ? "\r\n" : "\n";
-        const all = isAll(node);
+        const all = params.all === true;
         const applied = [];
         let usedLoose = false;
         let addedLines = 0;
@@ -653,10 +379,10 @@ module.exports = {
                 return fail(
                     "Found " +
                         found.count +
-                        " matches of <old> (lines " +
+                        " matches of old (lines " +
                         lines.join(", ") +
                         (found.count > lines.length ? ", …" : "") +
-                        '). Add more surrounding lines to make it unique, or use all="true" to replace every match.',
+                        "). Add more surrounding lines to make it unique, or use all=true to replace every match.",
                     { matches: found.count, lines }
                 );
             }
@@ -665,9 +391,9 @@ module.exports = {
             // 这种静默少做比直接报错更难发现。
             if (found.mode === "loose" && found.count > 1 && all) {
                 return fail(
-                    'all="true" cannot be combined with an indentation-loose match (found ' +
+                    "all=true cannot be combined with an indentation-loose match (found " +
                         found.count +
-                        "). Copy <old> exactly as it appears in the file, or edit one occurrence at a time.",
+                        "). Copy old exactly as it appears in the file, or edit one occurrence at a time.",
                     { matches: found.count, matched: "loose" }
                 );
             }
@@ -789,14 +515,24 @@ module.exports = {
     meta: {
         prompt: {
             group: "workspace",
-            usage: '<edit path="src/app.js">\n  <change>\n    <old><![CDATA[const port = 3000;]]></old>\n    <new><![CDATA[const port = process.env.PORT || 3000;]]></new>\n  </change>\n</edit>',
-            note: '局部修改：只给出要替换的原文与新内容，其余部分保持不变（<new> 留空表示删除，all="true" 表示全部替换）。',
+            usage: JSON.stringify({
+                action: "edit",
+                params: {
+                    path: "src/app.js",
+                    changes: [
+                        {
+                            old: "const port = 3000;",
+                            new: "const port = process.env.PORT || 3000;",
+                        },
+                    ],
+                },
+            }),
+            note: "局部修改：changes 只给出要替换的原文与新内容，其余部分保持不变（new 为空字符串表示删除，all=true 表示全部替换）。",
             priority: 96,
         },
         permission: ["workspace:write"],
         mutating: true,
         timeoutMs: 15000,
         summary: (result) => "edit " + (result.path || ""),
-        fastPath: tryExtractEditManually,
     },
 };

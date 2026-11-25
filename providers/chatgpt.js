@@ -147,7 +147,7 @@ class ChatGPTProvider extends BrowserChatProvider {
      * 新任务的第一条 prompt 自带完整系统提示词与动作协议，本来就不需要旧线程；
      * 回到首页（https://chatgpt.com/）拿一条干净会话即可稳定恢复。
      * 已验证：从 /c/<id> goto 首页后消息数为 0、输入框就绪，新会话对 2.8k 字符
-     * 首条 prompt 约 12s 正常返回 XML 动作。
+     * 首条 prompt 约 12s 正常返回 JSON 动作。
      */
     async start() {
         await super.start();

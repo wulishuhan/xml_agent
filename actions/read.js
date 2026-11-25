@@ -1,28 +1,39 @@
-/**
-内置动作：read
-
-从 runtime.js 迁出（P0 动作定义对象化）。run 的方法体与迁移前逐行一致，
-只把 this 换成 ctx.runtime，因此行为完全不变（含错误文案）。
-*/
+/** 内置动作：read */
 
 const fs = require("fs");
 const agentConfig = require("../config/agent-config");
+const { BUILTIN_ACTION_SCHEMAS, MAX_READ_CHARS } = require("../parse/action-schema");
+
+function resolveReadWindow(params) {
+    const offset = params.offset === undefined ? 0 : params.offset;
+    const limit = params.limit === undefined ? MAX_READ_CHARS : params.limit;
+    if (!Number.isInteger(offset) || offset < 0) {
+        throw new Error("read offset must be a non-negative integer");
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_READ_CHARS) {
+        throw new Error("read limit must be an integer between 1 and " + MAX_READ_CHARS);
+    }
+    return { offset, limit };
+}
 
 module.exports = {
     name: "read",
-    validate(node) {
-        if (!node || typeof node !== "object") {
+    schema: BUILTIN_ACTION_SCHEMAS.read,
+    validate(params) {
+        if (!params || typeof params !== "object" || Array.isArray(params)) {
             throw new Error("read action is invalid");
         }
-        if (!node["@_path"]) {
+        if (!params.path) {
             throw new Error("read requires path");
         }
+        resolveReadWindow(params);
     },
-    run(node, ctx) {
-        const filePath = node?.["@_path"];
+    run(params, ctx) {
+        const filePath = params?.path;
         if (!filePath) {
             throw new Error("read requires path");
         }
+        const { offset, limit } = resolveReadWindow(params);
         const fullPath = ctx.runtime.resolvePath(filePath);
         // 上限在调用时读取：通过 /api/agent/config 修改后无需重启即可生效。
         const maxReadSize = agentConfig.runtime.maxReadSize;
@@ -74,20 +85,36 @@ module.exports = {
             };
         }
         const content = buffer.toString("utf8");
+        let end = Math.min(content.length, offset + limit);
+        if (end > offset + 1 && end < content.length) {
+            const before = content.charCodeAt(end - 1);
+            const after = content.charCodeAt(end);
+            if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) {
+                end -= 1;
+            }
+        }
+        const nextOffset = end < content.length ? end : null;
         return {
             ok: true,
             action: "read",
             path: filePath,
             type: "file",
             size: stat.size,
-            content,
+            offset,
+            limit,
+            totalChars: content.length,
+            returnedChars: end > offset ? end - offset : 0,
+            truncated: nextOffset !== null,
+            hasMore: nextOffset !== null,
+            nextOffset,
+            content: content.slice(offset, end),
         };
     },
     meta: {
         prompt: {
             group: "workspace",
-            usage: '<read path="src"/>',
-            note: "读取文件或目录；目录返回 entries。",
+            usage: '{"action":"read","params":{"path":"src"}}',
+            note: "读取文件或目录；文件最多返回 4000 字符，truncated=true 时用 nextOffset 作为 offset 继续读。",
             priority: 100,
         },
         permission: ["workspace:read"],

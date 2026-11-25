@@ -16,6 +16,7 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..", "..");
 const DRIVER_PATH = require.resolve(path.join(ROOT, "plugins/builtin/wechat/engine/driver"));
 const PLUGIN_PATH = path.join(ROOT, "plugins/builtin/wechat/index.js");
+const sdk = require(path.join(ROOT, "plugins/sdk"));
 
 let pass = 0;
 let total = 0;
@@ -120,11 +121,13 @@ function makeCtx(overrides) {
     return { ctx: ctx, actions: actions, storageLines: storageLines, workspace: workspace };
 }
 
-function runAction(actions, name, attrs, node) {
+function runAction(actions, name, params) {
     const def = actions.get(name);
     assert.ok(def, "动作 " + name + " 未注册");
+    const checked = sdk.validateParams(def.schema, params || {});
+    assert.strictEqual(checked.ok, true, checked.error);
     const runCtx = {
-        attrs: Object.assign({}, attrs),
+        params: checked.value,
         fs: { resolve: (target) => path.resolve(os.tmpdir(), String(target)) },
         logger: { debug() {}, info() {}, warn() {}, error() {} },
         storage: { appendLine() {}, readText: () => "" },
@@ -132,7 +135,7 @@ function runAction(actions, name, attrs, node) {
         workspace: os.tmpdir(),
         signal: { aborted: false },
     };
-    return def.run(node || {}, runCtx);
+    return def.run(checked.value, runCtx);
 }
 
 // ---------------------------------------------------------------- 用例
@@ -146,26 +149,28 @@ check("四个动作都注册了", () => {
 
 check("wechat-send 没有收件人参数（防止盲发）", () => {
     const { actions } = makeCtx();
-    const attrs = actions.get("wechat-send").schema.attrs;
-    assert.deepStrictEqual(Object.keys(attrs).sort(), ["path", "text"]);
+    const properties = actions.get("wechat-send").schema.properties;
+    assert.strictEqual(actions.get("wechat-send").schema.type, "object");
+    assert.deepStrictEqual(Object.keys(properties).sort(), ["path", "text"]);
+    assert.strictEqual(actions.get("wechat-send").schema.additionalProperties, false);
 });
 
 check("群发类会话名在 validate 阶段被拒", () => {
     const { actions } = makeCtx();
     const def = actions.get("wechat-open");
     for (const bad of ["所有人", "全体成员", "群发助手", "everyone", "Broadcast"]) {
-        assert.throws(() => def.validate({ "@_to": bad }), /具体会话名/, bad + " 应被拒绝");
+        assert.throws(() => def.validate({ "to": bad }), /具体会话名/, bad + " 应被拒绝");
     }
     // 不做裸 "all" 匹配：会误伤 Allen / 小 all 这类正常名字
-    assert.doesNotThrow(() => def.validate({ "@_to": "文件传输助手" }));
-    assert.doesNotThrow(() => def.validate({ "@_to": "Allen" }));
+    assert.doesNotThrow(() => def.validate({ "to": "文件传输助手" }));
+    assert.doesNotThrow(() => def.validate({ "to": "Allen" }));
 });
 
 check("超长消息在 validate 阶段被拒", () => {
     const { actions } = makeCtx();
     const def = actions.get("wechat-send");
-    assert.throws(() => def.validate({ "@_text": "x".repeat(101) }), /消息太长/);
-    assert.doesNotThrow(() => def.validate({ "@_text": "x".repeat(100) }));
+    assert.throws(() => def.validate({ "text": "x".repeat(101) }), /消息太长/);
+    assert.doesNotThrow(() => def.validate({ "text": "x".repeat(100) }));
 });
 
 (async () => {
@@ -183,7 +188,7 @@ check("超长消息在 validate 阶段被拒", () => {
         const { actions } = makeCtx();
         driverImpl = () =>
             stubDriver({ ok: false, action: "open", matched: false, chatTitle: "搜索聊天记录" });
-        const opened = await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        const opened = await runAction(actions, "wechat-open", { to: "张三" });
         assert.strictEqual(opened.ok, false);
         assert.strictEqual(opened.ticket.active, false);
 
@@ -211,7 +216,7 @@ check("超长消息在 validate 阶段被拒", () => {
                 echoScore: 1,
             });
         };
-        await runAction(actions, "wechat-open", { to: "文件传输助手" }, { "@_to": "文件传输助手" });
+        await runAction(actions, "wechat-open", { to: "文件传输助手" });
         calls.length = 0;
         const sent = await runAction(actions, "wechat-send", { text: "自测" });
         assert.strictEqual(sent.ok, true);
@@ -227,7 +232,7 @@ check("超长消息在 validate 阶段被拒", () => {
                     ? { ok: true, action: "open", matched: true, chatTitle: "张三" }
                     : { ok: true, action: "send", chatTitle: "张三", verified: true }
             );
-        await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        await runAction(actions, "wechat-open", { to: "张三" });
         await runAction(actions, "wechat-send", { text: "好的" });
         assert.strictEqual(storageLines.length, 1);
         const entry = JSON.parse(storageLines[0].line);
@@ -244,7 +249,7 @@ check("超长消息在 validate 阶段被拒", () => {
                     ? { ok: true, action: "open", matched: true, chatTitle: "张三" }
                     : { ok: true, action: "send", chatTitle: "张三", verified: true }
             );
-        await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        await runAction(actions, "wechat-open", { to: "张三" });
         await runAction(actions, "wechat-send", { text: "第一条" });
         await runAction(actions, "wechat-send", { text: "第二条" });
         const third = await runAction(actions, "wechat-send", { text: "第三条" });
@@ -262,7 +267,7 @@ check("超长消息在 validate 阶段被拒", () => {
                     ? { ok: true, action: "open", matched: true, chatTitle: "张三" }
                     : { ok: true, action: "send", chatTitle: "张三", verified: true }
             );
-        await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        await runAction(actions, "wechat-open", { to: "张三" });
         const first = await runAction(actions, "wechat-send", { text: "重复内容" });
         const second = await runAction(actions, "wechat-send", { text: "重复内容" });
         assert.strictEqual(first.ok, true);
@@ -280,7 +285,7 @@ check("超长消息在 validate 阶段被拒", () => {
                     ? { ok: true, action: "open", matched: true, chatTitle: "张三" }
                     : { ok: true, action: "send", chatTitle: "张三", verified: true }
             );
-        await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        await runAction(actions, "wechat-open", { to: "张三" });
         const first = await runAction(actions, "wechat-send", {
             text: "这个是本地 agent 通过 CDP 驱动浏览器对话页，每轮要等模型回复再执行动作，所以大概十几秒到半分钟，比直接在网页聊慢点，但日常够用哈。",
         });
@@ -301,10 +306,10 @@ check("超长消息在 validate 阶段被拒", () => {
                     ? { ok: true, action: "open", matched: true, chatTitle: target }
                     : { ok: true, action: "send", chatTitle: target, verified: true }
             );
-        await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        await runAction(actions, "wechat-open", { to: "张三" });
         const first = await runAction(actions, "wechat-send", { text: "收到，我看下" });
         target = "李四";
-        await runAction(actions, "wechat-open", { to: "李四" }, { "@_to": "李四" });
+        await runAction(actions, "wechat-open", { to: "李四" });
         const second = await runAction(actions, "wechat-send", { text: "收到，我看下" });
         assert.strictEqual(first.ok, true);
         assert.strictEqual(second.ok, true, "换了会话就不该判重");
@@ -318,7 +323,7 @@ check("超长消息在 validate 阶段被拒", () => {
                     ? { ok: true, action: "open", matched: true, chatTitle: "张三" }
                     : { ok: true, action: "send", chatTitle: "张三", verified: true }
             );
-        await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        await runAction(actions, "wechat-open", { to: "张三" });
         const first = await runAction(actions, "wechat-send", { text: "好的，我看下这个问题" });
         const second = await runAction(actions, "wechat-send", {
             text: "另外你那边环境是什么版本？",
@@ -356,7 +361,7 @@ check("超长消息在 validate 阶段被拒", () => {
                     ? { ok: true, action: "open", matched: true, chatTitle: "张三" }
                     : { ok: true, action: "read", title: "张三", lines: [] }
             );
-        await runAction(actions, "wechat-open", { to: "张三" }, { "@_to": "张三" });
+        await runAction(actions, "wechat-open", { to: "张三" });
         calls.length = 0;
         const result = await runAction(actions, "wechat-send", { text: "演练" });
         assert.strictEqual(result.dryRun, true);

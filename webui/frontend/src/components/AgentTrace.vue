@@ -254,8 +254,8 @@
             return "Event";
         }
         const map = {
-            "action.parsed": "Action parsed",
-            "action.parse_error": "Action parse error",
+            "action.parsed": "JSON action parsed",
+            "action.parse_error": "JSON action parse error",
             "runtime.result": "Runtime result",
             "provider.request": "Provider request",
             "provider.response": "Provider response",
@@ -284,14 +284,15 @@ answer -> content: xxx
         if (!parsed || typeof parsed !== "object") {
             return "";
         }
-        if (typeof parsed.path === "string" && parsed.path) {
-            return "path: " + parsed.path;
+        const params = parsed.params && typeof parsed.params === "object" ? parsed.params : {};
+        if (typeof params.path === "string" && params.path) {
+            return "path: " + params.path;
         }
-        if (typeof parsed.command === "string" && parsed.command) {
-            return "command: " + parsed.command;
+        if (typeof params.command === "string" && params.command) {
+            return "command: " + params.command;
         }
-        if (typeof parsed.content === "string" && parsed.content) {
-            const flat = parsed.content.split("\n").join(" ").replace(/\s+/g, " ").trim();
+        if (typeof params.content === "string" && params.content) {
+            const flat = params.content.split("\n").join(" ").replace(/\s+/g, " ").trim();
             return "content: " + (flat.length > 80 ? flat.slice(0, 80) + "..." : flat);
         }
         return "";
@@ -311,14 +312,14 @@ answer -> content: xxx
             action = event.action || "";
             const detail = describeParsedAction(event.parsed);
             summary =
-                "Parsed XML action: " +
+                "Parsed JSON action: " +
                 (event.action || "unknown") +
                 (detail ? " · " + detail : "");
             if (event.parsed && typeof event.parsed === "object") {
                 payload = JSON.stringify(event.parsed, null, 2);
             }
         } else if (event.type === "action.parse_error") {
-            summary = "Failed to parse action: " + (event.error || "");
+            summary = "JSON action parse error: " + (event.error || "");
             payload = event.error || "";
         } else if (event.type === "runtime.result") {
             action = event.action || "";

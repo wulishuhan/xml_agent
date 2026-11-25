@@ -1,5 +1,4 @@
 const { BrowserAgent } = require("./browser-agent");
-const { getActionTagNames } = require("./action-tag");
 const { collectFiberCandidates } = require("./dom/fiber");
 
 const DEFAULT_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
@@ -449,7 +448,7 @@ class BrowserChatProvider extends BrowserAgent {
     */
     async extractFromReactFiber(elementHandle) {
         try {
-            return await elementHandle.evaluate(collectFiberCandidates, getActionTagNames());
+            return await elementHandle.evaluate(collectFiberCandidates);
         } catch (error) {
             return [];
         }

@@ -94,9 +94,13 @@ async function main() {
         const section = buildSkillPromptSection(list);
         assert.ok(section.indexOf("可用技能") !== -1);
         assert.ok(section.indexOf(".agent/skills/novel-writing.md") !== -1);
-        const prompt = getFirstPrompt(ws, ["file.txt"], "写一本男频网文小说", { skills: list });
+        const prompt = getFirstPrompt(ws, "写一本男频网文小说", { skills: list });
         assert.ok(prompt.indexOf("可用技能") !== -1, "首轮提示词必须含技能段");
         assert.ok(prompt.indexOf("novel-writing") !== -1, "首轮提示词必须列出该技能");
+        assert.ok(prompt.indexOf("动作协议 JSON Schema") !== -1);
+        assert.ok(prompt.indexOf("项目：" + path.basename(ws)) !== -1);
+        assert.ok(prompt.indexOf("用户任务") !== -1);
+        assert.strictEqual(prompt.indexOf("Workspace Manifest"), -1);
     });
 
     // ---- 2. 幂等 ----

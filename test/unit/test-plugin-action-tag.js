@@ -1,50 +1,23 @@
 /**
-动作标签识别的单测（不启动浏览器、不联网）
-
-守的是一个真机踩过的坑：`ACTION_TAG_NAMES` 曾写死成七个内置动作，
-插件动作（browse-nav / wechat-status …）不在清单里，于是
-
-1. `containsActionTag("<browse-nav .../>")` 返回 false，这条回复被当成普通文本；
-2. provider 以为最后一条没有动作，去合并最近几条消息，
-   把上一轮同样的 XML 拼了第二遍；
-3. 解析器报 "Exactly one XML Action is required, but received 2"，
-   模型收到"你的回复不合法"的纠正提示，重试一次还是两份，原地死循环。
-
-所以这里断言三件事：清单来自注册表、名字边界正确、短动作不被长度阈值误杀。
-
-运行：node test/unit/test-plugin-action-tag.js
-*/
+ * JSON Action envelope 识别单测（不启动浏览器、不联网）
+ *
+ * 动作集合是开放的：Provider 不再依赖内置/插件动作名清单，而是判断回复中
+ * 是否有且只有一个 JSON envelope。这里同时钉住解析层与 Fiber 扫描器的契约：
+ * 裸 JSON、```json 围栏、说明文字、嵌套 params、字符串花括号与转义都能识别；
+ * XML、普通文本和多个 envelope 不能被误判为单条动作。
+ *
+ * 运行：node test/unit/test-plugin-action-tag.js
+ */
 
 const assert = require("assert");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
 
-const ROOT = path.join(__dirname, "..", "..");
-const registryModule = require(path.join(ROOT, "plugins/registry"));
-const actionTag = require(path.join(ROOT, "providers/action-tag"));
-const fenceUtils = require(path.join(ROOT, "providers/markdown-fence-utils"));
-const fiber = require(path.join(ROOT, "providers/dom/fiber"));
+const actionTag = require("../../providers/action-tag");
+const fenceUtils = require("../../providers/markdown-fence-utils");
+const jsonCandidate = require("../../parse/json-candidate");
+const fiber = require("../../providers/dom/fiber");
 
-// 用独立的空 storeRoot 构造 registry：插件启停状态存在用户机器的
-// plugins-state.json 里（wechat 可能被禁用），直接用全局单例会让本测试
-// 依赖那台机器的历史状态。这里用独立 storeRoot，并显式启用被测插件：
-// v1.3.0 起 browser / wechat 的 enabledByDefault 改为 false，不能靠默认。
-const isolatedStoreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "action-tag-registry-"));
-fs.writeFileSync(
-    path.join(isolatedStoreRoot, "plugins-state.json"),
-    JSON.stringify({
-        browser: { enabled: true },
-        wechat: { enabled: true },
-        fetch: { enabled: true },
-    })
-);
-const isolatedRegistry = registryModule.createRegistry({
-    storeRoot: isolatedStoreRoot,
-    logger: { info() {}, warn() {}, error() {}, debug() {} },
-});
-isolatedRegistry.load();
-registryModule.setRegistryForTests(isolatedRegistry);
+const FENCE = String.fromCharCode(96, 96, 96);
+const READ = JSON.stringify({ action: "read", params: { path: "." } });
 
 let pass = 0;
 let total = 0;
@@ -60,131 +33,184 @@ function check(name, fn) {
     }
 }
 
-const BUILTIN = ["write", "edit", "read", "exec", "screenshot", "answer", "done"];
-
 // ------------------------------------------------------------
-// 1. 清单来源
+// 1. 共享入口与解析契约
 // ------------------------------------------------------------
 
-check("内置动作一个都不能少", () => {
-    const names = actionTag.getActionTagNames();
+check("Provider 导出 hasActionEnvelope", () => {
+    assert.strictEqual(typeof actionTag.hasActionEnvelope, "function");
+    assert.strictEqual(actionTag.hasActionEnvelope, jsonCandidate.hasActionEnvelope);
+});
 
-    for (const name of BUILTIN) {
-        assert.ok(names.indexOf(name) !== -1, "缺少内置动作 " + name);
+check("围栏工具导出 extractJsonActionCandidate", () => {
+    assert.strictEqual(typeof fenceUtils.extractJsonActionCandidate, "function");
+});
+
+check("裸 JSON 与开放插件动作无需动作名清单", () => {
+    const fixtures = [
+        { action: "read", params: { path: "." } },
+        { action: "done", params: {} },
+        { action: "browse-nav", params: { url: "https://example.com" } },
+        { action: "wechat-status", params: {} },
+        { action: "fetch", params: { url: "http://127.0.0.1/" } },
+        { action: "screenshot", params: { source: "window" } },
+        { action: "answer", params: { text: "好" } },
+    ];
+
+    for (const fixture of fixtures) {
+        const raw = JSON.stringify(fixture);
+        assert.strictEqual(jsonCandidate.hasActionEnvelope(raw), true, raw);
+        assert.deepStrictEqual(jsonCandidate.extractActionEnvelope(raw), fixture);
     }
 });
 
-check("插件动作从注册表合并进来", () => {
-    const names = actionTag.getActionTagNames();
+check("说明文字与 ```json 围栏中的 envelope 可识别", () => {
+    const wrapped = "先执行这个动作：\n" + FENCE + "json\n" + READ + "\n" + FENCE + "\n完成后告诉我。";
 
-    // wechat / browser 是内置插件，注册表加载后必然在列
-    for (const name of ["browse-nav", "browse-eval", "wechat-open", "wechat-read"]) {
-        assert.ok(names.indexOf(name) !== -1, "缺少插件动作 " + name);
+    assert.strictEqual(jsonCandidate.hasActionEnvelope(wrapped), true);
+    assert.deepStrictEqual(jsonCandidate.extractActionEnvelope(wrapped), {
+        action: "read",
+        params: { path: "." },
+    });
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate(wrapped), READ);
+});
+
+check("嵌套 params、字符串花括号与转义原样解析", () => {
+    const fixture = {
+        action: "write",
+        params: {
+            path: "note.txt",
+            content: '左侧 { 花括号 }，引号 "quoted"，反斜杠 C:\\tmp\\x，换行\n下一行',
+            options: {
+                nested: { enabled: true },
+                entries: [{ value: "}" }, { value: "{" }],
+            },
+        },
+    };
+    const raw = JSON.stringify(fixture);
+    const wrapped = "说明文字\n" + FENCE + "json\n" + raw + "\n" + FENCE;
+
+    assert.strictEqual(jsonCandidate.hasActionEnvelope(raw), true);
+    assert.deepStrictEqual(jsonCandidate.extractActionEnvelope(wrapped), fixture);
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate(wrapped), raw);
+});
+
+check("普通文本、XML、空值与非 envelope JSON 均被拒绝", () => {
+    const rejected = [
+        "这一轮不需要执行动作",
+        '<read path="."/>',
+        "<answer><![CDATA[好]]></answer>",
+        FENCE + "xml\n<done/>\n" + FENCE,
+        '{"path":"."}',
+        '{"action":"read","params":[]}',
+        '{"action":"read","params":',
+        "",
+        "   ",
+        null,
+        undefined,
+    ];
+
+    for (const value of rejected) {
+        assert.strictEqual(jsonCandidate.hasActionEnvelope(value), false, String(value));
     }
 });
 
-check("ACTION_TAG_NAMES 仍只含内置动作（兼容旧引用）", () => {
-    assert.deepStrictEqual(actionTag.ACTION_TAG_NAMES.slice(), BUILTIN);
-});
+check("多个 envelope 不误判为单条动作并保留给解析层报错", () => {
+    const second = JSON.stringify({ action: "done", params: {} });
+    const multiple = "第一个动作：\n" + READ + "\n第二个动作：\n" + second;
 
-// ------------------------------------------------------------
-// 2. 识别与边界
-// ------------------------------------------------------------
-
-check("插件动作被识别为 Action", () => {
-    assert.strictEqual(
-        actionTag.containsActionTag('<browse-nav url="https://example.com"/>'),
-        true
+    assert.strictEqual(jsonCandidate.hasActionEnvelope(multiple), false);
+    assert.throws(
+        () => jsonCandidate.extractActionEnvelope(multiple),
+        /Exactly one JSON action is required, but received 2/
     );
-    assert.strictEqual(actionTag.containsActionTag("<wechat-status/>"), true);
-    assert.strictEqual(actionTag.containsActionTag('<wechat-send text="收到"/>'), true);
-    assert.strictEqual(actionTag.containsActionTag('<fetch url="http://127.0.0.1/"/>'), true);
-});
-
-check("内置动作仍然认得出", () => {
-    assert.strictEqual(actionTag.containsActionTag('<read path="a.js"/>'), true);
-    assert.strictEqual(actionTag.containsActionTag("<done/>"), true);
-    assert.strictEqual(actionTag.containsActionTag("<answer><![CDATA[好]]></answer>"), true);
-});
-
-check("名字必须完整匹配（<read 不能命中 <readfile）", () => {
-    assert.strictEqual(actionTag.containsActionTag('<readfile name="x"/>'), false);
-    assert.strictEqual(actionTag.containsActionTag("<wechat-statusx/>"), false);
-});
-
-check("普通文本不算 Action", () => {
-    assert.strictEqual(actionTag.containsActionTag("这一轮不需要执行动作"), false);
-    assert.strictEqual(actionTag.containsActionTag(""), false);
-    assert.strictEqual(actionTag.containsActionTag(null), false);
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate(multiple), multiple);
 });
 
 // ------------------------------------------------------------
-// 3. 从候选文本里切出 XML
+// 2. 候选提取
 // ------------------------------------------------------------
 
-check("extractXmlFromCandidate 认得插件自闭合标签", () => {
-    const text = '<browse-nav url="https://example.com"/>';
-
-    assert.strictEqual(fenceUtils.extractXmlFromCandidate(text), text);
-    assert.strictEqual(fenceUtils.extractXmlFromCandidate("<wechat-status/>"), "<wechat-status/>");
+check("extractJsonActionCandidate 从说明文字中返回裸 envelope", () => {
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate("前置说明 " + READ + " 后置说明"), READ);
 });
 
-check("extractXmlFromCandidate 能剥掉代码围栏", () => {
-    const fence = String.fromCharCode(96, 96, 96);
-    const wrapped = fence + 'xml\n<browse-text selector="main"/>' + fence;
+check("extractJsonActionCandidate 不挑选多个 envelope 中的一个", () => {
+    const second = JSON.stringify({ action: "answer", params: { text: "done" } });
+    const multiple = READ + "\n" + second;
 
-    assert.strictEqual(
-        fenceUtils.extractXmlFromCandidate(wrapped),
-        '<browse-text selector="main"/>'
-    );
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate(multiple), multiple);
 });
 
-check("extractXmlFromCandidate 对非动作文本返回 null", () => {
-    assert.strictEqual(fenceUtils.extractXmlFromCandidate("就是一段普通回答"), null);
-    assert.strictEqual(fenceUtils.extractXmlFromCandidate('<div class="x">hi</div>'), null);
+check("extractJsonActionCandidate 对非动作文本返回 null", () => {
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate("就是一段普通回答"), null);
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate('<div class="x">hi</div>'), null);
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate('{"ok":true}'), null);
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate(""), null);
+    assert.strictEqual(fenceUtils.extractJsonActionCandidate(null), null);
 });
 
 // ------------------------------------------------------------
-// 4. fiber 扫描器：短的插件动作不能被长度阈值丢掉
+// 3. Fiber 候选：短 JSON 动作保留，XML 与短噪声丢弃，重复节点去重
 // ------------------------------------------------------------
 
-/** 造一个只有 React props 的假元素，够 fiber 扫描器走 props 分支。 */
-function fakeElement(props) {
+/** 造一个带 React props / fiber 的假元素，够扫描器走纯对象分支。 */
+function fakeElement(props, fiberProps) {
     const element = {};
-
-    element["__reactProps$test"] = props;
-
+    element.__reactProps$test = props;
+    if (fiberProps) {
+        element.__reactFiber$test = { memoizedProps: fiberProps, pendingProps: fiberProps, child: null };
+    }
     return element;
 }
 
-check("fiber 扫描器：传入清单后能捞到短的插件动作", () => {
-    const element = fakeElement({ children: "<wechat-status/>" });
-    const result = fiber.collectChildFiberCandidate(element, actionTag.getActionTagNames());
+check("child-only Fiber 识别短的开放插件 JSON 动作", () => {
+    const raw = JSON.stringify({ action: "wechat-status", params: {} });
+    const result = fiber.collectChildFiberCandidate(fakeElement({ children: raw }));
 
     assert.ok(result, "应当返回候选");
-    assert.strictEqual(result.top.value, "<wechat-status/>");
+    assert.strictEqual(result.top.value, raw);
     assert.strictEqual(result.top.isAction, true);
 });
 
-check("fiber 扫描器：不传清单时不认插件动作（证明参数真的生效）", () => {
-    const element = fakeElement({ children: "<wechat-status/>" });
-
-    assert.strictEqual(fiber.collectChildFiberCandidate(element), null);
-});
-
-check("fiber 扫描器：三向 BFS 同样认插件动作", () => {
-    const element = fakeElement({ children: '<browse-nav url="https://example.com"/>' });
-    const candidates = fiber.collectFiberCandidates(element, actionTag.getActionTagNames());
+check("三向 BFS 识别短的 JSON 动作", () => {
+    const raw = JSON.stringify({ action: "browse-nav", params: { url: "https://example.com" } });
+    const candidates = fiber.collectFiberCandidates(fakeElement({ children: raw }));
 
     assert.ok(candidates.length >= 1, "应当返回候选");
-    assert.strictEqual(candidates[0].value, '<browse-nav url="https://example.com"/>');
+    assert.strictEqual(candidates[0].value, raw);
     assert.strictEqual(candidates[0].hasAction, true);
 });
 
-check("fiber 扫描器：非动作的短字符串仍然被当噪声丢掉", () => {
-    const element = fakeElement({ children: "短文本" });
+check("Fiber 对重复渲染的同一 JSON 动作去重", () => {
+    const raw = JSON.stringify({ action: "read", params: { path: "." } });
+    const element = fakeElement({ children: raw }, { children: raw });
 
-    assert.deepStrictEqual(fiber.collectFiberCandidates(element, ["read", "write"]), []);
+    const wide = fiber.collectFiberCandidates(element);
+    const narrow = fiber.collectChildFiberCandidate(element);
+
+    assert.strictEqual(wide.length, 1, "三向 BFS 应只保留一份");
+    assert.strictEqual(narrow.candidates.length, 1, "child-only 应只保留一份");
+    assert.strictEqual(narrow.totalCandidates, 2, "去重前应确实收集到两份");
+});
+
+check("Fiber 不把短 XML 或普通文本当动作", () => {
+    const xmlElement = fakeElement({ children: '<read path="."/>' });
+    const textElement = fakeElement({ children: "短文本" });
+
+    assert.strictEqual(fiber.collectChildFiberCandidate(xmlElement), null);
+    assert.deepStrictEqual(fiber.collectFiberCandidates(xmlElement), []);
+    assert.strictEqual(fiber.collectChildFiberCandidate(textElement), null);
+    assert.deepStrictEqual(fiber.collectFiberCandidates(textElement), []);
+});
+
+check("Fiber 对多个 envelope 的文本不标记为单条动作", () => {
+    const raw = READ + "\n" + JSON.stringify({ action: "done", params: {} });
+    const candidates = fiber.collectFiberCandidates(fakeElement({ children: raw }));
+
+    assert.ok(candidates.length >= 1);
+    assert.strictEqual(candidates[0].value, raw);
+    assert.strictEqual(candidates[0].hasAction, false);
 });
 
 console.log("\nTotal: " + pass + "/" + total);

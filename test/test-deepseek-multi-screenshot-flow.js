@@ -44,13 +44,20 @@ async function main() {
     const task = [
         "这是一个能力测试任务。你具备 screenshot 能力，可以一次截多张图，系统会自动把多张图一起上传给你查看。",
         "请严格按以下步骤执行：",
-        "第 1 步：只输出下面这一个 XML 动作，不要输出任何其它内容：",
-        "<screenshot>",
-        '  <target source="screen" path="screenshots/multi-1.png"/>',
-        '  <target source="screen" path="screenshots/multi-2.png"/>',
-        "</screenshot>",
+        "第 1 步：只输出下面这一个 JSON 动作，不要输出任何其它内容：",
+        JSON.stringify({
+            action: "screenshot",
+            params: {
+                targets: [
+                    { source: "screen", path: "screenshots/multi-1.png" },
+                    { source: "screen", path: "screenshots/multi-2.png" },
+                ],
+            },
+        }),
         "第 2 步：系统会把刚才的 2 张截图一起上传给你。请分别描述这两张截图中看到的主要内容，",
-        "然后用 <answer><![CDATA[两张截图的内容描述]]></answer> 回复。",
+        "然后用 " +
+            JSON.stringify({ action: "answer", params: { content: "两张截图的内容描述" } }) +
+            " 回复。",
     ].join(String.fromCharCode(10));
     console.log("[step2] creating Agent (deepseek)...");
     const agent = new Agent({

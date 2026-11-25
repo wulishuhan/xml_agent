@@ -1,6 +1,6 @@
 const { BrowserChatProvider } = require("./browser-chat");
-const { containsActionTag, getActionTagNames } = require("./action-tag");
-const { balanceMarkdownFences, extractXmlFromCandidate } = require("./markdown-fence-utils");
+const { hasActionEnvelope } = require("./action-tag");
+const { balanceMarkdownFences, extractJsonActionCandidate } = require("./markdown-fence-utils");
 const { collectChildFiberCandidate } = require("./dom/fiber");
 
 const QWEN_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
@@ -269,7 +269,7 @@ class QwenProvider extends BrowserChatProvider {
 
         let fiberResult = null;
         try {
-            fiberResult = await target.evaluate(collectChildFiberCandidate, getActionTagNames());
+            fiberResult = await target.evaluate(collectChildFiberCandidate);
         } catch (error) {
             console.warn("[Qwen] fiber extraction failed:", error.message);
         }
@@ -278,10 +278,10 @@ class QwenProvider extends BrowserChatProvider {
             const actionCandidate = fiberResult.candidates.find((c) => c.isAction);
 
             if (actionCandidate) {
-                const xmlPart = extractXmlFromCandidate(actionCandidate.value);
-                if (xmlPart) {
+                const jsonPart = extractJsonActionCandidate(actionCandidate.value);
+                if (jsonPart) {
                     return {
-                        text: balanceMarkdownFences(xmlPart),
+                        text: balanceMarkdownFences(jsonPart),
                         fromFiber: true,
                         hasAction: true,
                     };
@@ -305,7 +305,7 @@ class QwenProvider extends BrowserChatProvider {
         return {
             text: balanceMarkdownFences(normalized),
             fromFiber: false,
-            hasAction: containsActionTag(normalized),
+            hasAction: hasActionEnvelope(normalized),
         };
     }
 
@@ -313,7 +313,7 @@ class QwenProvider extends BrowserChatProvider {
     获取最后一条 assistant 回复。
 
     最后一条能提取到 Action 就直接返回；否则回溯最近几条合并
-    —— 长输出被拆成多条消息时，单个节点里看不到完整 XML。
+    —— 长输出被拆成多条消息时，单个节点里看不到完整 JSON envelope。
     */
     async getLastResponse() {
         if (!this.isPageAlive()) return "";
@@ -339,7 +339,7 @@ class QwenProvider extends BrowserChatProvider {
             const backLimit = Math.min(count, 4);
             const parts = [];
             // 合并相邻消息是为了拼回被切碎的代码块；某一段读失败会直接
-            // 让合并结果缺一块（XML 闭合标签可能正好缺在那里），必须留痕。
+            // 让合并结果缺一块（JSON 闭合括号可能正好缺在那里），必须留痕。
             const failed = [];
 
             for (let i = count - backLimit; i < count; i++) {
@@ -350,7 +350,7 @@ class QwenProvider extends BrowserChatProvider {
 
                 try {
                     const item = await this.extractOne(i, count);
-                    // 同一条内容被渲染成多个节点时，拼进去就是两份 XML，
+                    // 同一条内容被渲染成多个节点时，拼进去就是两份 envelope，
                     // 解析器会报 "received 2"。去重比事后纠错便宜。
                     if (item.text && parts.indexOf(item.text) === -1) parts.push(item.text);
                 } catch (error) {
@@ -366,11 +366,9 @@ class QwenProvider extends BrowserChatProvider {
 
             const merged = parts.join("\n").trim();
 
-            if (containsActionTag(merged)) {
-                const xmlPart = extractXmlFromCandidate(merged);
-                if (xmlPart) {
-                    return balanceMarkdownFences(xmlPart);
-                }
+            const jsonPart = extractJsonActionCandidate(merged);
+            if (jsonPart) {
+                return balanceMarkdownFences(jsonPart);
             }
 
             return last.text || "";
@@ -626,7 +624,7 @@ class QwenProvider extends BrowserChatProvider {
 module.exports = {
     QwenProvider,
     balanceMarkdownFences,
-    extractXmlFromCandidate,
+    extractJsonActionCandidate,
     // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
     meta: {
         id: "qwen",

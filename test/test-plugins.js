@@ -3,7 +3,7 @@
 
 覆盖：
 1. 发现 / 加载 / 隔离 / 版本与清单校验
-2. XML 解析层对插件动作的校验（含错参报错）
+2. JSON 解析层对插件动作的校验（含错参、默认值与严格类型）
 3. Runtime 调用插件动作（成功 / 白名单拒绝 / 权限拒绝 / 超时 / 截断）
 4. 内置动作完全不受影响
 5. 钩子（hook 插件落盘审计日志）
@@ -21,7 +21,7 @@ const http = require("http");
 
 const sdk = require("../plugins/sdk");
 const registryModule = require("../plugins/registry");
-const { extractXML } = require("../parse/xml-parse");
+const { extractAction } = require("../parse/json-action");
 const { createRuntime } = require("../runtime");
 const { getFirstPrompt } = require("../prompts/first-prompt");
 const { SYSTEM_PROMPT } = require("../prompts/system-prompt");
@@ -124,33 +124,53 @@ async function main() {
                 )
         );
 
-        console.log("\n=== 2. XML 解析层校验 ===");
-        const parsed = extractXML('<fetch url="http://127.0.0.1:' + port + '/ok" method="GET"/>');
+        console.log("\n=== 2. JSON 解析层校验 ===");
+        function parseAction(action, params) {
+            return extractAction(JSON.stringify({ action, params }));
+        }
+        const parsed = parseAction("fetch", {
+            url: "http://127.0.0.1:" + port + "/ok",
+            method: "GET",
+        });
         check("合法 fetch 可解析", parsed.action === "fetch" && parsed.plugin === "fetch");
         check("解析结果带插件来源", parsed.plugin === "fetch", String(parsed.plugin));
+        check("解析结果是普通 params 对象", parsed.params.url.endsWith("/ok"));
+        const defaulted = parseAction("fetch", { url: "http://127.0.0.1:" + port + "/ok" });
+        check("JSON Schema 默认 method 在解析层补全", defaulted.params.method === "GET");
         let missingUrlError = "";
         try {
-            extractXML("<fetch/>");
+            parseAction("fetch", {});
         } catch (error) {
             missingUrlError = error.message;
         }
         check("缺少 url 被拒绝", missingUrlError.includes("url"), missingUrlError);
-        let unknownAttrError = "";
+        let unknownParamError = "";
         try {
-            extractXML('<fetch url="http://127.0.0.1/' + port + '" bogus="1"/>');
+            parseAction("fetch", { url: "http://127.0.0.1:" + port + "/ok", bogus: 1 });
         } catch (error) {
-            unknownAttrError = error.message;
+            unknownParamError = error.message;
         }
-        check("未知属性被拒绝", unknownAttrError.includes("bogus"), unknownAttrError);
+        check("未知参数被拒绝", unknownParamError.includes("bogus"), unknownParamError);
+        let strictTypeError = "";
+        try {
+            parseAction("fetch", { url: "http://127.0.0.1:" + port + "/ok", maxBytes: "1000" });
+        } catch (error) {
+            strictTypeError = error.message;
+        }
+        check(
+            "严格类型：数字字符串不会被强转",
+            strictTypeError.includes("maxBytes") && strictTypeError.includes("integer"),
+            strictTypeError
+        );
         let unknownActionError = "";
         try {
-            extractXML("<nope/>");
+            parseAction("nope", {});
         } catch (error) {
             unknownActionError = error.message;
         }
         check(
-            "未知动作仍然报错（保持 1.0.x 行为）",
-            unknownActionError.includes("Unknown XML Action"),
+            "未知动作仍然报错",
+            unknownActionError.includes("Unknown action"),
             unknownActionError
         );
 
@@ -158,7 +178,7 @@ async function main() {
         const runtime = createRuntime(workspace);
         const okResult = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://127.0.0.1:" + port + "/hello" },
+            params: { url: "http://127.0.0.1:" + port + "/hello" },
         });
         check(
             "fetch 成功返回状态码与响应体",
@@ -173,7 +193,7 @@ async function main() {
 
         const blocked = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://example.com/" },
+            params: { url: "http://example.com/" },
         });
         check(
             "白名单外主机被拒绝",
@@ -183,7 +203,7 @@ async function main() {
 
         const httpError = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://127.0.0.1:" + port + "/err" },
+            params: { url: "http://127.0.0.1:" + port + "/err" },
         });
         check(
             "5xx 返回 ok:false 且保留状态码",
@@ -193,7 +213,7 @@ async function main() {
 
         const truncated = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://127.0.0.1:" + port + "/big", "@_maxBytes": "1000" },
+            params: { url: "http://127.0.0.1:" + port + "/big", maxBytes: 1000 },
         });
         check(
             "超出 maxBytes 时截断并标记",
@@ -203,7 +223,7 @@ async function main() {
 
         const timedOut = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://127.0.0.1:" + port + "/slow", "@_timeout": "150" },
+            params: { url: "http://127.0.0.1:" + port + "/slow", timeout: 150 },
         });
         check(
             "请求超时被中断",
@@ -215,7 +235,7 @@ async function main() {
         console.log("\n=== 3b. 回给模型的精简视图 ===");
         const bigResult = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://127.0.0.1:" + port + "/big", "@_maxBytes": "20000" },
+            params: { url: "http://127.0.0.1:" + port + "/big", maxBytes: 20000 },
         });
         check(
             "完整结果保留大响应体",
@@ -240,14 +260,14 @@ async function main() {
         fs.writeFileSync(path.join(workspace, "note.txt"), "hello", "utf8");
         const readResult = await runtime.run({
             action: "read",
-            node: { "@_path": "note.txt" },
+            params: { path: "note.txt" },
         });
         check(
             "内置 read 仍然工作",
             readResult.ok === true && readResult.content === "hello",
             String(readResult.error || "")
         );
-        const unknownRuntime = await runtime.run({ action: "nope", node: {} }).catch((error) => ({
+        const unknownRuntime = await runtime.run({ action: "nope", params: {} }).catch((error) => ({
             ok: false,
             error: error.message,
         }));
@@ -266,7 +286,7 @@ async function main() {
         registry.reload();
         const denied = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://127.0.0.1:" + port + "/ok" },
+            params: { url: "http://127.0.0.1:" + port + "/ok" },
         });
         check(
             "权限被禁时返回结构化拒绝",
@@ -279,7 +299,7 @@ async function main() {
         registry.reload();
         const afterGrant = await runtime.run({
             action: "fetch",
-            node: { "@_url": "http://127.0.0.1:" + port + "/ok" },
+            params: { url: "http://127.0.0.1:" + port + "/ok" },
         });
         check("授权后恢复正常", afterGrant.ok === true, String(afterGrant.error || ""));
         registry.grantPermission("network:http", "allow");
@@ -321,20 +341,23 @@ async function main() {
         const beforeCheck = before >= 0;
 
         console.log("\n=== 7. 提示词区块 ===");
-        const promptWithPlugins = getFirstPrompt(workspace, ["a.js"], "抓取接口", {
+        const promptWithPlugins = getFirstPrompt(workspace, "抓取接口", {
             registry,
         });
-        check("首轮提示词包含插件动作", promptWithPlugins.includes("<fetch"));
+        check(
+            "首轮提示词包含 JSON 插件动作",
+            promptWithPlugins.includes('"action":"fetch"') && promptWithPlugins.includes('"params"')
+        );
         check("首轮提示词保留系统提示词原文", promptWithPlugins.includes(SYSTEM_PROMPT.trim()));
-        check("首轮提示词含插件区块标题", promptWithPlugins.includes("插件能力"));
+        check("首轮提示词含插件区块标题", promptWithPlugins.includes("插件能力（Plugin Actions）"));
 
-        const promptWithoutPlugins = getFirstPrompt(workspace, ["a.js"], "抓取接口", {
+        const promptWithoutPlugins = getFirstPrompt(workspace, "抓取接口", {
             registry: null,
         });
         check(
             "无插件时提示词不含插件区块",
-            !promptWithoutPlugins.includes("插件能力") &&
-                promptWithoutPlugins.startsWith("\n" + SYSTEM_PROMPT),
+            !promptWithoutPlugins.includes("插件能力（Plugin Actions）") &&
+                promptWithoutPlugins.startsWith(SYSTEM_PROMPT),
             String(promptWithoutPlugins.length)
         );
 
@@ -361,7 +384,7 @@ async function main() {
             userDir,
             "reserved-name",
             { kind: "action", permissions: [] },
-            'module.exports = { setup(ctx) { ctx.actions.register({ name: "read", run: () => ({ ok: true }), meta: { prompt: { usage: "<read/>" } } }); } };\n'
+            'module.exports = { setup(ctx) { ctx.actions.register({ name: "read", schema: { type: "object" }, run: () => ({ ok: true }), meta: { prompt: { usage: "{\\"action\\":\\"read\\",\\"params\\":{}}" } } }); } };\n'
         );
         writePlugin(
             userDir,
@@ -373,7 +396,46 @@ async function main() {
             userDir,
             "slow-plugin",
             { kind: "action", permissions: [] },
-            'module.exports = { setup(ctx) { ctx.actions.register({ name: "hang", run: () => new Promise(() => {}), meta: { prompt: { usage: "<hang/>" }, timeoutMs: 120 } }); } };\n'
+            'module.exports = { setup(ctx) { ctx.actions.register({ name: "hang", schema: { type: "object", additionalProperties: false }, run: () => new Promise(() => {}), meta: { prompt: { usage: "{\\"action\\":\\"hang\\",\\"params\\":{}}" }, timeoutMs: 120 } }); } };\n'
+        );
+        writePlugin(
+            userDir,
+            "contract-plugin",
+            { kind: "action", permissions: [] },
+            `module.exports = {
+    setup(ctx) {
+        ctx.actions.register({
+            name: "contract-echo",
+            schema: {
+                type: "object",
+                additionalProperties: false,
+                required: ["count"],
+                properties: {
+                    count: { type: "integer" },
+                    label: { type: "string", default: "default-label" }
+                }
+            },
+            run(params, runCtx) {
+                return {
+                    ok: true,
+                    action: "contract-echo",
+                    received: params,
+                    ctxParams: runCtx.params,
+                    hasAttrs: Object.prototype.hasOwnProperty.call(runCtx, "attrs")
+                };
+            },
+            meta: {
+                prompt: { usage: '{"action":"contract-echo","params":{"count":1}}' },
+                afterRun(result, runCtx) {
+                    return Object.assign({}, result, { afterRunCount: runCtx.params.count });
+                },
+                promptResult(result) {
+                    return { ok: result.ok, action: result.action, count: result.afterRunCount };
+                }
+            }
+        });
+    }
+};\n`
         );
         registry.reload();
         const statuses = registry.getStatus();
@@ -402,7 +464,7 @@ async function main() {
             registry.getActionDefinition("read") === null,
             String(registry.getActionPluginName("read"))
         );
-        const hangResult = await runtime.run({ action: "hang", node: {} });
+        const hangResult = await runtime.run({ action: "hang", params: {} });
         check(
             "动作级超时生效（PLUGIN_TIMEOUT）",
             hangResult.ok === false && hangResult.timedOut === true,
@@ -410,7 +472,36 @@ async function main() {
         );
         check(
             "超时后其它动作仍可用",
-            (await runtime.run({ action: "read", node: { "@_path": "note.txt" } })).ok === true
+            (await runtime.run({ action: "read", params: { path: "note.txt" } })).ok === true
+        );
+        const contractResult = await runtime.run({
+            action: "contract-echo",
+            params: { count: 2 },
+        });
+        check(
+            "run 与 ctx.params 都收到归一化后的普通对象",
+            contractResult.ok === true &&
+                contractResult.received.count === 2 &&
+                contractResult.received.label === "default-label" &&
+                contractResult.ctxParams.label === "default-label" &&
+                contractResult.hasAttrs === false,
+            JSON.stringify(contractResult.received)
+        );
+        check(
+            "afterRun 与 promptResult 沿用同一执行上下文",
+            contractResult.afterRunCount === 2 &&
+                contractResult.promptView.count === 2 &&
+                contractResult.promptView.ok === true,
+            JSON.stringify(contractResult.promptView)
+        );
+        const contractTypeError = await runtime.run({
+            action: "contract-echo",
+            params: { count: "2" },
+        });
+        check(
+            "registry.invokeAction 严格拒绝错误参数类型",
+            contractTypeError.ok === false && contractTypeError.error.includes("integer"),
+            String(contractTypeError.error)
         );
 
         console.log("\n=== 10. SDK 契约与工具函数 ===");
@@ -425,16 +516,18 @@ async function main() {
         check("^1.2.3 允许 1.3.0", sdk.satisfiesEngines("^1.2.3", "1.3.0"));
         check("^1.2.3 不允许 2.0.0", !sdk.satisfiesEngines("^1.2.3", "2.0.0"));
         check("~1.2.3 不允许 1.3.0", !sdk.satisfiesEngines("~1.2.3", "1.3.0"));
-        const attrs = sdk.normalizeAttrs(
+        const defaultedParams = sdk.validateParams(
             {
-                schema: { attrs: { method: { type: "string", default: "GET" } } },
+                type: "object",
+                additionalProperties: false,
+                properties: { method: { type: "string", default: "GET" } },
             },
             {}
         );
         check(
-            "schema 默认值生效",
-            attrs.ok === true && attrs.value.method === "GET",
-            JSON.stringify(attrs.value)
+            "JSON Schema 默认值生效",
+            defaultedParams.ok === true && defaultedParams.value.method === "GET",
+            JSON.stringify(defaultedParams.value)
         );
 
         console.log("\n=== 11. 一键禁用 ===");
@@ -452,7 +545,9 @@ async function main() {
         );
         check(
             "禁用时提示词不含插件区块",
-            !getFirstPrompt(workspace, [], "x", { registry: disabled }).includes("插件能力")
+            !getFirstPrompt(workspace, "x", { registry: disabled }).includes(
+                "插件能力（Plugin Actions）"
+            )
         );
 
         if (!beforeCheck) {

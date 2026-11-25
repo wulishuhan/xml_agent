@@ -45,9 +45,8 @@ async function run() {
         // 直接构造 action 并调用 runtime + attach 链路
         const action = {
             action: "screenshot",
-            node: {
-                "@_source": "screen",
-                "@_path": "screenshots/flow.png",
+            params: {
+                targets: [{ source: "screen", path: "screenshots/flow.png" }],
             },
         };
         let result = await agent.runtime.run(action);

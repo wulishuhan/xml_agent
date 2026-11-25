@@ -7,7 +7,7 @@
  *                       把相对路径解析到 workspace 内，并把结果归一化成相对路径。
  *
  * 归属：整个 engine/ 是 screenshot 插件的私有实现，核心目录不引用它。
- * 这一层刻意不含任何 HTTP / WebUI 概念——截图没有 HTTP 入口，它只是插件的 XML 动作。
+ * 这一层刻意不含任何 HTTP / WebUI 概念——截图没有 HTTP 入口，它只是插件的 JSON 动作。
  */
 
 const path = require("path");

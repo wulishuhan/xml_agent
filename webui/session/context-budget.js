@@ -11,8 +11,7 @@
   用它跑一遍真实的提示词模板（getRuntimeOkPrompt / getRuntimeErrorPrompt）
   就能还原当轮实际发送的文本，再直接对它数一遍 token。
 - 模型回复只有长度（`provider.response.length`，当时没存正文），按经验比例折算。
-- 唯一无法精确的是首轮提示词里的工作区清单（要扫盘才知道），按经验常量估；
-  相对 1M 的窗口它是零头，需要精确时用 options.firstPromptChars 传进来。
+- 首轮提示词按系统提示词、任务与固定拼装开销估算；需要精确值时用 options.firstPromptChars 传入。
 
 降级：老会话如果被 memory-compress 压缩过，event 字段已被删掉，prompt 重建不了，
 此时退回「用记录 content 之和当下界」，并在结果里标 degraded，让上层知道这是估算。
@@ -25,7 +24,7 @@ token 估算口径：CJK 按 1 字 ≈ 1 token，ASCII 按 4 字符 ≈ 1 token�
 2000 条记录的会话在几十毫秒内算完，可以在每步结束后调用。
 */
 
-const { getSystemPrompt } = require("../../prompts/index.js");
+const { SYSTEM_PROMPT } = require("../../prompts/system-prompt.js");
 const { getRuntimeOkPrompt, getRuntimeErrorPrompt } = require("../../prompts/runtime-prompt.js");
 
 /** 默认上下文窗口：1M。可用环境变量 XML_AGENT_CONTEXT_LIMIT 覆盖。 */
@@ -34,16 +33,15 @@ const DEFAULT_LIMIT = 1000000;
 const DEFAULT_WARN_RATIO = 0.8;
 /** 超过这个比例视为「随时会截断」，横幅要变红。 */
 const DEFAULT_CRITICAL_RATIO = 0.92;
-/** 首轮提示词里工作区清单的字符数经验值（清单本身有 1200 条目上限）。 */
-const DEFAULT_MANIFEST_CHARS = 8000;
+const FIRST_PROMPT_OVERHEAD_CHARS = 300;
 /** 一张图片进上下文的大致 token 数（各平台不同，取常见量级）。 */
 const IMAGE_TOKENS = 1200;
 /**
-模型回复的 token/字符比：回复是 XML 动作，标签和代码占比高，
+模型回复的 token/字符比：回复是 JSON 动作，字段和代码占比高，
 比纯中文稀，取 0.45（比纯英文的 0.25 保守，宁可高估）。
 */
 const REPLY_TOKENS_PER_CHAR = 0.45;
-/** 首轮提示词：系统提示词以中文说明为主，但夹着大量 XML 示例。 */
+/** 首轮提示词：系统提示词以中文说明和 JSON Schema 为主。 */
 const FIRST_PROMPT_TOKENS_PER_CHAR = 0.5;
 /** 降级估算：记录 content 多为中文渲染文案。 */
 const DEGRADED_TOKENS_PER_CHAR = 0.5;
@@ -56,7 +54,7 @@ let cachedSystemPromptChars = 0;
 function systemPromptChars() {
     if (!cachedSystemPromptChars) {
         try {
-            cachedSystemPromptChars = String(getSystemPrompt() || "").length;
+            cachedSystemPromptChars = SYSTEM_PROMPT.length;
         } catch (error) {
             // 模板加载失败不该让预警功能整体挂掉，退一个量级正确的常量
             cachedSystemPromptChars = 8000;
@@ -163,16 +161,9 @@ function collectParts(output) {
     };
 }
 
-/**
-首轮提示词字符数：系统提示词（精确）+ 任务 + 清单（估算）。
-
-清单要扫工作区才能精确，这里给经验值即可：相对 1M 窗口它是零头，
-而扫盘会阻塞事件循环——为一个 3% 的精度同步读几千个文件不划算。
-*/
-function firstPromptChars(task, options = {}) {
-    const manifestChars =
-        Number(options.manifestChars) > 0 ? Number(options.manifestChars) : DEFAULT_MANIFEST_CHARS;
-    return systemPromptChars() + String(task || "").length + manifestChars;
+/** 首轮提示词字符数：系统提示词（精确）+ 任务 + 固定拼装开销。 */
+function firstPromptChars(task) {
+    return systemPromptChars() + String(task || "").length + FIRST_PROMPT_OVERHEAD_CHARS;
 }
 
 function levelOf(ratio, warnRatio, criticalRatio) {
@@ -193,7 +184,6 @@ function levelOf(ratio, warnRatio, criticalRatio) {
     limit           窗口大小，默认 1M
     warnRatio       提醒阈值，默认 0.8
     criticalRatio   危险阈值，默认 0.92
-    manifestChars   首轮清单字符数（覆盖经验值）
     firstPromptChars 直接指定首轮提示词字符数（最精确，调用方算得出时传）
     images          随任务附带的图片数量（info.images 优先）
 
@@ -218,7 +208,7 @@ function measure(options = {}) {
     const firstChars =
         Number(options.firstPromptChars) > 0
             ? Number(options.firstPromptChars)
-            : firstPromptChars(info.task, options);
+            : firstPromptChars(info.task);
     const firstTokens = Math.ceil(firstChars * FIRST_PROMPT_TOKENS_PER_CHAR);
 
     const promptsChars = degraded ? parts.recordsChars : parts.promptsChars;
@@ -273,7 +263,6 @@ module.exports = {
     DEFAULT_LIMIT,
     DEFAULT_WARN_RATIO,
     DEFAULT_CRITICAL_RATIO,
-    DEFAULT_MANIFEST_CHARS,
     IMAGE_TOKENS,
     LEVELS,
     estimateTokens,

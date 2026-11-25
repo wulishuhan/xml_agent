@@ -2,7 +2,7 @@
 Plugin SDK
 
 插件作者唯一需要理解的契约层。这里只放"纯函数"：
-清单校验、动作定义校验、属性 schema 校验、权限 scope、版本区间匹配、契约自检。
+清单校验、动作定义校验、JSON Schema 参数校验、权限 scope、版本区间匹配、契约自检。
 
 刻意不在这里 require runtime / fs / http：
 - registry.js 依赖本模块；
@@ -11,6 +11,7 @@ Plugin SDK
 */
 
 const API_VERSION = 1;
+const { validateParams } = require("../parse/action-schema");
 
 // 权限作用域：动作只能申请这些能力，registry 会按清单声明与用户授权做二次校验。
 const PERMISSION_SCOPES = [
@@ -38,8 +39,6 @@ const RESERVED_ACTION_NAMES = ["read", "write", "edit", "exec", "answer", "done"
 
 const PLUGIN_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$/;
 const ACTION_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[-_.][a-z0-9]+)*$/;
-
-const ATTR_PREFIX = "@_";
 
 // 插件可以暴露的 HTTP 方法（挂在自己命名空间 /api/plugins/<name>/api/* 下）
 const API_ROUTE_METHODS = ["GET", "POST", "PUT", "DELETE"];
@@ -361,7 +360,7 @@ function toBoolean(value) {
 // ------------------------------------------------------------
 
 /**
-定义一个插件的 XML 动作。这是插件作者唯一需要理解的核心结构：
+定义一个插件的 JSON 动作。这是插件作者唯一需要理解的核心结构：
 校验（schema）+ 执行（run）+ 模型文档（meta.prompt）+ 可观测（meta.summary）
 + 安全（meta.permission / timeoutMs）。
 */
@@ -384,7 +383,7 @@ function defineAction(def, options = {}) {
         );
     }
     if (typeof def.run !== "function") {
-        throw createError("ACTION_INVALID", label + " " + name + " 缺少 run(node, ctx) 函数");
+        throw createError("ACTION_INVALID", label + " " + name + " 缺少 run(params, ctx) 函数");
     }
     const meta = def.meta && typeof def.meta === "object" ? def.meta : {};
     const prompt = meta.prompt && typeof meta.prompt === "object" ? meta.prompt : {};
@@ -409,7 +408,10 @@ function defineAction(def, options = {}) {
         Number.isFinite(rawTimeout) && rawTimeout > 0
             ? Math.min(Math.trunc(rawTimeout), 10 * 60 * 1000)
             : 30000;
-    const schema = def.schema && typeof def.schema === "object" ? def.schema : null;
+    const schema =
+        def.schema && typeof def.schema === "object" && !Array.isArray(def.schema)
+            ? def.schema
+            : null;
     return {
         name,
         schema,
@@ -434,116 +436,8 @@ function defineAction(def, options = {}) {
             // Agent 据此统一上传，不再按动作名特判。
             collectImages: typeof meta.collectImages === "function" ? meta.collectImages : null,
             afterRun: typeof meta.afterRun === "function" ? meta.afterRun : null,
-            fastPath: typeof meta.fastPath === "function" ? meta.fastPath : null,
         },
     };
-}
-
-// ------------------------------------------------------------
-// 属性 schema 校验
-// ------------------------------------------------------------
-
-/**
-按 schema 归一化 XML 节点的属性。
-node 是 fast-xml-parser 解析出的对象，属性前缀为 @_。
-返回 { ok, value, error }：value 是已套用默认值并完成类型转换的属性表。
-*/
-function normalizeAttrs(def, node) {
-    const schema = def.schema;
-    if (!schema) {
-        return { ok: true, value: {} };
-    }
-    const attrsSpec = schema.attrs || {};
-    const input = node && typeof node === "object" ? node : {};
-    const value = {};
-    const errors = [];
-    const known = new Set(Object.keys(attrsSpec));
-
-    if (schema.allowExtra !== true) {
-        for (const key of Object.keys(input)) {
-            if (key.indexOf(ATTR_PREFIX) !== 0) {
-                continue;
-            }
-            const name = key.substring(ATTR_PREFIX.length);
-            if (!known.has(name)) {
-                errors.push(
-                    "未知属性 " +
-                        name +
-                        "（允许：" +
-                        (known.size ? Array.from(known).join(", ") : "无") +
-                        "）"
-                );
-            }
-        }
-    }
-
-    for (const name of Object.keys(attrsSpec)) {
-        const spec = attrsSpec[name] || {};
-        const raw = input[ATTR_PREFIX + name];
-        if (raw === undefined || raw === null || raw === "") {
-            if (spec.required) {
-                errors.push("缺少必填属性 " + name);
-                continue;
-            }
-            if (spec.default !== undefined) {
-                value[name] = cloneValue(spec.default);
-            }
-            continue;
-        }
-        const coerced = coerceAttr(name, spec, raw);
-        if (coerced.ok === false) {
-            errors.push(coerced.error);
-            continue;
-        }
-        value[name] = coerced.value;
-    }
-
-    if (errors.length > 0) {
-        return { ok: false, value, error: errors.join("; ") };
-    }
-    return { ok: true, value };
-}
-
-function coerceAttr(name, spec, raw) {
-    const type = spec.type || "string";
-    if (type === "integer" || type === "number") {
-        const number = Number(raw);
-        if (!Number.isFinite(number)) {
-            return { ok: false, error: name + " 必须是数字" };
-        }
-        if (type === "integer" && !Number.isInteger(number)) {
-            return { ok: false, error: name + " 必须是整数" };
-        }
-        if (spec.min !== undefined && number < spec.min) {
-            return { ok: false, error: name + " 必须 >= " + spec.min };
-        }
-        if (spec.max !== undefined && number > spec.max) {
-            return { ok: false, error: name + " 必须 <= " + spec.max };
-        }
-        return { ok: true, value: number };
-    }
-    if (type === "boolean") {
-        return { ok: true, value: toBoolean(raw) };
-    }
-    if (type === "enum") {
-        const text = String(raw).trim();
-        const values = Array.isArray(spec.values) ? spec.values : spec.enum || [];
-        if (values.indexOf(text) === -1) {
-            return { ok: false, error: name + " 必须是 " + values.join(" / ") };
-        }
-        return { ok: true, value: text };
-    }
-    const text = String(raw);
-    if (spec.nonEmpty && !text.trim()) {
-        return { ok: false, error: name + " 不能为空" };
-    }
-    if (spec.enum && spec.enum.length > 0 && spec.enum.indexOf(text) === -1) {
-        return { ok: false, error: name + " 必须是 " + spec.enum.join(" / ") };
-    }
-    if (spec.maxLength && text.length > spec.maxLength) {
-        return { ok: false, error: name + " 长度不能超过 " + spec.maxLength };
-    }
-    return { ok: true, value: text };
 }
 
 // ------------------------------------------------------------
@@ -808,7 +702,6 @@ module.exports = {
     PERMISSION_SCOPES,
     PLUGIN_KINDS,
     RESERVED_ACTION_NAMES,
-    ATTR_PREFIX,
     PLUGIN_NAME_PATTERN,
     ACTION_NAME_PATTERN,
     createError,
@@ -822,7 +715,7 @@ module.exports = {
     normalizeConfig,
     configDefaults,
     defineAction,
-    normalizeAttrs,
+    validateParams,
     normalizeApiRoute,
     normalizePanel,
     toBoolean,

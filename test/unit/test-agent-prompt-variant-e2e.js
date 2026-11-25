@@ -25,6 +25,8 @@ const {
     SYSTEM_PROMPT_VARIANT_COUNT,
 } = require("../../prompts/system-prompt-variants");
 const { getRuntimeOkPrompt } = require("../../prompts/runtime-prompt");
+const { getDonePrompt } = require("../../prompts/done-prompt");
+const { ACTION_SCHEMA } = require("../../parse/action-schema");
 
 let pass = 0;
 let total = 0;
@@ -66,7 +68,11 @@ function makeWorkspace() {
     return ws;
 }
 
-const REPLY_SCRIPT = ['<read path="a.js"/>', "<answer><![CDATA[done]]></answer>", "<done/>"];
+const REPLY_SCRIPT = [
+    '{"action":"read","params":{"path":"a.js"}}',
+    '{"action":"answer","params":{"content":"done"}}',
+    '{"action":"done","params":{}}',
+];
 
 async function runAgent(options = {}) {
     const workspace = makeWorkspace();
@@ -108,6 +114,19 @@ async function main() {
         }
     });
 
+    await check("系统提示词保持四套变体", () => {
+        assert.strictEqual(SYSTEM_PROMPT_VARIANT_COUNT, 4);
+    });
+
+    await check("四套变体共享同一份 JSON Schema", () => {
+        const schema = JSON.stringify(ACTION_SCHEMA);
+        for (let variant = 0; variant < SYSTEM_PROMPT_VARIANT_COUNT; variant += 1) {
+            const prompt = getSystemPromptVariant(variant);
+            assert.ok(prompt.includes("动作协议 JSON Schema"), "variant=" + variant);
+            assert.ok(prompt.includes(schema), "variant=" + variant + " 的 Schema 发生漂移");
+        }
+    });
+
     await check("显式 promptVariant 可复现地注入首轮", async () => {
         const { sent } = await runAgent({ promptVariant: 1 });
         assert.ok(sent.length >= 1, "没有发出任何 prompt");
@@ -118,6 +137,15 @@ async function main() {
             sent[0].indexOf(expectedFirst) !== -1,
             "首轮不含变体 1 的开场白；首轮开头=" + sent[0].slice(0, 60)
         );
+    });
+
+    await check("首轮包含 Schema、项目名和用户任务，不含 Workspace Manifest", async () => {
+        const { sent, workspace } = await runAgent({ promptVariant: 0 });
+        assert.ok(sent[0].includes(JSON.stringify(ACTION_SCHEMA)));
+        assert.ok(sent[0].includes("项目：" + path.basename(workspace)));
+        assert.ok(sent[0].includes("用户任务"));
+        assert.ok(sent[0].includes("变体端到端验证"));
+        assert.strictEqual(sent[0].includes("Workspace Manifest"), false);
     });
 
     await check("成功回贴使用同一变体的措辞", async () => {
@@ -138,6 +166,15 @@ async function main() {
         );
         assert.strictEqual(agent.promptVariant, variant);
         assert.ok(expectedRuntime.length > 0);
+        assert.ok(sent.length >= 3, "answer 后还应发送 done 提示词");
+        assert.strictEqual(sent[2], getDonePrompt());
+        assert.ok(sent[2].includes('{"action":"done","params":{}}'));
+        for (const prompt of sent.slice(1)) {
+            assert.ok(
+                !/<\/?[a-zA-Z][^>]*>|<!\[CDATA\[/.test(prompt),
+                "回贴提示词不应再包含 XML/CDATA 动作"
+            );
+        }
     });
 
     await check("不同变体的首轮文本确实不同", async () => {

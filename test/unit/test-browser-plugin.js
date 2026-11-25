@@ -15,6 +15,7 @@ const path = require("path");
 const ROOT = path.join(__dirname, "..", "..");
 const engine = require(path.join(ROOT, "plugins/builtin/browser/engine/browser"));
 const plugin = require(path.join(ROOT, "plugins/builtin/browser/index.js"));
+const sdk = require(path.join(ROOT, "plugins/sdk"));
 
 let pass = 0;
 let total = 0;
@@ -126,15 +127,16 @@ check("六个动作都注册了", () => {
 check("browse-nav 在 validate 阶段就拦掉非法协议（不会去启动浏览器）", () => {
     const { actions } = makeCtx();
     const def = actions.get("browse-nav");
-    assert.throws(() => def.validate({ "@_url": "file:///etc/passwd" }), /只允许 http\/https/);
-    assert.doesNotThrow(() => def.validate({ "@_url": "https://example.com" }));
+    assert.throws(() => def.validate({ url: "file:///etc/passwd" }), /只允许 http\/https/);
+    assert.doesNotThrow(() => def.validate({ url: "https://example.com" }));
 });
 
 (async () => {
     await checkAsync("allowEval 默认关闭时 browse-eval 直接拒绝", async () => {
         const { actions } = makeCtx({ allowEval: false });
         const def = actions.get("browse-eval");
-        const result = await def.run({}, { attrs: { script: "document.title" } });
+        const params = { script: "document.title" };
+        const result = await def.run(params, { params });
         assert.strictEqual(result.ok, false);
         assert.match(result.error, /allowEval/);
     });
@@ -156,13 +158,13 @@ check("browse-nav 在 validate 阶段就拦掉非法协议（不会去启动浏�
         engine.ensurePage = async () => fakePage;
         try {
             const def = actions.get("browse-shot");
-            const result = await def.run(
-                {},
-                {
-                    attrs: { path: "screenshots/shot.png" },
-                    fs: { resolve: (target) => path.join(os.tmpdir(), "xml-agent-shot", target) },
-                }
-            );
+            const checked = sdk.validateParams(def.schema, { path: "screenshots/shot.png" });
+            assert.strictEqual(checked.ok, true, checked.error);
+            assert.strictEqual(checked.value.fullPage, false, "JSON Schema 默认值应已补全");
+            const result = await def.run(checked.value, {
+                params: checked.value,
+                fs: { resolve: (target) => path.join(os.tmpdir(), "xml-agent-shot", target) },
+            });
             assert.strictEqual(result.ok, true);
             assert.strictEqual(saved.length, 1);
             assert.ok(saved[0].endsWith("shot.png"), "应落到运行期 fs 解析出来的路径");

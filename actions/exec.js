@@ -18,6 +18,7 @@ Agent.stop() 会调 runtime.killAllProcesses() 按进程树结束它们，
 const { spawn, exec } = require("child_process");
 const agentConfig = require("../config/agent-config");
 const logger = require("../logger");
+const { BUILTIN_ACTION_SCHEMAS } = require("../parse/action-schema");
 
 /**
 输出裁剪：保留头部与尾部。
@@ -131,17 +132,18 @@ function stoppedResult(command, result) {
 
 module.exports = {
     name: "exec",
-    validate(node) {
-        if (!node || typeof node !== "object") {
+    schema: BUILTIN_ACTION_SCHEMAS.exec,
+    validate(params) {
+        if (!params || typeof params !== "object" || Array.isArray(params)) {
             throw new Error("exec action is invalid");
         }
-        if (!node["@_command"]) {
+        if (!params.command) {
             throw new Error("exec requires command");
         }
     },
-    async run(node, ctx) {
+    async run(params, ctx) {
         const workspace = ctx.runtime.getWorkspace();
-        const command = node?.["@_command"];
+        const command = params?.command;
         if (!command) {
             throw new Error("exec requires command");
         }
@@ -252,13 +254,8 @@ module.exports = {
     meta: {
         prompt: {
             group: "workspace",
-            usage: '<exec command="npm test"/>',
-            // command 是 XML 属性，里面的双引号会把属性提前截断（实测模型写
-            // <exec command="python -c "print(1)""/> 时，命令只剩 "python -c "）。
-            // 这条提示必须放在模型看得到的地方，否则模型会反复踩。
-            note:
-                "在 Workspace 下执行命令；末尾加 --background 可后台运行（会话停止时后台进程一并结束）。" +
-                "命令里需要引号时用单引号；必须用双引号时写成 &quot;，否则 command 属性会被截断。",
+            usage: '{"action":"exec","params":{"command":"npm test"}}',
+            note: "在 Workspace 下执行命令；末尾加 --background 可后台运行（会话停止时后台进程一并结束）。",
             priority: 90,
         },
         permission: ["shell:exec"],

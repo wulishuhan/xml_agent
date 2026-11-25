@@ -107,7 +107,9 @@ async function main() {
         "这是一个图片理解测试。",
         "我随任务附带了一张图片，系统会在你读到这条消息之前把它上传给你。",
         "请直接描述你看到的图片：主要颜色是什么？形状是什么？",
-        "然后用 <answer><![CDATA[你的描述]]></answer> 回复，只输出这一个 XML 动作。",
+        "然后用 " +
+            JSON.stringify({ action: "answer", params: { content: "你的描述" } }) +
+            " 回复，只输出这一个 JSON 动作。",
     ].join(String.fromCharCode(10));
     console.log("[step2] creating Agent (deepseek) with preset image...");
     const agent = new Agent({

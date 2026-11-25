@@ -1029,7 +1029,7 @@ check("插件动作真的把摘要写进工作区（模型才 read 得到）", a
 
         const result = await registry.invokeAction(
             "memory-transfer",
-            { "@_from": sourceId, "@_to": targetId, "@_mode": "records" },
+            { from: sourceId, to: targetId, mode: "records" },
             // runtime 就是这样把 workspace 与解析器交给插件的
             { workspace, resolvePath: (target) => path.resolve(workspace, String(target || "")) }
         );
@@ -1069,7 +1069,7 @@ check("目标工作区与当前不同时，摘要不落盘且只给警告", asyn
 
         const result = await registry.invokeAction(
             "memory-transfer",
-            { "@_from": sourceId, "@_to": "mt-digest-y-" + stamp, "@_mode": "records" },
+            { from: sourceId, to: "mt-digest-y-" + stamp, mode: "records" },
             { workspace, resolvePath: (target) => path.resolve(workspace, String(target || "")) }
         );
         assert.strictEqual(result.ok, true, "记录照样搬，不该因为摘要失败而整体失败");

@@ -2,45 +2,73 @@ const assert = require("assert");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const { extractXML, tryExtractScreenshotManually } = require("../parse/xml-parse");
+const { extractAction } = require("../parse/json-action");
 const {
     isPathInside,
     resolveOutputPath,
     takeScreenshot,
 } = require("../plugins/builtin/screenshot/engine/take-screenshot");
 async function run() {
-    // 1. 手动解析 screenshot 自闭合标签
-    const manual = tryExtractScreenshotManually(
-        '<screenshot source="screen" path="screenshots/desktop.png"/>'
+    // 1. JSON action 解析 screen target，并补全默认值
+    const single = extractAction(
+        JSON.stringify({
+            action: "screenshot",
+            params: { targets: [{ source: "screen", path: "screenshots/desktop.png" }] },
+        })
     );
-    assert(manual, "should parse self-closing screenshot");
-    assert.strictEqual(manual.action, "screenshot");
-    assert.strictEqual(manual.node["@_source"], "screen");
-    assert.strictEqual(manual.node["@_path"], "screenshots/desktop.png");
-    // 2. extractXML 支持 screenshot
-    const action = extractXML(
-        '<screenshot source="window" windowTitle="Visual Studio Code" path="screenshots/vscode.png"/>'
+    assert.strictEqual(single.action, "screenshot");
+    assert.strictEqual(single.plugin, "screenshot");
+    assert.deepStrictEqual(single.params, {
+        targets: [
+            { source: "screen", path: "screenshots/desktop.png", fullPage: false },
+        ],
+    });
+    // 2. extractAction 支持 window target 与 title 别名
+    const action = extractAction(
+        JSON.stringify({
+            action: "screenshot",
+            params: {
+                targets: [
+                    {
+                        source: "window",
+                        title: "Visual Studio Code",
+                        path: "screenshots/vscode.png",
+                    },
+                ],
+            },
+        })
     );
     assert.strictEqual(action.action, "screenshot");
-    assert.strictEqual(action.node["@_source"], "window");
-    assert.strictEqual(action.node["@_windowTitle"], "Visual Studio Code");
+    assert.strictEqual(action.params.targets[0].source, "window");
+    assert.strictEqual(action.params.targets[0].title, "Visual Studio Code");
     // 3. 非法 source 应报错
     let threw = false;
     try {
-        extractXML('<screenshot source="magic" path="a.png"/>');
+        extractAction(
+            JSON.stringify({
+                action: "screenshot",
+                params: { targets: [{ source: "magic", path: "a.png" }] },
+            })
+        );
     } catch (e) {
         threw = true;
         assert(e.message.indexOf("source") !== -1, "error should mention source");
     }
     assert(threw, "invalid source should throw");
-    // 4. window 缺 windowTitle 应报错
+    // 4. window 缺 windowTitle / title 应报错
     threw = false;
     try {
-        extractXML('<screenshot source="window" path="a.png"/>');
+        extractAction(
+            JSON.stringify({
+                action: "screenshot",
+                params: { targets: [{ source: "window", path: "a.png" }] },
+            })
+        );
     } catch (e) {
         threw = true;
+        assert(/windowTitle|title/.test(e.message), "error should mention window title fields");
     }
-    assert(threw, "window without windowTitle should throw");
+    assert(threw, "window without windowTitle or title should throw");
     // 5. 路径越界检测
     const tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-ws-"));
     assert.strictEqual(isPathInside(tmpWorkspace, path.join(tmpWorkspace, "a.png")), true);
@@ -93,7 +121,9 @@ async function run() {
     //    （{ ok:false, error }，且保留 action 名），而不是抛栈；两者都算"被拒"。
     let rejected = false;
     try {
-        const result = await runtime.screenshot({ "@_source": "screen", "@_path": "../evil.png" });
+        const result = await runtime.screenshot({
+            targets: [{ source: "screen", path: "../evil.png" }],
+        });
         rejected = Boolean(result) && result.ok === false;
     } catch (e) {
         rejected = true;

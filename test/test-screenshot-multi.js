@@ -2,7 +2,7 @@ const assert = require("assert");
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const { extractXML, normalizeScreenshotTargets } = require("../parse/xml-parse");
+const { extractAction } = require("../parse/json-action");
 const { Runtime } = require("../runtime");
 let passed = 0;
 let failed = 0;
@@ -19,67 +19,55 @@ async function check(name, fn) {
 async function run() {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-multi-"));
     // ===== 解析层 =====
+    function parseScreenshot(targets, fenced) {
+        const response = JSON.stringify({ action: "screenshot", params: { targets } });
+        const candidate = fenced ? "```json\n" + response + "\n```" : response;
+        return extractAction(candidate);
+    }
     await check("parse multi-target screenshot", async () => {
-        const xml = [
-            "<screenshot>",
-            '  <target source="screen" path="shots/a.png"/>',
-            '  <target source="window" windowTitle="Visual Studio Code" path="shots/b.png"/>',
-            "</screenshot>",
-        ].join(String.fromCharCode(10));
-        const action = extractXML(xml);
+        const action = parseScreenshot([
+            { source: "screen", path: "shots/a.png" },
+            { source: "window", windowTitle: "Visual Studio Code", path: "shots/b.png" },
+        ]);
         assert.strictEqual(action.action, "screenshot");
-        const targets = normalizeScreenshotTargets(action.node);
-        assert.strictEqual(targets.length, 2);
-        assert.strictEqual(targets[0]["@_source"], "screen");
-        assert.strictEqual(targets[1]["@_windowTitle"], "Visual Studio Code");
+        assert.strictEqual(action.params.targets.length, 2);
+        assert.strictEqual(action.params.targets[0].source, "screen");
+        assert.strictEqual(action.params.targets[1].windowTitle, "Visual Studio Code");
     });
-    await check("old single screenshot still parses", async () => {
-        const action = extractXML('<screenshot source="screen" path="a.png"/>');
+    await check("single-element targets array still parses", async () => {
+        const action = parseScreenshot([{ source: "screen", path: "a.png" }]);
         assert.strictEqual(action.action, "screenshot");
-        assert.strictEqual(action.node["@_source"], "screen");
-        assert.strictEqual(normalizeScreenshotTargets(action.node).length, 0);
+        assert.strictEqual(action.params.targets.length, 1);
+        assert.strictEqual(action.params.targets[0].source, "screen");
     });
     await check("multi-target requires valid source", async () => {
-        const xml = [
-            "<screenshot>",
-            '  <target source="magic" path="a.png"/>',
-            "</screenshot>",
-        ].join(String.fromCharCode(10));
-        assert.throws(() => extractXML(xml), /source must be one of/);
+        assert.throws(
+            () => parseScreenshot([{ source: "magic", path: "a.png" }]),
+            /source.*allowed values/
+        );
     });
-    await check("multi-target window requires windowTitle", async () => {
-        const xml = [
-            "<screenshot>",
-            '  <target source="window" path="a.png"/>',
-            "</screenshot>",
-        ].join(String.fromCharCode(10));
-        assert.throws(() => extractXML(xml), /requires windowTitle/);
+    await check("multi-target window requires windowTitle or title", async () => {
+        assert.throws(
+            () => parseScreenshot([{ source: "window", path: "a.png" }]),
+            /windowTitle|title/
+        );
     });
     await check("multi-target max 8 targets", async () => {
-        const lines = ["<screenshot>"];
-        for (let i = 0; i < 9; i += 1) {
-            lines.push('  <target source="screen" path="s' + i + '.png"/>');
-        }
-        lines.push("</screenshot>");
-        assert.throws(() => extractXML(lines.join(String.fromCharCode(10))), /at most 8 targets/);
+        const targets = Array.from({ length: 9 }, (_, index) => ({
+            source: "screen",
+            path: "s" + index + ".png",
+        }));
+        assert.throws(() => parseScreenshot(targets), /must NOT have more than 8 items/);
     });
-    await check("multi-target with xml fence", async () => {
-        const fence = String.fromCharCode(96, 96, 96);
-        const xml =
-            fence +
-            "xml" +
-            String.fromCharCode(10) +
-            "<screenshot>" +
-            String.fromCharCode(10) +
-            '  <target source="screen" path="a.png"/>' +
-            String.fromCharCode(10) +
-            '  <target source="screen" path="b.png"/>' +
-            String.fromCharCode(10) +
-            "</screenshot>" +
-            String.fromCharCode(10) +
-            fence;
-        const action = extractXML(xml);
-        assert.strictEqual(normalizeScreenshotTargets(action.node).length, 2);
+    await check("multi-target with json fence", async () => {
+        const action = parseScreenshot(
+            [
+                { source: "screen", path: "a.png" },
+                { source: "screen", path: "b.png" },
+            ],
+            true
+        );
+        assert.strictEqual(action.params.targets.length, 2);
     });
     // ===== Runtime 层 =====
     if (process.platform === "win32") {
@@ -87,10 +75,10 @@ async function run() {
             const runtime = new Runtime(workspace);
             const result = await runtime.run({
                 action: "screenshot",
-                node: {
-                    target: [
-                        { "@_source": "screen", "@_path": "shots/desk.png" },
-                        { "@_source": "screen", "@_path": "shots/desk2.png" },
+                params: {
+                    targets: [
+                        { source: "screen", path: "shots/desk.png" },
+                        { source: "screen", path: "shots/desk2.png" },
                     ],
                 },
             });
@@ -112,13 +100,13 @@ async function run() {
             const runtime = new Runtime(workspace);
             const result = await runtime.run({
                 action: "screenshot",
-                node: {
-                    target: [
-                        { "@_source": "screen", "@_path": "shots/ok.png" },
+                params: {
+                    targets: [
+                        { source: "screen", path: "shots/ok.png" },
                         {
-                            "@_source": "window",
-                            "@_windowTitle": "**no_such_window**",
-                            "@_path": "shots/bad.png",
+                            source: "window",
+                            windowTitle: "**no_such_window**",
+                            path: "shots/bad.png",
                         },
                     ],
                 },
@@ -134,17 +122,17 @@ async function run() {
             const runtime = new Runtime(workspace);
             const result = await runtime.run({
                 action: "screenshot",
-                node: {
-                    target: [
+                params: {
+                    targets: [
                         {
-                            "@_source": "window",
-                            "@_windowTitle": "**no_window_a**",
-                            "@_path": "shots/x1.png",
+                            source: "window",
+                            windowTitle: "**no_window_a**",
+                            path: "shots/x1.png",
                         },
                         {
-                            "@_source": "window",
-                            "@_windowTitle": "**no_window_b**",
-                            "@_path": "shots/x2.png",
+                            source: "window",
+                            windowTitle: "**no_window_b**",
+                            path: "shots/x2.png",
                         },
                     ],
                 },
@@ -153,22 +141,23 @@ async function run() {
             assert.strictEqual(result.failed, 2);
             assert.strictEqual(result.succeeded, 0);
         });
-        await check("runtime rejects escaping path in target", async () => {
+        await check("runtime rejects escaping path in single target", async () => {
             const runtime = new Runtime(workspace);
             const result = await runtime.run({
                 action: "screenshot",
-                node: {
-                    target: [{ "@_source": "screen", "@_path": "../evil.png" }],
-                },
+                params: { targets: [{ source: "screen", path: "../evil.png" }] },
             });
             assert.strictEqual(result.ok, false);
-            assert.strictEqual(result.failed, 1);
+            assert.strictEqual(result.action, "screenshot");
+            assert.strictEqual(result.source, "screen");
+            assert.strictEqual(result.error, "Path escapes workspace");
+            assert.strictEqual(result.failed, undefined, "单目标不应伪装成多目标汇总");
         });
         await check("runtime single screenshot still works", async () => {
             const runtime = new Runtime(workspace);
             const result = await runtime.run({
                 action: "screenshot",
-                node: { "@_source": "screen", "@_path": "shots/single.png" },
+                params: { targets: [{ source: "screen", path: "shots/single.png" }] },
             });
             assert.strictEqual(result.ok, true);
             assert.strictEqual(result.multi, undefined);

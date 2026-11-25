@@ -1,13 +1,12 @@
 const path = require("path");
 const fs = require("fs");
 const { createProvider } = require("../providers");
-const { extractXML } = require("../parse/xml-parse");
-const { buildWorkspaceManifest } = require("../workspace/manifest");
+const { extractAction } = require("../parse/json-action");
 const { getFirstPrompt } = require("../prompts/first-prompt");
 const {
     getRuntimeOkPrompt,
     getRuntimeErrorPrompt,
-    getXmlErrorPrompt,
+    getJsonErrorPrompt,
     getDonePrompt,
 } = require("../prompts/index");
 const { createRuntime } = require("../runtime");
@@ -45,10 +44,9 @@ async function main() {
 
     const runtime = createRuntime(TEST_DIR);
     const task =
-        "更新 readme.md，在文件开头加一行说明：本文件由 XML Agent 自动更新。其他内容保持不变。";
-    const manifest = buildWorkspaceManifest(TEST_DIR);
+        "更新 readme.md，在文件开头加一行说明：本文件由 JSON Agent 自动更新。其他内容保持不变。";
 
-    let prompt = getFirstPrompt(TEST_DIR, manifest, task);
+    let prompt = getFirstPrompt(TEST_DIR, task);
     let step = 0;
     const MAX_STEPS = 10;
 
@@ -79,11 +77,11 @@ async function main() {
 
         let action;
         try {
-            action = extractXML(response);
-            console.log("[STEP " + step + "] extractXML PASS:", action.action);
+            action = extractAction(response);
+            console.log("[STEP " + step + "] extractAction PASS:", action.action);
         } catch (e) {
-            console.log("[STEP " + step + "] extractXML FAIL:", e.message);
-            prompt = getXmlErrorPrompt(e);
+            console.log("[STEP " + step + "] extractAction FAIL:", e.message);
+            prompt = getJsonErrorPrompt(e);
             continue;
         }
 
@@ -130,7 +128,7 @@ async function main() {
     const finalReadme = fs.readFileSync(path.join(TEST_DIR, "readme.md"), "utf8");
     console.log("\n\n========== 最终 readme.md 前 300 字符 ==========");
     console.log(finalReadme.substring(0, 300));
-    console.log("\n包含标记:", finalReadme.indexOf("本文件由 XML Agent 自动更新") !== -1);
+    console.log("\n包含标记:", finalReadme.indexOf("本文件由 JSON Agent 自动更新") !== -1);
 }
 
 main().catch((err) => {

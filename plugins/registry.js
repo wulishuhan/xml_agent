@@ -9,7 +9,7 @@ Plugin Registry
 5. 执行：权限检查 → schema 校验 → 超时/取消 → run() → afterRun → 调用记录；
 6. 持久化：plugins-state.json（启停）、plugins-config.json（配置）、permissions.json（授权）。
 
-本模块不 require runtime / agent-core / xml-parse，避免循环依赖；
+本模块不 require runtime / agent-core / parse/json-action，避免循环依赖；
 Runtime 在调用时把 workspace 与 resolvePath 通过 host 参数传进来。
 */
 

@@ -41,11 +41,15 @@ async function testWebUIOutput() {
         outputLines.push({ type: "stdout", content: output });
         console.log("[Agent STDOUT]", output.trim());
 
-        // 检测 AI 回复
+        // 检测 JSON 协议运行状态（CLI/WebUI 渲染文案）
         if (
             output.includes("Provider Response") ||
-            output.includes("XML Action") ||
+            output.includes("Provider response received") ||
+            output.includes("JSON action parsed") ||
+            output.includes("JSON parse error") ||
+            output.includes("Parsed JSON action") ||
             output.includes("Runtime Action") ||
+            output.includes("Runtime action") ||
             output.includes("Agent Step")
         ) {
             hasRuntimeStatus = true;

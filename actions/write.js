@@ -1,104 +1,36 @@
 /**
-内置动作：write
-
-从 runtime.js 迁出（P0 动作定义对象化）。run 的方法体与迁移前逐行一致，
-只把 this 换成 ctx.runtime，因此行为完全不变（含错误文案）。
-
-同时接管原 xml-parse.js 里的手写快速解析器（meta.fastPath）：
-write 的内容在 CDATA 里可能包含任意文本，交给通用 XML 解析器容易出问题。
-*/
+ * 内置动作：write
+ *
+ * 接收 JSON params；content 是正文本身，不做任何归一化。
+ */
 
 const fs = require("fs");
 const path = require("path");
 const agentConfig = require("../config/agent-config");
-const { getText, decodeXmlEntities } = require("../parse/xml-text");
+const { BUILTIN_ACTION_SCHEMAS } = require("../parse/action-schema");
 const { validateContent } = require("./content-check");
-const {
-    CHAR_LT,
-    CHAR_GT,
-    CHAR_SLASH,
-    CHAR_BANG,
-    CHAR_LBRACK,
-    CHAR_RBRACK,
-    CHAR_DQUOTE,
-} = require("../parse/xml-chars");
-
-/**
-CDATA 起始处的那个换行是排版产物，不是正文内容。
-
-模型习惯写成 `<write path="x"><![CDATA[\nconsole.log(1);\n]]></write>`，
-走通用解析路径时（内容两侧还有别的文字、或首尾不是 `<write>`）这段文本会被
-原样取出来，于是每个新建文件都以一个空行开头——lint 会报，diff 也难看。
-只吃掉开头**一个**换行，正文内部的空行保持不动。
-*/
-function stripCdataLeadingNewline(content) {
-    return typeof content === "string" ? content.replace(/^\r?\n/, "") : content;
-}
-
-/**
-手写解析 <write path="..."><![CDATA[...]]></write>。
-返回 { action, node } 或 null（null 表示交给通用解析器）。
-*/
-function tryExtractWriteManually(text) {
-    if (!text || typeof text !== "string") return null;
-    const trimmed = text.trim();
-    const WRITE_OPEN_PREFIX = CHAR_LT + "write";
-    const WRITE_CLOSE_TAG = CHAR_LT + CHAR_SLASH + "write" + CHAR_GT;
-    if (trimmed.indexOf(WRITE_OPEN_PREFIX) !== 0) return null;
-    if (!trimmed.endsWith(WRITE_CLOSE_TAG)) return null;
-    const firstGt = trimmed.indexOf(CHAR_GT);
-    if (firstGt === -1) return null;
-    const openTag = trimmed.substring(0, firstGt + 1);
-    const pathMarker = "path=" + CHAR_DQUOTE;
-    const pathStart = openTag.indexOf(pathMarker);
-    if (pathStart === -1) return null;
-    const pathValueStart = pathStart + pathMarker.length;
-    const pathValueEnd = openTag.indexOf(CHAR_DQUOTE, pathValueStart);
-    if (pathValueEnd === -1) return null;
-    const filePath = decodeXmlEntities(openTag.substring(pathValueStart, pathValueEnd));
-    if (!filePath) return null;
-    let content = trimmed.substring(firstGt + 1, trimmed.length - WRITE_CLOSE_TAG.length);
-    content = content.trim();
-    const CDATA_START = CHAR_LT + CHAR_BANG + CHAR_LBRACK + "CDATA" + CHAR_LBRACK;
-    if (content.indexOf(CDATA_START) === 0) {
-        content = content.substring(CDATA_START.length);
-    }
-    const CDATA_END = CHAR_RBRACK + CHAR_RBRACK + CHAR_GT;
-    if (content.endsWith(CDATA_END)) {
-        content = content.substring(0, content.length - CDATA_END.length);
-    }
-    if (!content.trim()) return null;
-    return {
-        action: "write",
-        node: {
-            "@_path": filePath,
-            "#text": content,
-        },
-    };
-}
 
 module.exports = {
     name: "write",
-    validate(node) {
-        if (!node || typeof node !== "object") {
+    schema: BUILTIN_ACTION_SCHEMAS.write,
+    validate(params) {
+        if (!params || typeof params !== "object" || Array.isArray(params)) {
             throw new Error("write action is invalid");
         }
-        if (!node["@_path"]) {
+        if (!params.path) {
             throw new Error("write requires path");
         }
-        // 归一化之后再判空：只写了一个换行的文件等于空文件，
-        // 与 validate 的 "content cannot be empty" 保持一致。
-        if (!stripCdataLeadingNewline(getText(node)).trim()) {
+        if (typeof params.content !== "string" || !params.content.trim()) {
             throw new Error("write content cannot be empty");
         }
     },
-    run(node, ctx) {
-        const filePath = node?.["@_path"];
+    run(params, ctx) {
+        const filePath = params?.path;
         if (!filePath) {
             throw new Error("write requires path");
         }
         const fullPath = ctx.runtime.resolvePath(filePath);
-        const content = stripCdataLeadingNewline(getText(node));
+        const content = params.content;
         // 目标是已存在的目录时，rename 会抛 EPERM 并把临时文件名带进错误信息，
         // 模型看到的是"内部错误"。这里直接给出可理解的结论。
         if (fs.existsSync(fullPath) && fs.statSync(fullPath).isDirectory()) {
@@ -154,14 +86,13 @@ module.exports = {
     meta: {
         prompt: {
             group: "workspace",
-            usage: '<write path="src/test.js"><![CDATA[\nconsole.log("hello");\n]]></write>',
-            note: "写入文件，自动创建父目录；内容必须放在 CDATA 中。",
+            usage: '{"action":"write","params":{"path":"src/test.js","content":"console.log(\\"hello\\");\\n"}}',
+            note: "写入文件，自动创建父目录；content 按 JSON 字符串逐字保存。",
             priority: 95,
         },
         permission: ["workspace:write"],
         mutating: true,
         timeoutMs: 15000,
         summary: (result) => "write " + (result.path || ""),
-        fastPath: tryExtractWriteManually,
     },
 };

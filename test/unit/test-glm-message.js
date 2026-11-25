@@ -4,7 +4,7 @@ GLM 消息 DOM 重建单测（providers/dom/glm-message.js）
 GLM 的代码块不是 <pre>，而是 CodeMirror 6：
 每行一个 div.cm-line，外层还有语言标签和复制按钮。
 这层逻辑一旦退化，模型回复里的代码会变成"语言名 + 裸文本"，
-下游 extractXML 与 markdown 渲染都会失真，所以用假 DOM 把契约钉住。
+下游 JSON Action 提取与 markdown 渲染都会失真，所以用假 DOM 把契约钉住。
 
 运行：node test/unit/test-glm-message.js
 */
@@ -12,6 +12,7 @@ GLM 的代码块不是 <pre>，而是 CodeMirror 6：
 const assert = require("assert");
 
 const { renderGlmMessage } = require("../../providers/dom/glm-message");
+const { extractActionEnvelope } = require("../../parse/json-candidate");
 const { build, text } = require("./fake-dom");
 
 const FENCE = String.fromCharCode(96, 96, 96);
@@ -64,9 +65,9 @@ function buildMessage(options = {}) {
             build("div.thinking-chain-container", [
                 build("button.flex", [build("span.text-sm", [text("思考过程")])]),
             ]),
-            build("p", [text(options.head === undefined ? "<write>" : options.head)]),
+            build("p", [text(options.head === undefined ? "命令如下：" : options.head)]),
             codeBlock,
-            build("p", [text(options.tail === undefined ? "</write>" : options.tail)]),
+            build("p", [text(options.tail === undefined ? "" : options.tail)]),
         ]),
     ]);
 }
@@ -91,10 +92,7 @@ async function main() {
             JSON.stringify(output.split("\n")[1])
         );
         check("思考过程被移除", output.indexOf("思考过程") === -1);
-        check(
-            "正文前后内容保留",
-            output.indexOf("<write>") !== -1 && output.indexOf("</write>") !== -1
-        );
+        check("正文内容保留", output.indexOf("命令如下：") !== -1, JSON.stringify(output));
     }
 
     // ------------------------------------------------------------
@@ -113,6 +111,39 @@ async function main() {
         check("多行代码逐行还原", output.indexOf(expected) !== -1, JSON.stringify(output));
         check("缩进未被吃掉", output.indexOf("  return name;") !== -1);
         check("空行被保留", output.indexOf("greet(name) {\n\n  return name;") !== -1);
+    }
+
+    // ------------------------------------------------------------
+    // 2b. JSON Action 代码块保留花括号与转义，并可由解析层直接识别
+    // ------------------------------------------------------------
+    {
+        const fixture = {
+            action: "write",
+            params: {
+                path: "note.txt",
+                content: '{"nested":true}\n"quoted" \\ path',
+                options: { nested: { enabled: true } },
+            },
+        };
+        const lines = JSON.stringify(fixture, null, 2).split("\n");
+        const output = await renderGlmMessage(
+            buildMessage({ language: "json", lines, head: "", tail: "" })
+        );
+        const expected = FENCE + "json\n" + lines.join("\n") + "\n" + FENCE;
+        let parsed = null;
+
+        try {
+            parsed = extractActionEnvelope(output);
+        } catch (error) {
+            parsed = null;
+        }
+
+        check("GLM 完整还原 JSON 代码块", output === expected, JSON.stringify(output));
+        check(
+            "GLM 渲染后的 JSON envelope 可解析且转义不变",
+            JSON.stringify(parsed) === JSON.stringify(fixture),
+            JSON.stringify(parsed)
+        );
     }
 
     // ------------------------------------------------------------
@@ -187,15 +218,16 @@ async function main() {
     // 6. 工具轨迹之后仍有正文时，只保留正文
     // ------------------------------------------------------------
     {
+        const action = JSON.stringify({ action: "answer", params: { text: "done" } });
         const message = build("div.chat-assistant", [
             build("div.markdown-prose", [
                 build("div.my-4.toolCallTrace", [build("span.text-sm", [text("写入 1 次文件")])]),
-                build("p", [text("<answer>done</answer>")]),
+                build("p", [text(action)]),
             ]),
         ]);
         const output = await renderGlmMessage(message);
 
-        check("工具轨迹不污染正文", output === "<answer>done</answer>", JSON.stringify(output));
+        check("工具轨迹不污染 JSON 正文", output === action, JSON.stringify(output));
     }
 
     // ------------------------------------------------------------

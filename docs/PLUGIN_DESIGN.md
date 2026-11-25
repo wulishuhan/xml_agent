@@ -1,34 +1,134 @@
 # XML Agent 插件化与架构优化设计
 
-| 项目     | 内容                                                             |
-| -------- | ---------------------------------------------------------------- |
-| 文档状态 | 设计蓝图 + v1.1.0 落地状态（见 §零）                             |
-| 适用版本 | 基线 1.0.7 → 已落地 1.1.0                                        |
-| 文档性质 | 设计文档（§零 之后为设计蓝图，文中代码为接口示意）               |
-| 关联文档 | `readme.md`、`docs/PLUGIN_API.md`、`docs/RELEASE_NOTES_1.1.0.md` |
+| 项目     | 内容                                                                  |
+| -------- | --------------------------------------------------------------------- |
+| 文档状态 | 当前 JSON Action 架构（§零-A）+ v1.1.0 历史设计蓝图（§零-B 起）       |
+| 适用版本 | 当前 1.3.0 代码线；历史基线 1.0.7 → 1.1.0                             |
+| 文档性质 | §零-A 描述现状；§零-B 及之后仅记录历史 XML 方案，文中旧代码为接口示意 |
+| 关联文档 | `readme.md`、`docs/PLUGIN_API.md`、`docs/ARCHITECTURE_FLOW.md`        |
+
+> **历史内容边界**：项目名 XML Agent、`~/.xml-agent/` 与 `XML_AGENT_*` 环境变量是保留名称；
+> 旧 XML Action 协议、`parse/xml-parse.js`、`parse/xml-chars.js`、`parse/xml-text.js`、
+> CDATA、`attrs` / `node` 参数与 `meta.fastPath` 均属于历史方案，当前已删除或不再适用。
 
 ---
 
-## 零、实现状态（v1.1.0 落地情况）
+## 零-A、当前 JSON Action 架构（现状）
 
-本文是设计蓝图。v1.1.0 已实现**插件内核**与 **P0 的 ①③**，其余为后续迭代：
+### 1. 协议与解析链路
 
-| 设计项                                                     | 状态      | 说明                                                                                                                                                                                |
-| ---------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 插件注册表（发现 / 校验 / 隔离 / 权限 / 执行 / 钩子）      | ✅ 已实现 | `plugins/registry.js` + `plugins/registry/`                                                                                                                                         |
-| 插件 SDK（清单 / 动作定义 / schema / 版本区间 / 契约自检） | ✅ 已实现 | `plugins/sdk.js`                                                                                                                                                                    |
-| 能力门面（workspace fs / 受控 http / storage / secrets）   | ✅ 已实现 | `plugins/capabilities.js`                                                                                                                                                           |
-| 内置示例插件 `fetch`（action）/ `audit-log`（hook）        | ✅ 已实现 | `plugins/builtin/`                                                                                                                                                                  |
-| 插件管理 HTTP API + 权限接口                               | ✅ 已实现 | `webui/routes/plugins.js`                                                                                                                                                           |
-| ③ 事件格式化注册表 + 未知事件兜底                          | ✅ 已实现 | `agent-session.js` 三层格式化                                                                                                                                                       |
-| ② Prompt 构建器（插件区块自动生成 + 预算裁剪）             | ⚠️ 部分   | 插件区块已自动生成；内置动作的完整文档仍手写在 `prompts/system-prompt.js`（定义里已带简版用法）                                                                                     |
-| ① 动作定义对象化                                           | ✅ 已实现 | 6 个内置动作迁入 `actions/`，`runtime.js` 只剩沙箱 + 查表；`xml-parse.js` 校验走同一张表                                                                                            |
-| ④ `server.js` 拆路由                                       | ✅ 已实现 | 653 → 161 行，路由按领域拆到 `webui/routes/*.js`；`test-route-surface.js` 冻结接口表                                                                                                |
-| P1 配置单源（`config/schema.js`）                          | ✅ 已实现 | 默认值 / env 名 / 校验 / 浏览器设置归一化收敛到一处，四处副本已删，含"必须同源"的漂移守卫测试                                                                                       |
-| P2 截图迁移为插件                                          | ✅ 已实现 | `plugins/builtin/screenshot` 自包含（动作 + 引擎 `engine/`），内置动作表只剩 5 个；核心无截图实现、无截图 HTTP 接口。删掉插件目录即彻底移除，`<screenshot>` 报 `Unknown XML Action` |
-| P3 Provider 契约化                                         | ✅ 已实现 | `providers/registry.js`：元数据 + 契约校验 + 插件 provider 接入；地址与会话 id 正则由 provider 声明                                                                                 |
-| P4 声明式 UI 面板                                          | ✅ 已实现 | `note/status/table/action` 四种 block 由宿主渲染；数据来自 `ctx.api.*`（限定插件命名空间，插件零 JS 进浏览器）                                                                      |
-| P5 权限授权 UI / secrets 管理                              | ✅ 已实现 | 权限可视化授权；Plugins 面板可直接增删密钥，接口只回键名与长度（`GET/PUT/DELETE /api/plugins/secrets`），值落盘权限 0600                                                            |
+模型每轮只输出一个 JSON envelope，可裸 JSON 或放在单个 `json` 代码块中：
+
+```json
+{ "action": "read", "params": { "path": "." } }
+```
+
+当前没有 XML parser、CDATA、XML 属性表或快速解析器。完整链路如下：
+
+```text
+Provider 回复
+  -> parse/json-candidate.js      提取 JSON 候选，要求恰好一个 envelope
+  -> parse/json-action.js         extractAction：校验 action / params 并路由
+  -> parse/action-schema.js       envelope Schema + 内置动作参数 Schema
+  -> actions/index.js             内置动作表；未知动作转插件注册表
+  -> plugins/registry/catalog.js 插件动作目录与解析期参数校验
+  -> runtime.js                   统一执行入口
+  -> actions/*.js 或 registry/invoke.js
+  -> run(params, ctx)             ctx.params 持有同一份已校验参数
+```
+
+字符串正文必须按 JSON 规则转义；例如 `write.content` 中的双引号写成 `\"`，换行写成 `\n`。
+`answer` 独占一轮，下一轮再单独输出 `done`。
+
+### 2. 当前文件职责
+
+| 文件                                            | 当前职责                                                                      |
+| :---------------------------------------------- | :---------------------------------------------------------------------------- |
+| `parse/json-candidate.js`                       | 从裸文本或代码块中提取平衡的 JSON 对象，拒绝零个或多个 envelope               |
+| `parse/json-action.js`                          | `extractAction()`：校验 envelope，内置动作优先，其次查询插件目录              |
+| `parse/action-schema.js`                        | 定义 envelope、内置动作与 screenshot 参数 Schema，提供 Ajv `validateParams()` |
+| `actions/index.js`                              | 六个内置动作的定义表与 `validateBuiltinAction()`                              |
+| `actions/{read,write,edit,exec,answer,done}.js` | 内置动作的 JSON Schema、`validate(params)`、`run(params, ctx)` 与元数据       |
+| `runtime.js`                                    | Workspace 路径校验、内置/插件统一分发、动作超时、子进程登记与结束             |
+| `plugins/sdk.js`                                | 插件清单、标准 JSON Schema 动作定义、权限 scope、版本区间与契约自检           |
+| `plugins/registry.js`                           | 注册表门面与单例                                                              |
+| `plugins/registry/loader.js`                    | 发现、加载、setup、冲突检测、整体提交与清理                                   |
+| `plugins/registry/catalog.js`                   | 动作目录、提示词贡献，以及 `validateAction(name, params)`                     |
+| `plugins/registry/invoke.js`                    | 插件动作权限检查、再次参数校验、超时、`run(params, ctx)` 与钩子               |
+| `plugins/registry/context.js`                   | setup / run 上下文；运行期提供 `ctx.params`、`ctx.fs`、`ctx.http` 等门面      |
+| `prompts/system-prompt.js`                      | 当前 JSON Action 系统协议与内置示例                                           |
+| `prompts/plugin-prompt.js`                      | 从动作目录生成插件 JSON 用法区块                                              |
+| `prompts/json-error-prompt.js`                  | JSON envelope 提取或参数校验失败后的纠正提示                                  |
+
+### 3. 当前插件动作契约
+
+插件动作的 `schema` 是标准 JSON Schema，只描述 `params`：
+
+```js
+ctx.actions.register({
+    name: "echo",
+    schema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["text"],
+        properties: {
+            text: { type: "string", minLength: 1, pattern: "\\S" },
+        },
+    },
+    validate(params) {
+        // 可选：Schema 之外的业务校验，抛错即拒绝
+    },
+    run(params, ctx) {
+        return { ok: true, action: "echo", text: ctx.params.text };
+    },
+    meta: {
+        prompt: {
+            group: "plugin",
+            usage: '{"action":"echo","params":{"text":"hello"}}',
+            note: "回显文本。",
+        },
+        permission: [],
+    },
+});
+```
+
+`catalog.js` 在解析期校验插件参数，`invoke.js` 在执行期再次校验，然后调用
+`run(params, ctx)`。`params` 与 `ctx.params` 是已套用 JSON Schema 默认值的对象；不再有
+`ctx.attrs` 或 XML `node`。
+
+### 4. 当前设计不变量
+
+1. 每轮恰好一个 `{action, params}` envelope；params 内部可以嵌套对象与数组。
+2. 内置动作与插件动作共享 envelope、Schema 校验、Runtime 分发与 Trace 结果结构。
+3. 文件类动作走 Workspace 沙箱；`exec` 以 Workspace 为 cwd，但 shell 本身不是安全沙箱。
+4. 插件的 `meta.permission` 必须是清单权限子集；执行期仍检查用户授权策略。
+5. 插件代码与宿主同进程、同权限，不是安全沙箱；只安装可信插件。
+
+---
+
+## 零-B、历史实现状态（v1.1.0 XML 方案）
+
+> 以下记录的是 **XML Action 时代** 的 v1.1.0 落地情况。文中 `xml-parse.js`、`attrs`、
+> `fastPath` 等文件或字段在当前代码中已删除，仅用于理解插件系统为何演化成现在的形状。
+
+v1.1.0 当时已实现**插件内核**与 **P0 的 ①③**，其余为后续迭代：
+
+| 设计项                                                     | 状态      | 说明                                                                                                                                                                                           |
+| ---------------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 插件注册表（发现 / 校验 / 隔离 / 权限 / 执行 / 钩子）      | ✅ 已实现 | `plugins/registry.js` + `plugins/registry/`                                                                                                                                                    |
+| 插件 SDK（清单 / 动作定义 / schema / 版本区间 / 契约自检） | ✅ 已实现 | `plugins/sdk.js`                                                                                                                                                                               |
+| 能力门面（workspace fs / 受控 http / storage / secrets）   | ✅ 已实现 | `plugins/capabilities.js`                                                                                                                                                                      |
+| 内置示例插件 `fetch`（action）/ `audit-log`（hook）        | ✅ 已实现 | `plugins/builtin/`                                                                                                                                                                             |
+| 插件管理 HTTP API + 权限接口                               | ✅ 已实现 | `webui/routes/plugins.js`                                                                                                                                                                      |
+| ③ 事件格式化注册表 + 未知事件兜底                          | ✅ 已实现 | `agent-session.js` 三层格式化                                                                                                                                                                  |
+| ② Prompt 构建器（插件区块自动生成 + 预算裁剪）             | ⚠️ 部分   | 插件区块已自动生成；内置动作的完整文档仍手写在 `prompts/system-prompt.js`（定义里已带简版用法）                                                                                                |
+| ① 动作定义对象化                                           | ✅ 已实现 | 6 个内置动作迁入 `actions/`，`runtime.js` 只剩沙箱 + 查表；`xml-parse.js` 校验走同一张表                                                                                                       |
+| ④ `server.js` 拆路由                                       | ✅ 已实现 | 653 → 161 行，路由按领域拆到 `webui/routes/*.js`；`test-route-surface.js` 冻结接口表                                                                                                           |
+| P1 配置单源（`config/schema.js`）                          | ✅ 已实现 | 默认值 / env 名 / 校验 / 浏览器设置归一化收敛到一处，四处副本已删，含"必须同源"的漂移守卫测试                                                                                                  |
+| P2 截图迁移为插件                                          | ✅ 已实现 | `plugins/builtin/screenshot` 当时已自包含（动作 + 引擎 `engine/`），内置动作表剩 6 个；核心无截图实现、无截图 HTTP 接口。删掉插件目录即彻底移除，当时的 `<screenshot>` 报 `Unknown XML Action` |
+| P3 Provider 契约化                                         | ✅ 已实现 | `providers/registry.js`：元数据 + 契约校验 + 插件 provider 接入；地址与会话 id 正则由 provider 声明                                                                                            |
+| P4 声明式 UI 面板                                          | ✅ 已实现 | `note/status/table/action` 四种 block 由宿主渲染；数据来自 `ctx.api.*`（限定插件命名空间，插件零 JS 进浏览器）                                                                                 |
+| P5 权限授权 UI / secrets 管理                              | ✅ 已实现 | 权限可视化授权；Plugins 面板可直接增删密钥，接口只回键名与长度（`GET/PUT/DELETE /api/plugins/secrets`），值落盘权限 0600                                                                       |
 
 **P0 ① 的落地方式**（等价性由 `test/test-builtin-actions.js` 的 53 项用例锁死）：
 
@@ -48,7 +148,12 @@
 
 ---
 
-## 一、背景与目标
+# 历史设计蓝图（1.0.7 → 1.1.0，XML Action 方案）
+
+> §一至§十保留当时的背景、诊断、接口草案与路线图，**不代表当前架构**。当前实现以 §零-A 与
+> `docs/PLUGIN_API.md` 为准；旧 XML 语法与已删除文件仅作为演进历史阅读。
+
+## 一、背景与目标（历史 XML 方案）
 
 ### 1.1 背景
 
@@ -73,7 +178,7 @@ XML Agent 当前的扩展方式是"改核心文件"。架构本身是清晰的�
 
 ---
 
-## 二、现状诊断
+## 二、现状诊断（历史 XML 方案）
 
 ### 2.1 现有分层
 
@@ -137,7 +242,7 @@ agent.js / webui/server.js          ← 入口（CLI + HTTP 647 行单文件）
 
 ---
 
-## 三、优化清单
+## 三、优化清单（历史 XML 方案）
 
 ### 3.1 P0：插件化前置四件套（纯重构，零行为变更）
 
@@ -225,7 +330,7 @@ agent.js / webui/server.js          ← 入口（CLI + HTTP 647 行单文件）
 
 ---
 
-## 四、插件系统设计
+## 四、插件系统设计（历史 XML 方案）
 
 ### 4.1 设计原则
 
@@ -462,7 +567,7 @@ Agent run
 
 ---
 
-## 五、改造后的目录结构
+## 五、改造后的目录结构（历史 XML 方案）
 
 ```
 xml_agent/
@@ -494,7 +599,7 @@ xml_agent/
 
 ---
 
-## 六、落地路线
+## 六、落地路线（历史 XML 方案）
 
 每个阶段都可独立交付、独立验证。
 
@@ -511,7 +616,7 @@ xml_agent/
 
 ---
 
-## 七、测试与验收
+## 七、测试与验收（历史 XML 方案）
 
 ### 7.1 分层
 
@@ -533,7 +638,7 @@ xml_agent/
 
 ---
 
-## 八、风险与权衡
+## 八、风险与权衡（历史 XML 方案）
 
 | 风险           | 说明                                                                                  | 缓解                                                                                           |
 | -------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -546,7 +651,7 @@ xml_agent/
 
 ---
 
-## 九、待决策项
+## 九、待决策项（历史 XML 方案）
 
 | #   | 决策点       | 选项                                                                         | 建议                                                                                  |
 | --- | ------------ | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -557,7 +662,7 @@ xml_agent/
 
 ---
 
-## 十、附录：不变式清单
+## 十、附录：不变式清单（历史 XML 方案）
 
 下面这些在 P0~P5 全过程中**不允许变化**，是回归测试的锚点：
 

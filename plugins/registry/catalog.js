@@ -50,34 +50,24 @@ module.exports = {
         return entry ? entry.plugin : null;
     },
 
-    getFastPaths() {
+    validateAction(name, params) {
         this.load();
-        const result = [];
-        for (const entry of this.actions.values()) {
-            if (entry.def.meta.fastPath) {
-                result.push({ action: entry.name, parse: entry.def.meta.fastPath });
-            }
-        }
-        return result;
-    },
-
-    validateAction(name, node) {
         const entry = this.actions.get(String(name || ""));
         if (!entry) {
             return { ok: false, error: "Unknown action: " + name };
         }
-        const attrs = sdk.normalizeAttrs(entry.def, node);
-        if (!attrs.ok) {
-            return attrs;
+        const validated = sdk.validateParams(entry.def.schema, params);
+        if (!validated.ok) {
+            return validated;
         }
         if (entry.def.validate) {
             try {
-                entry.def.validate(node);
+                entry.def.validate(validated.value);
             } catch (error) {
-                return { ok: false, error: error.message };
+                return { ok: false, value: validated.value, error: error.message };
             }
         }
-        return { ok: true };
+        return { ok: true, value: validated.value };
     },
 
     /**

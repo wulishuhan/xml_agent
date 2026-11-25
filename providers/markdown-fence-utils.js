@@ -1,4 +1,4 @@
-// Markdown 围栏平衡与 XML 候选提取工具。
+// Markdown 围栏平衡与 JSON Action 候选提取工具。
 // 为规避写入管线对反斜杠/美元符/三反引号的破坏，围栏与反斜杠用 fromCharCode 构造，
 // 逻辑与历史实现保持一致。
 var BT = String.fromCharCode(96);
@@ -11,23 +11,8 @@ var RE_CODE_KEYWORDS = new RegExp(
 );
 var RE_CODE_PUNCT = new RegExp("[;{}()[]" + BS + "<>]=?");
 var RE_INDENT = new RegExp(NL + BS + "s+" + BS + "S");
-var RE_LEAD_WS = new RegExp("^" + BS + "s+");
 var RE_TRAIL_WS = new RegExp(BS + "s+$");
-// 动作名不能写死：插件动作（browse-nav / wechat-read / …）是开放集合，
-// 清单由 providers/action-tag.js 从插件注册表派生，这里只负责拼正则。
-var actionTag = require("./action-tag");
-var actionRegexCache = null;
-var actionRegexSignature = null;
-function getActionRegex() {
-    var names = actionTag.getActionTagNames();
-    var signature = names.join("|");
-    if (signature === actionRegexSignature && actionRegexCache) {
-        return actionRegexCache;
-    }
-    actionRegexSignature = signature;
-    actionRegexCache = new RegExp("<(" + signature + ")(?:" + BS + "s[^>]*)?/?>");
-    return actionRegexCache;
-}
+var jsonCandidate = require("../parse/json-candidate");
 function balanceMarkdownFences(value) {
     if (value == null) {
         return "";
@@ -56,7 +41,7 @@ function balanceMarkdownFences(value) {
     }
     return text.slice(0, lastFence).replace(RE_TRAIL_WS, "");
 }
-function extractXmlFromCandidate(value) {
+function extractJsonActionCandidate(value) {
     if (value == null) {
         return null;
     }
@@ -64,38 +49,28 @@ function extractXmlFromCandidate(value) {
     if (!text) {
         return null;
     }
-    var guard = 0;
-    while (text.indexOf(FENCE) === 0 && guard < 10) {
-        guard += 1;
-        text = text.slice(FENCE.length).replace(RE_LEAD_WS, "");
-        var head = text.slice(0, 3).toLowerCase();
-        if (head === "xml") {
-            text = text.slice(3).replace(RE_LEAD_WS, "");
-        } else {
-            break;
+    // 返回原始候选文本而不是重新序列化对象，保留 params 的格式与转义。
+    // 多个 envelope 时返回完整回复，交给解析层报告数量错误，避免静默挑掉其中一个。
+    var candidates = jsonCandidate.findJsonObjects(text);
+    var actionCandidates = [];
+    for (var i = 0; i < candidates.length; i++) {
+        try {
+            jsonCandidate.extractActionEnvelope(candidates[i]);
+            actionCandidates.push(candidates[i]);
+        } catch (error) {
+            // 说明文字里的非 envelope JSON 对象不是动作候选。
         }
     }
-    guard = 0;
-    while (
-        text.length >= FENCE.length &&
-        text.slice(text.length - FENCE.length) === FENCE &&
-        guard < 10
-    ) {
-        guard += 1;
-        text = text.slice(0, text.length - FENCE.length).replace(RE_TRAIL_WS, "");
+    if (actionCandidates.length === 1) {
+        return actionCandidates[0];
     }
-    text = text.trim();
-    var match = text.match(getActionRegex());
-    if (!match) {
-        return null;
+    if (actionCandidates.length > 1) {
+        return text;
     }
-    if (match.index > 0) {
-        text = text.slice(match.index).trim();
-    }
-    return text || null;
+    return null;
 }
 module.exports = {
     FENCE: FENCE,
     balanceMarkdownFences: balanceMarkdownFences,
-    extractXmlFromCandidate: extractXmlFromCandidate,
+    extractJsonActionCandidate: extractJsonActionCandidate,
 };

@@ -229,9 +229,9 @@ class AgentSession extends EventEmitter {
             case "provider.close_error":
                 return "Provider close error: " + event.error;
             case "action.parsed":
-                return "XML action parsed: " + event.action;
+                return "JSON action parsed: " + event.action;
             case "action.parse_error":
-                return "XML parse error: " + event.error;
+                return "JSON parse error: " + event.error;
             case "runtime.result":
                 return (
                     "Runtime action: " + event.action + "\n" + JSON.stringify(event.result, null, 2)

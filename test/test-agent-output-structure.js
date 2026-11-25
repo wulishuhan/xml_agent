@@ -1,7 +1,7 @@
 const { spawn } = require("child_process");
 const path = require("path");
 
-// 测试 agent.js 输出是否包含结构化标记
+// 测试 agent.js 输出是否包含真实 JSON 动作解析与运行时事件
 function testAgentOutputStructure() {
     console.log("=== Testing Agent Output Structure ===\n");
 
@@ -17,7 +17,7 @@ function testAgentOutputStructure() {
     const agentProcess = spawn("node", args, {
         cwd: workspace,
         shell: true,
-        env: process.env,
+        env: Object.assign({}, process.env, { LOG_LEVEL: "debug" }),
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
     });
@@ -33,21 +33,14 @@ function testAgentOutputStructure() {
 
         console.log("[STDOUT]", output.trim());
 
-        // 检测结构化标记
-        const markers = [
-            "[AI_RESPONSE]",
-            "[RUNTIME_STATUS]",
-            "[AGENT_STEP]",
-            "[XML_ACTION]",
-            "[PROVIDER]",
-            "[SYSTEM]",
-        ];
+        // 只检测 Agent 实际发出的事件，不依赖提示词或旧协议标记。
+        const markers = ["[action.parsed]", "[runtime.result]"];
 
         for (const marker of markers) {
             if (output.includes(marker)) {
                 hasStructuredMarkers = true;
                 markerCount++;
-                console.log("✅ Found marker:", marker);
+                console.log("Found event:", marker);
             }
         }
     });
@@ -66,19 +59,20 @@ function testAgentOutputStructure() {
         console.log("Total output length:", outputBuffer.length);
 
         if (hasStructuredMarkers) {
-            console.log("✅ PASS: Agent output contains structured markers");
+            console.log("PASS: Agent output contains JSON action/runtime events");
         } else {
-            console.log("❌ FAIL: Agent output does NOT contain structured markers");
+            console.log("FAIL: Agent output does NOT contain JSON action/runtime events");
             console.log("\nFirst 1000 chars of output:");
             console.log(outputBuffer.substring(0, 1000));
+            process.exitCode = 1;
         }
 
-        process.exit(0);
+        process.exit(process.exitCode || 0);
     });
 
     // 超时处理 - 给 agent 一些时间启动
     setTimeout(() => {
-        console.log("\n⏱️ Test timeout after 30s, killing agent...");
+        console.log("\nTest timeout after 30s, killing agent...");
         agentProcess.kill("SIGINT");
         process.exit(1);
     }, 30000);

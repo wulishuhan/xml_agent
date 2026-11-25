@@ -10,6 +10,7 @@
 
 const assert = require("assert");
 const contextBudget = require("../../webui/session/context-budget");
+const { SYSTEM_PROMPT } = require("../../prompts/system-prompt");
 const { getRuntimeOkPrompt, getRuntimeErrorPrompt } = require("../../prompts/runtime-prompt");
 
 let passed = 0;
@@ -245,11 +246,17 @@ check("同一份输入两次算出的结果完全一致", () => {
 // ---------------------------------------------------------------
 
 check("首轮提示词包含系统提示词，不会只算 task", () => {
-    const short = contextBudget.firstPromptChars("a", { manifestChars: 0 });
-    const long = contextBudget.firstPromptChars("a".repeat(500), { manifestChars: 0 });
+    const short = contextBudget.firstPromptChars("a");
+    const long = contextBudget.firstPromptChars("a".repeat(500));
     assert.strictEqual(long - short, 499);
     // 系统提示词本身是几千字，首轮不可能只有 task 那么长
     assert.ok(short > 1000, "首轮字符数应包含系统提示词，实际 " + short);
+});
+
+check("首轮估算不再计入 Workspace Manifest", () => {
+    const task = "同一个任务";
+    const withoutManifestUpperBound = SYSTEM_PROMPT.length + task.length + 1000;
+    assert.ok(contextBudget.firstPromptChars(task) < withoutManifestUpperBound);
 });
 
 console.log("");

@@ -1,18 +1,15 @@
 /**
-write 动作的内容归一化单测
-
-背景（真机回归）：Gemini / Qwen 两轮对照测试产出的文件首字节都是 0x0a。
-模型习惯写 `<write path="x"><![CDATA[\nfunction f() {}]]></write>`，
-只要这段话不是整段以 `<write>` 开头结尾（比如前面带了说明文字、或被平台渲染成代码块），
-就会落到通用解析路径，`<![CDATA[` 之后那个换行被当成正文原样落盘。
-
-这个测试钉住三件事：
-1. 起始的一个换行被吃掉（正文内部的空行不受影响）；
-2. 不以换行开头的内容逐字节不变（不能顺手 trim 掉尾随空格）；
-3. CRLF 写法同样处理。
-
-运行：node test/unit/test-write-content.js
-*/
+ * write 动作的内容保真与原子写单测
+ *
+ * JSON 契约中 content 就是正文本身：不做 trim、不吃掉起始换行、不转换 CRLF。
+ * 这里钉住四件事：
+ * 1. 起始 LF/CRLF 与正文内部空行全部保留；
+ * 2. 引号、反斜杠、花括号等 JSON 转义还原后逐字落盘；
+ * 3. 不以换行开头的内容逐字节不变（含尾随空格）；
+ * 4. 原子写失败时保留旧文件并清理临时文件。
+ *
+ * 运行：node test/unit/test-write-content.js
+ */
 
 const assert = require("assert");
 const fs = require("fs");
@@ -40,20 +37,25 @@ const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-write-"));
 
 function runWrite(relativePath, text) {
     const runtime = createRuntime(workspace);
-    const result = writeAction.run({ "@_path": relativePath, "#text": text }, { runtime });
+    const result = writeAction.run({ path: relativePath, content: text }, { runtime });
 
     assert.strictEqual(result.ok, true, "write should succeed");
     return fs.readFileSync(path.join(workspace, relativePath), "utf8");
 }
 
-check("CDATA 起始换行被吃掉", () => {
+check("起始 LF 原样保留", () => {
     const content = runWrite("a.js", "\nconst a = 1;\n");
-    assert.strictEqual(content, "const a = 1;\n");
+    assert.strictEqual(content, "\nconst a = 1;\n");
 });
 
-check("只吃一个换行，正文内部空行保留", () => {
-    const content = runWrite("b.js", "\nconst a = 1;\n\nconst b = 2;\n");
-    assert.strictEqual(content, "const a = 1;\n\nconst b = 2;\n");
+check("多个起始换行与正文内部空行全部保留", () => {
+    const content = runWrite("b.js", "\n\nconst a = 1;\n\nconst b = 2;\n");
+    assert.strictEqual(content, "\n\nconst a = 1;\n\nconst b = 2;\n");
+});
+
+check("起始 CRLF 与内部 CRLF 原样保留", () => {
+    const content = runWrite("d.js", "\r\nconst a = 1;\r\nconst b = 2;\r\n");
+    assert.strictEqual(content, "\r\nconst a = 1;\r\nconst b = 2;\r\n");
 });
 
 check("不以换行开头的内容逐字节不变", () => {
@@ -62,15 +64,51 @@ check("不以换行开头的内容逐字节不变", () => {
     assert.strictEqual(content, original);
 });
 
-check("CRLF 起始换行同样处理", () => {
-    const content = runWrite("d.js", "\r\nconst a = 1;");
-    assert.strictEqual(content, "const a = 1;");
+check("JSON 转义后的引号、反斜杠与花括号逐字保留", () => {
+    const original = 'line1\n"quoted" \\path\\ {"nested":[1,2]}\n';
+    const content = runWrite("escaped.txt", original);
+    assert.strictEqual(content, original);
 });
 
 check("空内容仍按原规则被拒绝", () => {
     assert.throws(
-        () => writeAction.validate({ "@_path": "e.txt", "#text": "\n" }),
+        () => writeAction.validate({ path: "e.txt", content: "\n" }),
         /content cannot be empty/
+    );
+});
+
+check("成功写入不残留临时文件", () => {
+    runWrite("atomic-ok.txt", "new content\n");
+    assert.deepStrictEqual(
+        fs.readdirSync(workspace).filter((name) => name.indexOf(".tmp.") !== -1),
+        []
+    );
+});
+
+check("原子写失败时保留旧文件并清理临时文件", () => {
+    const relativePath = "atomic-fail.txt";
+    const target = path.join(workspace, relativePath);
+    fs.writeFileSync(target, "before\n", "utf8");
+    const runtime = createRuntime(workspace);
+    const originalRename = fs.renameSync;
+    fs.renameSync = function simulatedRename(from, to) {
+        if (path.resolve(to) === path.resolve(target)) {
+            throw new Error("simulated rename failure");
+        }
+        return originalRename.apply(this, arguments);
+    };
+    try {
+        assert.throws(
+            () => writeAction.run({ path: relativePath, content: "after\n" }, { runtime }),
+            /simulated rename failure/
+        );
+    } finally {
+        fs.renameSync = originalRename;
+    }
+    assert.strictEqual(fs.readFileSync(target, "utf8"), "before\n");
+    assert.deepStrictEqual(
+        fs.readdirSync(workspace).filter((name) => name.indexOf(".tmp.") !== -1),
+        []
     );
 });
 

@@ -3,7 +3,7 @@ P2 回归：screenshot 从内置动作迁到内置插件
 
 目标是把"截图"变成与第三方插件同一条链路的能力，同时保证：
 1. 让位给插件后，内置动作表里不再有 screenshot（只剩 5 个）；
-2. 解析层（自闭合 / 多 target / 错误文案）与 Runtime 兼容面（actionHandlers / runtime.screenshot）不退化；
+2. JSON 解析层（单 / 多 target、默认值与错误校验）与 Runtime 兼容面（actionHandlers / runtime.screenshot）不退化；
 3. 越界路径仍然被拒（复用 Runtime 的路径沙箱，而不是插件自己拼绝对路径）；
 4. 可以单独授权 / 禁用：把 system:screen 设成 deny 后动作被拒绝。
 
@@ -14,11 +14,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const {
-    extractXML,
-    tryExtractScreenshotManually,
-    normalizeScreenshotTargets,
-} = require("../parse/xml-parse");
+const { extractAction } = require("../parse/json-action");
 const { getBuiltinAction, getBuiltinActionNames } = require("../actions");
 const { Runtime } = require("../runtime");
 const registryModule = require("../plugins/registry");
@@ -97,8 +93,13 @@ async function main() {
             typeof definition.meta.collectImages === "function"
         );
         check(
-            "声明了 fastPath（自闭合写法手写解析）",
-            typeof definition.meta.fastPath === "function"
+            "schema 是标准 JSON Schema（targets 数组，1-8 项）",
+            definition.schema.type === "object" &&
+                definition.schema.required[0] === "targets" &&
+                definition.schema.properties.targets.type === "array" &&
+                definition.schema.properties.targets.minItems === 1 &&
+                definition.schema.properties.targets.maxItems === 8 &&
+                Object.prototype.hasOwnProperty.call(definition.schema, "attrs") === false
         );
         check(
             "声明了两个权限 scope",
@@ -108,61 +109,84 @@ async function main() {
         check("没有终止语义", definition.meta.terminal === null);
         check("有 Trace 摘要", typeof definition.meta.summary === "function");
 
-        console.log("\n=== 4. 解析层未退化 ===");
-        const single = extractXML('<screenshot source="screen" path="a.png"/>');
+        console.log("\n=== 4. JSON 解析层校验 ===");
+        function parseScreenshot(params) {
+            return extractAction(JSON.stringify({ action: "screenshot", params }));
+        }
+        const single = parseScreenshot({ targets: [{ source: "screen", path: "a.png" }] });
         check(
-            "自闭合写法可解析",
+            "单目标 JSON 可解析并补默认值",
             single.action === "screenshot" &&
-                single.node["@_source"] === "screen" &&
+                single.params.targets.length === 1 &&
+                single.params.targets[0].source === "screen" &&
+                single.params.targets[0].fullPage === false &&
                 single.plugin === "screenshot",
             "plugin=" + String(single.plugin)
         );
-        const multi = extractXML(
-            '<screenshot><target source="screen" path="a.png"/><target source="screen" path="b.png"/></screenshot>'
-        );
+        const multi = parseScreenshot({
+            targets: [
+                { source: "screen", path: "a.png" },
+                { source: "window", title: "Visual Studio Code", path: "b.png" },
+            ],
+        });
         check(
-            "多目标写法可解析",
-            multi.action === "screenshot" && normalizeScreenshotTargets(multi.node).length === 2
+            "多目标 JSON 可解析并保留 title 别名",
+            multi.action === "screenshot" &&
+                multi.params.targets.length === 2 &&
+                multi.params.targets[1].title === "Visual Studio Code"
         );
         const cases = [
             {
-                xml: "<screenshot/>",
-                expected: "screenshot requires source (browser_page | screen | window)",
+                name: "缺少 targets",
+                params: {},
+                expected: "targets",
             },
             {
-                xml: '<screenshot source="desktop"/>',
-                expected: "screenshot source must be one of: browser_page, screen, window",
+                name: "空 targets",
+                params: { targets: [] },
+                expected: "fewer than 1 items",
             },
             {
-                xml: '<screenshot source="window"/>',
-                expected: "screenshot source=window requires windowTitle",
+                name: "非法 source",
+                params: { targets: [{ source: "desktop" }] },
+                expected: "source",
             },
             {
-                xml:
-                    "<screenshot>" +
-                    Array.from({ length: 9 })
-                        .map((_, index) => '<target source="screen" path="t' + index + '.png"/>')
-                        .join("") +
-                    "</screenshot>",
-                expected: "screenshot supports at most 8 targets per action, got 9",
+                name: "window 缺少标题",
+                params: { targets: [{ source: "window", path: "a.png" }] },
+                expected: "windowTitle",
+            },
+            {
+                name: "target 严格拒绝未知字段",
+                params: { targets: [{ source: "screen", bogus: 1 }] },
+                expected: "bogus",
+            },
+            {
+                name: "最多 8 个 target",
+                params: {
+                    targets: Array.from({ length: 9 }, (_, index) => ({
+                        source: "screen",
+                        path: "t" + index + ".png",
+                    })),
+                },
+                expected: "must NOT have more than 8 items",
             },
         ];
         for (const item of cases) {
-            const result = capture(() => extractXML(item.xml));
+            const result = capture(() => parseScreenshot(item.params));
             check(
-                "错误文案未变：" + item.expected.substring(0, 40) + "…",
-                result.ok === false && result.error === item.expected,
+                "错误符合 JSON Schema：" + item.name,
+                result.ok === false && result.error.includes(item.expected),
                 result.ok ? "no error" : result.error
             );
         }
-        check(
-            "tryExtractScreenshotManually 仍可从 parse 层导出",
-            Boolean(tryExtractScreenshotManually('<screenshot source="screen"/>'))
+        const strictType = capture(() =>
+            parseScreenshot({ targets: [{ source: "screen", fullPage: "true" }] })
         );
         check(
-            "normalizeScreenshotTargets 仍是纯函数",
-            normalizeScreenshotTargets({ target: [{ a: 1 }, { b: 2 }] }).length === 2 &&
-                normalizeScreenshotTargets({}).length === 0
+            "严格类型：fullPage 字符串被拒绝",
+            strictType.ok === false && strictType.error.includes("fullPage"),
+            strictType.ok ? "no error" : strictType.error
         );
 
         console.log("\n=== 5. Runtime 兼容面 ===");
@@ -180,7 +204,7 @@ async function main() {
             )
         );
         const escape = await runtime
-            .screenshot({ "@_source": "screen", "@_path": "../evil.png" })
+            .screenshot({ targets: [{ source: "screen", path: "../evil.png" }] })
             .then((value) => value)
             .catch((error) => ({ ok: false, error: error.message }));
         check(
@@ -189,7 +213,10 @@ async function main() {
             JSON.stringify(escape).substring(0, 120)
         );
         const runEscape = await runtime
-            .run({ action: "screenshot", node: { "@_source": "screen", "@_path": "../evil.png" } })
+            .run({
+                action: "screenshot",
+                params: { targets: [{ source: "screen", path: "../evil.png" }] },
+            })
             .then((value) => value)
             .catch((error) => ({ ok: false, error: error.message }));
         check(
@@ -203,7 +230,7 @@ async function main() {
         console.log("\n=== 6. 真实截图（沙箱内预期返回结构化失败） ===");
         const captureResult = await runtime.run({
             action: "screenshot",
-            node: { "@_source": "screen", "@_path": "screenshots/probe.png" },
+            params: { targets: [{ source: "screen", path: "screenshots/probe.png" }] },
         });
         check(
             "返回结构化结果且带 plugin / durationMs",
@@ -234,7 +261,7 @@ async function main() {
         registry.reload();
         const denied = await runtime.run({
             action: "screenshot",
-            node: { "@_source": "screen", "@_path": "screenshots/denied.png" },
+            params: { targets: [{ source: "screen", path: "screenshots/denied.png" }] },
         });
         check(
             "deny system:screen 后动作被拒绝",
@@ -245,7 +272,7 @@ async function main() {
         registry.reload();
         const allowedAgain = await runtime.run({
             action: "screenshot",
-            node: { "@_source": "screen", "@_path": "../escape-check.png" },
+            params: { targets: [{ source: "screen", path: "../escape-check.png" }] },
         });
         check(
             "重新授权后恢复（越界仍被拦）",
@@ -270,6 +297,20 @@ async function main() {
                     results: [
                         { ok: true, path: "a.png" },
                         { ok: false },
+                        { ok: true, path: "b.png" },
+                    ],
+                })
+            ) === JSON.stringify(["a.png", "b.png"])
+        );
+        check(
+            "只有 results 时同样只收集成功项",
+            JSON.stringify(
+                collect({
+                    ok: true,
+                    multi: true,
+                    results: [
+                        { ok: true, path: "a.png" },
+                        { ok: false, path: "bad.png" },
                         { ok: true, path: "b.png" },
                     ],
                 })

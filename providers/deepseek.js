@@ -1,7 +1,6 @@
 const { BrowserChatProvider } = require("./browser-chat");
 const { stripCodeToolbarLabels } = require("./markdown-code-clean");
-const { balanceMarkdownFences, extractXmlFromCandidate } = require("./markdown-fence-utils");
-const { containsActionTag } = require("./action-tag");
+const { balanceMarkdownFences, extractJsonActionCandidate } = require("./markdown-fence-utils");
 
 const BT = String.fromCharCode(96);
 const FENCE = BT + BT + BT;
@@ -314,18 +313,18 @@ class DeepSeekProvider extends BrowserChatProvider {
             }
             const domText = await this.buildFromDom(index);
             if (domText && domText.trim()) {
-                const xmlFromDom = extractXmlFromCandidate(domText);
-                if (xmlFromDom) {
-                    return balanceMarkdownFences(xmlFromDom);
+                const jsonFromDom = extractJsonActionCandidate(domText);
+                if (jsonFromDom) {
+                    return balanceMarkdownFences(jsonFromDom);
                 }
                 return balanceMarkdownFences(domText);
             }
             const message = messages.nth(index);
             const fiberCandidates = await this.extractFromReactFiber(message);
             for (const candidate of fiberCandidates) {
-                const xml = extractXmlFromCandidate(candidate.value);
-                if (xml) {
-                    return balanceMarkdownFences(xml);
+                const json = extractJsonActionCandidate(candidate.value);
+                if (json) {
+                    return balanceMarkdownFences(json);
                 }
             }
             for (const candidate of fiberCandidates) {
@@ -687,7 +686,7 @@ class DeepSeekProvider extends BrowserChatProvider {
 module.exports = {
     DeepSeekProvider,
     balanceMarkdownFences,
-    extractXmlFromCandidate,
+    extractJsonActionCandidate,
     stripCodeToolbarLabels,
     // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
     meta: {

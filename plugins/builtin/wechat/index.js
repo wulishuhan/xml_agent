@@ -35,6 +35,15 @@ const DUPLICATE_SIMILARITY = 0.8;
 const SEND_LOG = "sends.jsonl";
 const RECENT_LIMIT = 10;
 
+function objectSchema(properties, required = []) {
+    return {
+        type: "object",
+        additionalProperties: false,
+        required,
+        properties,
+    };
+}
+
 // 群发/遍历联系人的写法直接拒绝：这个插件只做「一次一个会话」。
 const BROADCAST_WORDS = ["所有人", "全体", "全部", "所有", "群发", "everyone", "broadcast"];
 
@@ -185,7 +194,7 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "wechat-status",
-        schema: { attrs: {} },
+        schema: objectSchema({}),
         async run() {
             const result = await runAction("status", { timeoutMs: 20000 });
             return Object.assign({}, result, {
@@ -197,7 +206,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "wechat",
-                usage: "<wechat-status/>",
+                usage: '{"action":"wechat-status","params":{}}',
                 note: "查微信客户端是否在跑、当前是否在前台，以及还剩多少发送额度。",
                 priority: 60,
             },
@@ -210,14 +219,15 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "wechat-open",
-        schema: {
-            attrs: {
-                to: { type: "string", required: true, nonEmpty: true, maxLength: 64 },
+        schema: objectSchema(
+            {
+                to: { type: "string", minLength: 1, maxLength: 64, pattern: "\\S" },
                 path: { type: "string", maxLength: 200 },
             },
-        },
-        validate(node) {
-            const to = String(node["@_to"] || "").trim();
+            ["to"]
+        ),
+        validate(params) {
+            const to = params.to.trim();
             const lower = to.toLowerCase();
             for (const word of BROADCAST_WORDS) {
                 if (lower.indexOf(word) >= 0) {
@@ -227,14 +237,10 @@ function setup(ctx) {
                 }
             }
         },
-        run(node, runCtx) {
+        run(params, runCtx) {
             return guard("wechat-open", async () => {
-                const to = String(runCtx.attrs.to || "").trim();
-                const shot = screenshotPath(
-                    runCtx,
-                    runCtx.attrs.path,
-                    "screenshots/wechat-open.png"
-                );
+                const to = params.to.trim();
+                const shot = screenshotPath(runCtx, params.path, "screenshots/wechat-open.png");
                 const result = await runAction("open", {
                     payload: to,
                     outPng: shot.absolute,
@@ -259,7 +265,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "wechat",
-                usage: '<wechat-open to="文件传输助手"/>',
+                usage: '{"action":"wechat-open","params":{"to":"文件传输助手"}}',
                 note:
                     "在微信里搜索并打开一个会话（人/群）。成功后会读出会话标题校验，" +
                     "标题对不上就返回 ok=false 且不会建立发送许可。发消息前必须先 open。",
@@ -285,14 +291,15 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "wechat-send",
-        schema: {
-            attrs: {
-                text: { type: "string", required: true, nonEmpty: true },
+        schema: objectSchema(
+            {
+                text: { type: "string", minLength: 1, pattern: "\\S" },
                 path: { type: "string", maxLength: 200 },
             },
-        },
-        validate(node) {
-            const text = String(node["@_text"] || "");
+            ["text"]
+        ),
+        validate(params) {
+            const text = params.text;
             if (text.length > maxChars) {
                 throw new Error(
                     "消息太长（" +
@@ -303,9 +310,9 @@ function setup(ctx) {
                 );
             }
         },
-        run(node, runCtx) {
+        run(params, runCtx) {
             return guard("wechat-send", async () => {
-                const text = String(runCtx.attrs.text || "");
+                const text = params.text;
                 const ticket = ticketSnapshot();
 
                 if (!ticket.active) {
@@ -379,11 +386,7 @@ function setup(ctx) {
                     };
                 }
 
-                const shot = screenshotPath(
-                    runCtx,
-                    runCtx.attrs.path,
-                    "screenshots/wechat-send.png"
-                );
+                const shot = screenshotPath(runCtx, params.path, "screenshots/wechat-send.png");
                 const result = await runAction("send", {
                     payload: text,
                     expectTitle: ticket.title,
@@ -436,7 +439,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "wechat",
-                usage: '<wechat-send text="收到，我晚点回你"/>',
+                usage: '{"action":"wechat-send","params":{"text":"收到，我晚点回你"}}',
                 note:
                     "给「当前已用 wechat-open 校验过」的会话发一条文本。没有 to 参数——" +
                     "要换人先 open。默认 10 分钟最多 5 条，重复内容会被拒。",
@@ -466,18 +469,12 @@ function setup(ctx) {
 
     ctx.actions.register({
         name: "wechat-read",
-        schema: {
-            attrs: {
-                path: { type: "string", maxLength: 200 },
-            },
-        },
-        run(node, runCtx) {
+        schema: objectSchema({
+            path: { type: "string", maxLength: 200 },
+        }),
+        run(params, runCtx) {
             return guard("wechat-read", async () => {
-                const shot = screenshotPath(
-                    runCtx,
-                    runCtx.attrs.path,
-                    "screenshots/wechat-read.png"
-                );
+                const shot = screenshotPath(runCtx, params.path, "screenshots/wechat-read.png");
                 const result = await runAction("read", {
                     outPng: shot.absolute,
                     timeoutMs: 45000,
@@ -492,7 +489,7 @@ function setup(ctx) {
         meta: {
             prompt: {
                 group: "wechat",
-                usage: '<wechat-read path="screenshots/wechat.png"/>',
+                usage: '{"action":"wechat-read","params":{"path":"screenshots/wechat.png"}}',
                 note:
                     "读当前会话：把可见消息 OCR 成文本（有噪声，只适合看个大概），" +
                     "同时存一张窗口截图，截图会随动作一起给你。",

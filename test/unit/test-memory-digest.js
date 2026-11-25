@@ -102,6 +102,27 @@ check("改过的文件、读过的文件、命令、报错都被提炼出来", (
     assert.ok(/src\/missing\.js/.test(md), "失败的 read 要出现在报错里");
 });
 
+check("JSON 动作解析错误进入摘要，不再写成 XML 解析失败", () => {
+    const records = [
+        {
+            id: "parse-error",
+            type: "stderr",
+            content: "JSON parse error",
+            timestamp: 1700000001000,
+            event: {
+                type: "action.parse_error",
+                step: 1,
+                error: 'JSON action must be an object with string "action" and object "params"',
+            },
+        },
+    ];
+    const md = digest.buildDigest(records, { from: "aaa", to: "bbb", info: INFO }).markdown;
+    assert.ok(/## 报错（1）/.test(md), md);
+    assert.ok(md.includes("JSON 解析失败："), md);
+    assert.ok(md.includes('string "action" and object "params"'), md);
+    assert.ok(!md.includes("XML 解析失败"), md);
+});
+
 check("命令剥掉每次都一样的壳，只留真正在跑的东西", () => {
     const result = digest.buildDigest(sample(), { from: "aaa", to: "bbb", info: INFO });
     assert.ok(/`npm test` ×1/.test(result.markdown), result.markdown);
@@ -160,14 +181,16 @@ check("结尾说明这是摘要，并指向原会话", () => {
 check("尾部只留关键行，过程噪声与相邻重复被跳过", () => {
     const records = [
         text(1, "Provider request (step 1)"),
-        text(2, "真正的内容"),
-        text(3, "Agent stopped by user"),
+        text(2, "JSON action parsed: read"),
+        text(3, "真正的内容"),
         text(4, "Agent stopped by user"),
+        text(5, "Agent stopped by user"),
     ];
     const result = digest.buildDigest(records, { from: "aaa", to: "bbb", info: INFO });
     const tail = result.markdown.split("## 最后几个动作")[1] || "";
     assert.ok(/真正的内容/.test(tail));
     assert.ok(!/Provider request/.test(tail), "噪声不该出现在尾部");
+    assert.ok(!/JSON action parsed/.test(tail), "JSON 解析进度不该出现在尾部");
     assert.strictEqual(tail.split("Agent stopped by user").length - 1, 1, "相邻重复只留一条");
 });
 

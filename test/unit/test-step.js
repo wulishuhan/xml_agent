@@ -7,6 +7,12 @@
 */
 
 const { runStep } = require("../../agent/step");
+const { getDonePrompt } = require("../../prompts/done-prompt");
+const { getJsonErrorPrompt } = require("../../prompts/json-error-prompt");
+
+const INVALID_JSON_REPLY = "这不是 JSON";
+const PARSE_ERROR_MESSAGE =
+    'JSON action must be an object with string "action" and object "params"';
 
 let pass = 0;
 let total = 0;
@@ -17,6 +23,10 @@ function check(name, ok, detail) {
         pass += 1;
     }
     console.log((ok ? "PASS" : "FAIL") + " - " + name + (detail ? "  [" + detail + "]" : ""));
+}
+
+function hasLegacyActionMarkup(text) {
+    return /<\/?[a-zA-Z][^>]*>|<!\[CDATA\[/.test(String(text || ""));
 }
 
 /** 假 Agent：只实现 step.js 文档里约定的字段。 */
@@ -54,7 +64,7 @@ function makeAgent(overrides = {}) {
         },
         provider: {
             async send() {
-                return '<read path="a.txt"/>';
+                return '{"action":"read","params":{"path":"a.txt"}}';
             },
         },
         ...overrides,
@@ -80,6 +90,16 @@ async function main() {
         );
         check("历史被记录", agent.history.length === 1, "len=" + agent.history.length);
         check(
+            "历史保留 action/params 信封",
+            agent.history[0].action.action === "read" &&
+                agent.history[0].action.params.path === "a.txt"
+        );
+        check(
+            "下一轮提示词要求 JSON 动作",
+            result.prompt.includes("JSON") && result.prompt.includes('{"action":"')
+        );
+        check("下一轮提示词不含 XML/CDATA 动作", !hasLegacyActionMarkup(result.prompt));
+        check(
             "事件顺序完整",
             agent.events.map((item) => item.type).join(",") ===
                 "provider.request,provider.response,action.parsed,runtime.result",
@@ -99,7 +119,7 @@ async function main() {
             },
             provider: {
                 async send() {
-                    return "<answer>最终答案</answer>";
+                    return '{"action":"answer","params":{"content":"最终答案"}}';
                 },
             },
         });
@@ -115,6 +135,11 @@ async function main() {
             "发出 answer 事件",
             agent.events.some((item) => item.type === "answer")
         );
+        check(
+            "answer 后给出 done JSON 提示词",
+            result.prompt === getDonePrompt() &&
+                result.prompt.includes('{"action":"done","params":{}}')
+        );
     }
 
     // ------------------------------------------------------------
@@ -129,7 +154,7 @@ async function main() {
             },
             provider: {
                 async send() {
-                    return "<done></done>";
+                    return '{"action":"done","params":{}}';
                 },
             },
         });
@@ -161,6 +186,11 @@ async function main() {
         check("发送失败计数递增", state.count === 1, "count=" + state.count);
         check("未达上限不终止", result.stop === false);
         check("给出错误提示词", typeof result.prompt === "string" && result.prompt.length > 0);
+        check(
+            "发送失败提示词要求 JSON 动作对象",
+            result.prompt.includes("JSON") && result.prompt.includes("动作对象")
+        );
+        check("发送失败提示词不含 XML/CDATA 动作", !hasLegacyActionMarkup(result.prompt));
         check(
             "发出重试事件",
             agent.events.some((item) => item.type === "provider.retry")
@@ -205,7 +235,7 @@ async function main() {
             provider: {
                 async send() {
                     sent = true;
-                    return "<read/>";
+                    return '{"action":"read","params":{"path":"a.txt"}}';
                 },
             },
         });
@@ -220,13 +250,13 @@ async function main() {
     }
 
     // ------------------------------------------------------------
-    // 7. 解析失败：给出 XML 纠错提示词
+    // 7. 解析失败：给出 JSON 纠错提示词
     // ------------------------------------------------------------
     {
         const agent = makeAgent({
             provider: {
                 async send() {
-                    return "这不是 XML";
+                    return INVALID_JSON_REPLY;
                 },
             },
         });
@@ -241,6 +271,15 @@ async function main() {
             "解析失败给出纠错提示词",
             typeof result.prompt === "string" && result.prompt.length > 0
         );
+        check(
+            "解析失败使用 JSON 纠错模板",
+            result.prompt === getJsonErrorPrompt(new Error(PARSE_ERROR_MESSAGE))
+        );
+        check(
+            "纠错提示词要求 action/params 结构",
+            result.prompt.includes('{"action":"read","params":{"path":"."}}')
+        );
+        check("纠错提示词不含 XML/CDATA 动作", !hasLegacyActionMarkup(result.prompt));
         check(
             "发出解析错误事件",
             agent.events.some((item) => item.type === "action.parse_error")
@@ -282,10 +321,7 @@ async function main() {
     // 忘了透传，抽签就形同虚设，这里把它变成红灯。
     // ------------------------------------------------------------
     {
-        const {
-            getSendErrorPrompt,
-        } = require("../../prompts/send-error-prompt");
-        const { getXmlErrorPrompt } = require("../../prompts/xml-error-prompt");
+        const { getSendErrorPrompt } = require("../../prompts/send-error-prompt");
 
         const variantAgent = makeAgent({
             promptVariant: 2,
@@ -310,23 +346,24 @@ async function main() {
             sendResult.prompt !== getSendErrorPrompt(new Error("boom"), { variant: 0 })
         );
 
-        const xmlVariantAgent = makeAgent({
+        const jsonVariantAgent = makeAgent({
             promptVariant: 2,
             provider: {
                 async send() {
-                    return "这不是 XML";
+                    return INVALID_JSON_REPLY;
                 },
             },
         });
-        const xmlResult = await runStep(xmlVariantAgent, {
+        const jsonResult = await runStep(jsonVariantAgent, {
             prompt: "PROMPT",
             providerErrorState: { count: 0, max: 5 },
         });
-        const expectedXml = getXmlErrorPrompt(new Error("No XML Action found"), { variant: 2 });
-        check("格式错误提示词跟随会话变体", xmlResult.prompt === expectedXml);
+        const parseError = new Error(PARSE_ERROR_MESSAGE);
+        const expectedJson = getJsonErrorPrompt(parseError, { variant: 2 });
+        check("格式错误提示词跟随会话变体", jsonResult.prompt === expectedJson);
         check(
             "格式错误提示词与索引 0 不同",
-            xmlResult.prompt !== getXmlErrorPrompt(new Error("No XML Action found"), { variant: 0 })
+            jsonResult.prompt !== getJsonErrorPrompt(parseError, { variant: 0 })
         );
 
         // 未设置 promptVariant（老调用方 / 直接构造的 Agent）必须退回索引 0

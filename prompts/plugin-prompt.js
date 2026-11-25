@@ -5,9 +5,9 @@
 插件动作的文档由本模块自动生成：注册项里的 meta.prompt 就是唯一来源。
 
 两个关键约束（见 docs/PLUGIN_DESIGN.md §3.1 ②）：
-1. 没有启用的插件动作时，本模块返回空字符串，首轮提示词与 1.0.x 逐字节一致；
+1. 没有启用的插件动作时，本模块返回空字符串，不追加额外区块；
 2. 有插件动作时按字符预算裁剪，避免插件变多后把首轮提示词撑爆
-   —— XML 协议类 Agent 的输出稳定性对提示词长度非常敏感。
+   —— JSON 动作协议对提示词长度也很敏感。
 */
 
 const { getRegistrySafe } = require("../plugins/registry");
@@ -54,7 +54,11 @@ function buildPluginPromptSection(registry, options = {}) {
 
     // 头部只保留必要信息：系统提示词里已经交代过"每次只发一段动作"和报错会被拒绝，
     // 这里再抄一遍只会让首轮消息更长（网页平台按"用户消息"读，越长越像脚本）。
-    const lines = ["插件能力（Plugin Actions）", "以下动作由插件提供，写法和上面的一样：", ""];
+    const lines = [
+        "插件能力（Plugin Actions）",
+        "以下动作由插件提供，使用相同的 {action, params} 结构：",
+        "",
+    ];
 
     let used = lines.join("\n").length;
     let skipped = 0;

@@ -1,7 +1,7 @@
 /**
 单步执行
 
-一轮交互的完整闭环：发送 → 解析 XML → 执行动作 → 决定下一步提示词。
+一轮交互的完整闭环：发送 → 解析 JSON 动作 → 执行动作 → 决定下一步提示词。
 它只做流程，不持有状态：所有状态（step / status / history / answer）都留在 Agent 上。
 
 为什么单独成文件：这段逻辑有 4 个分支出口（发送失败重试、解析失败、动作失败、终止语义），
@@ -12,14 +12,14 @@
 
 const { nextDelay } = require("./retry");
 const {
-    getXmlErrorPrompt,
+    getJsonErrorPrompt,
     getDonePrompt,
     getSendErrorPrompt,
     getRuntimeErrorPrompt,
     getRuntimeOkPrompt,
 } = require("../prompts/index");
 const { createHistoryRecord } = require("../workspace/history");
-const { extractXML } = require("../parse/xml-parse");
+const { extractAction } = require("../parse/json-action");
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -116,7 +116,7 @@ async function runStep(agent, { prompt, providerErrorState }) {
 
     let action;
     try {
-        action = extractXML(response);
+        action = extractAction(response);
         agent.emitEvent("action.parsed", {
             step: agent.step,
             action: action.action,
@@ -130,7 +130,7 @@ async function runStep(agent, { prompt, providerErrorState }) {
         });
         return {
             stop: false,
-            prompt: getXmlErrorPrompt(error, { variant: agent.promptVariant ?? 0 }),
+            prompt: getJsonErrorPrompt(error, { variant: agent.promptVariant ?? 0 }),
         };
     }
 

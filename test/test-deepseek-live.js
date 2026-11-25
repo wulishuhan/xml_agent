@@ -2,8 +2,8 @@ const assert = require("assert");
 const path = require("path");
 const fs = require("fs");
 const browserSettings = require("../webui/browser-settings");
-const { DeepSeekProvider, extractXmlFromCandidate } = require("../providers/deepseek");
-const { extractXML } = require("../parse/xml-parse");
+const { DeepSeekProvider } = require("../providers/deepseek");
+const { extractAction } = require("../parse/json-action");
 const { takeScreenshot } = require("../plugins/builtin/screenshot/engine/take-screenshot");
 // ============================================================
 // DeepSeek CDP 浏览器端到端测试用例（真实连接 CDP + 真实对话）
@@ -12,10 +12,10 @@ const { takeScreenshot } = require("../plugins/builtin/screenshot/engine/take-sc
 // 步骤：
 //   1. 确保 CDP 浏览器可用（复用 webui/browser-settings）
 //   2. DeepSeekProvider.start() 连接 CDP 并定位输入框
-//   3. 发送一条极短任务，要求模型只回一个 XML action（截屏），验证：
+//   3. 发送一条极短任务，要求模型只回一个 JSON action（answer），验证：
 //        a) 能拿到非空响应
-//        b) 响应能被 extractXmlFromCandidate 提取为 XML
-//        c) 能被 parse/xml-parse 解析为合法 action
+//        b) 响应能被 parse/json-action 的 extractAction 解析为合法动作
+//        c) answer 内容符合预期
 //        d) conversationId 被正确提取
 //   4. 截图能力顺带验证：截当前 CDP 页面，确认落盘
 // ============================================================
@@ -66,8 +66,8 @@ async function main() {
         console.log("[step3] sending prompt to DeepSeek...");
         const prompt = [
             "这是一个自动化能力测试。",
-            "请只回复下面这一行 XML，不要加任何解释、不要加代码块：",
-            "<answer><![CDATA[deepseek-cdp-ok]]></answer>",
+            "请只回复下面这一行 JSON，不要加任何解释、不要加代码块：",
+            JSON.stringify({ action: "answer", params: { content: "deepseek-cdp-ok" } }),
         ].join(String.fromCharCode(10));
         const t0 = Date.now();
         const response = await provider.send(prompt);
@@ -78,26 +78,11 @@ async function main() {
         console.log("[step3] response preview:");
         console.log(String(response || "").slice(0, 400));
         assert(response && response.trim(), "DeepSeek response should be non-empty");
-        console.log("[step4] extracting XML...");
-        let candidate = extractXmlFromCandidate(response);
-        let parsed = null;
-        if (candidate) {
-            parsed = extractXML(candidate);
-        } else {
-            // 兜底：万一模型回复里混入其它文本，直接尝试从全文解析
-            try {
-                parsed = extractXML(response);
-            } catch (err) {
-                parsed = null;
-            }
-        }
-        console.log("[step4] candidate=" + (candidate ? candidate.slice(0, 120) : "null"));
-        console.log("[step4] parsed action=" + (parsed ? parsed.action : "null"));
-        assert(parsed, "should parse a valid XML action from DeepSeek response");
-        assert(
-            ["answer", "screenshot", "read", "write", "exec", "done"].indexOf(parsed.action) !== -1,
-            "parsed action should be a known action, got " + parsed.action
-        );
+        console.log("[step4] extracting JSON action...");
+        const parsed = extractAction(response);
+        console.log("[step4] parsed action=" + JSON.stringify(parsed));
+        assert.strictEqual(parsed.action, "answer", "parsed action should be answer");
+        assert.strictEqual(parsed.params.content, "deepseek-cdp-ok", "answer content should match");
         console.log("[step5] conversation id...");
         const cid = provider.refreshConversationId();
         console.log("[step5] conversationId=" + cid);

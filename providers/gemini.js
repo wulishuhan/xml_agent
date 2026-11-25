@@ -1,6 +1,6 @@
 const { BrowserChatProvider } = require("./browser-chat");
 const { renderGeminiMessage } = require("./dom/gemini-message");
-const { balanceMarkdownFences, extractXmlFromCandidate } = require("./markdown-fence-utils");
+const { balanceMarkdownFences, extractJsonActionCandidate } = require("./markdown-fence-utils");
 
 // 会话地址：https://gemini.google.com/app/<id>
 // id 目前是 16 位十六进制，但官方改过一次格式，所以放宽到 8 位以上字母数字。
@@ -77,29 +77,24 @@ class GeminiProvider extends BrowserChatProvider {
     }
 
     /**
-    Gemini 的聊天渲染器把裸 XML 当成富文本处理：`<answer>收到</answer>` 渲染后
-    DOM 里只剩 `收到`，标签被 Angular 的 sanitizer 整块删掉（实测 innerHTML 只剩 <p><span>）。
-    也就是说模型写了动作，Agent 却永远收不到 —— 这个平台上"裸 XML"是不可用的。
+    Gemini 需要明确区分普通说明与动作回复：动作回复只能包含一个 JSON
+    envelope 对象。裸 JSON 与 ```json 围栏都可原样提取；XML/CDATA 以及
+    ```xml 代码块不属于动作协议，不能输出。
 
-    唯一稳定的载体是代码块：`<pre><code>` 里的尖括号是文本节点，会原样保留，
-    解析层的去围栏逻辑本来就会处理 ```xml 这种写法。
-
-    所以这里声明一条平台级输出约束，由 prompts/first-prompt.js 拼进首轮提示词。
+    这条平台级约束由 prompts/first-prompt.js 拼进首轮提示词。
     */
     getActionMarkupHint() {
         return [
-            "本平台会丢弃裸的 XML 标签：直接把 <answer>、<read/> 这类标签写在正文里，",
-            "页面渲染后标签会消失，Agent 收不到你的动作。",
-            "因此**每一个 XML Action 都必须放进代码块里输出**，例如：",
+            "需要执行动作时，只输出一个 JSON 对象，格式为：",
             "",
-            "```xml",
-            '<read path="package.json"/>',
+            "```json",
+            '{"action":"read","params":{"path":"package.json"}}',
             "```",
             "",
             "说明：",
-            "- 代码块里的内容会原样保留；多个动作可以放在同一个代码块里。",
-            "- 这条只约束 XML Action 的写法，<write> 的内容仍然按协议放在 CDATA 中。",
-            "- 不要在代码块之外输出任何裸标签。",
+            "- 可以直接输出裸 JSON 对象，也可以使用 ```json 围栏。",
+            "- 不要输出 XML 标签、CDATA 或 XML 代码块。",
+            "- 不要在动作回复中输出多个顶层 JSON 对象；params 内部可以嵌套 JSON 对象。",
         ].join("\n");
     }
 
@@ -269,10 +264,10 @@ class GeminiProvider extends BrowserChatProvider {
             const domText = await this.buildFromDom(index);
 
             if (domText && domText.trim()) {
-                const xmlFromDom = extractXmlFromCandidate(domText);
+                const jsonFromDom = extractJsonActionCandidate(domText);
 
-                if (xmlFromDom) {
-                    return balanceMarkdownFences(xmlFromDom);
+                if (jsonFromDom) {
+                    return balanceMarkdownFences(jsonFromDom);
                 }
 
                 return balanceMarkdownFences(domText);
@@ -282,10 +277,10 @@ class GeminiProvider extends BrowserChatProvider {
             const fiberCandidates = await this.extractFromReactFiber(message);
 
             for (const candidate of fiberCandidates) {
-                const xml = extractXmlFromCandidate(candidate.value);
+                const json = extractJsonActionCandidate(candidate.value);
 
-                if (xml) {
-                    return balanceMarkdownFences(xml);
+                if (json) {
+                    return balanceMarkdownFences(json);
                 }
             }
 

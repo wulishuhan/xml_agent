@@ -4,12 +4,14 @@ Gemini 消息 DOM 重建单测（providers/dom/gemini-message.js）
 Gemini 的助手回复容器里混了三类"不是回答内容"的东西：
 `<model-thoughts>` 思考过程、代码块右上角的语言标签与复制按钮、Google 搜索引用角标。
 这层如果退化，取回复要么拿到"正在思考"的噪声，要么把按钮文案当正文，
-要么代码块退化成裸文本（XML 解析随之失真）。
+要么代码块退化成裸文本（JSON Action 解析随之失真）。
 
 运行：node test/unit/test-gemini-message.js
 */
 
 const { renderGeminiMessage } = require("../../providers/dom/gemini-message");
+const { GeminiProvider } = require("../../providers/gemini");
+const { extractActionEnvelope, hasActionEnvelope } = require("../../parse/json-candidate");
 const { build, text } = require("./fake-dom");
 
 const FENCE = String.fromCharCode(96, 96, 96);
@@ -112,6 +114,67 @@ async function main() {
             "语言标签不混进正文",
             output.split("\n").filter((line) => line === "python").length === 0,
             JSON.stringify(output)
+        );
+    }
+
+    // ------------------------------------------------------------
+    // 2b. JSON Action 代码块完整保留，并可由解析层直接识别
+    // ------------------------------------------------------------
+    {
+        const fixture = {
+            action: "write",
+            params: {
+                path: "note.txt",
+                content: '{"nested":true}\n"quoted" \\ path',
+                options: { nested: { enabled: true } },
+            },
+        };
+        const raw = JSON.stringify(fixture);
+        const output = await renderGeminiMessage(
+            buildMessage({
+                head: build("p", []),
+                body: buildCodeBlock({ language: "json", code: raw }),
+            })
+        );
+        let parsed = null;
+
+        try {
+            parsed = extractActionEnvelope(output);
+        } catch (error) {
+            parsed = null;
+        }
+
+        check(
+            "Gemini 输出带 json 语言的围栏",
+            output === FENCE + "json\n" + raw + "\n" + FENCE,
+            JSON.stringify(output)
+        );
+        check(
+            "Gemini 渲染后的 JSON envelope 可解析且转义不变",
+            hasActionEnvelope(output) && JSON.stringify(parsed) === JSON.stringify(fixture),
+            JSON.stringify(parsed)
+        );
+    }
+
+    // ------------------------------------------------------------
+    // 2c. Gemini 首轮输出提示明确要求 JSON，并禁止 XML
+    // ------------------------------------------------------------
+    {
+        const provider = new GeminiProvider({ autoStart: false });
+        const hint = provider.getActionMarkupHint();
+        const example = JSON.stringify({ action: "read", params: { path: "package.json" } });
+
+        check(
+            "Gemini JSON 输出提示包含 ```json 与完整 envelope 示例",
+            hint.indexOf(FENCE + "json") !== -1 && hint.indexOf(example) !== -1,
+            hint
+        );
+        check(
+            "Gemini JSON 输出提示禁止 XML、CDATA 和多个顶层对象",
+            hint.indexOf("XML") !== -1 &&
+                hint.indexOf("CDATA") !== -1 &&
+                hint.indexOf("多个顶层 JSON 对象") !== -1,
+            hint
         );
     }
 

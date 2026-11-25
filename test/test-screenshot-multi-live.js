@@ -39,17 +39,17 @@ async function run() {
         return;
     }
     const targets = picked.map((title, index) => ({
-        "@_source": "window",
-        "@_windowTitle": title,
-        "@_path": "shots/w" + (index + 1) + ".png",
+        source: "window",
+        windowTitle: title,
+        path: "shots/w" + (index + 1) + ".png",
     }));
     // 再追加一张全屏，凑成多目标（screen 与 window 混合）
-    targets.push({ "@_source": "screen", "@_path": "shots/desktop.png" });
+    targets.push({ source: "screen", path: "shots/desktop.png" });
     console.log("TARGET_COUNT:" + targets.length);
     const runtime = new Runtime(workspace);
     const result = await runtime.run({
         action: "screenshot",
-        node: { target: targets },
+        params: { targets },
     });
     console.log(
         "SUMMARY: ok=" +

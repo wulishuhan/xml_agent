@@ -332,6 +332,8 @@ async function main() {
         const section = buildSkillPromptSection(list);
         assert.ok(section.indexOf("可用技能") !== -1);
         assert.ok(section.indexOf(".agent/skills/novel-writing.md") !== -1);
+        assert.ok(section.includes("truncated=true"));
+        assert.ok(section.includes("nextOffset"));
         // builtin / user 的绝对路径不该出现：模型读不到
         const workspaceFree = skills.listSkills({ workspace: null }, options);
         assert.strictEqual(buildSkillPromptSection(workspaceFree), "");
@@ -345,18 +347,21 @@ async function main() {
         assert.strictEqual(buildSkillPromptSection(disabled), "");
     });
 
-    await check("没有技能时首轮提示词与旧版一致（不含技能段落）", () => {
-        const prompt = getFirstPrompt(workspace, ["file.txt"], "做点事", { skills: [] });
+    await check("没有技能时首轮提示词不含技能段落", () => {
+        const prompt = getFirstPrompt(workspace, "做点事", { skills: [] });
         assert.strictEqual(prompt.indexOf("可用技能"), -1);
     });
 
-    await check("有技能时首轮提示词带路径，且仍保留原有段落", () => {
+    await check("有技能时首轮提示词带路径，并保留 JSON 协议段落", () => {
         const list = skills.listSkills(Object.assign({ workspace: workspace }, options));
-        const prompt = getFirstPrompt(workspace, ["file.txt"], "做点事", { skills: list });
+        const prompt = getFirstPrompt(workspace, "做点事", { skills: list });
         assert.ok(prompt.indexOf("可用技能") !== -1);
         assert.ok(prompt.indexOf(".agent/skills/novel-writing.md") !== -1);
-        assert.ok(prompt.indexOf("Workspace Manifest") !== -1);
+        assert.ok(prompt.indexOf("动作协议 JSON Schema") !== -1);
+        assert.ok(prompt.indexOf("项目：" + path.basename(workspace)) !== -1);
         assert.ok(prompt.indexOf("用户任务") !== -1);
+        assert.ok(prompt.indexOf("做点事") !== -1);
+        assert.strictEqual(prompt.indexOf("Workspace Manifest"), -1);
     });
 
     // ---- HTTP 接口 ----

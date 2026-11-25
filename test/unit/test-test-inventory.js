@@ -11,6 +11,9 @@
 
 新增测试时若不想挂进脚本，请把文件名加进 EXTRA 并写清理由，
 否则这个测试会失败 —— 这是有意为之。
+
+JSON 协议迁移后，旧 XML 手工探针已移除；解析回归由 test:core 中的
+test/test-json-action.js 覆盖。
 */
 
 const assert = require("assert");
@@ -33,8 +36,6 @@ const EXTRA = {
     // ---- 手工探针：会被 test:core 里的正式测试覆盖，跑它只为看原始输出 ----
     "test/test-config.js": "打印配置快照；断言版本是 test-config-schema.js",
     "test/test-runtime.js": "打印 read/write/exec 结果；断言版本是 test-builtin-actions.js",
-    "test/test-xml.js":
-        "打印 XML 解析结果（非法输入也打印 FAIL，无法判定）；断言版本是 test-xml-parse-cdata.js",
     "test/test-background-exec.js": "手工验证后台进程存活，需要人看输出",
     "test/test-session-concurrency.js": "手工并发压测，会写真实会话目录，不放进离线套件",
     "test/test-electron-exe-fix.js":
@@ -129,6 +130,25 @@ check("test:offline 不含 live 脚本", () => {
         .join(" && ");
     const leaked = liveFiles.filter((f) => offline.includes(f));
     assert.deepStrictEqual(leaked, [], "这些 live 脚本被放进了离线套件：" + leaked.join(", "));
+});
+
+check("Trace UI 使用 JSON action 文案", () => {
+    const trace = fs.readFileSync(
+        path.join(ROOT, "webui/frontend/src/components/AgentTrace.vue"),
+        "utf8"
+    );
+    assert.ok(
+        /["']action\.parsed["']\s*:\s*["']JSON action parsed["']/.test(trace),
+        "action.parsed 标签应为 JSON action parsed"
+    );
+    assert.ok(
+        /["']action\.parse_error["']\s*:\s*["']JSON action parse error["']/.test(trace),
+        "action.parse_error 标签应为 JSON action parse error"
+    );
+    assert.ok(trace.includes("Parsed JSON action"), "动作摘要应为 Parsed JSON action");
+    assert.ok(!/["']action\.parsed["']\s*:\s*["']Action parsed["']/.test(trace));
+    assert.ok(!/["']action\.parse_error["']\s*:\s*["']Action parse error["']/.test(trace));
+    assert.ok(!trace.includes("Parsed XML action"));
 });
 
 let failed = 0;

@@ -18,7 +18,7 @@ const { ChatGPTProvider } = require("../../providers/chatgpt");
 const { QwenProvider } = require("../../providers/qwen");
 const { DeepSeekProvider } = require("../../providers/deepseek");
 const { GlmProvider } = require("../../providers/glm");
-const { containsActionTag } = require("../../providers/action-tag");
+const { hasActionEnvelope } = require("../../providers/action-tag");
 const { collectFiberCandidates, collectChildFiberCandidate } = require("../../providers/dom/fiber");
 
 let pass = 0;
@@ -299,13 +299,32 @@ async function main() {
     }
 
     // ------------------------------------------------------------
-    // 7. Action 标签识别（screenshot 必须算 Action）
+    // 7. JSON Action envelope 识别（开放动作名，XML 不再属于协议）
     // ------------------------------------------------------------
-    check("containsActionTag 识别 screenshot", containsActionTag('<screenshot source="window"/>'));
-    check("containsActionTag 识别 answer", containsActionTag("<answer>x</answer>"));
+    const readAction = JSON.stringify({ action: "read", params: { path: "." } });
+    const screenshotAction = JSON.stringify({ action: "screenshot", params: { source: "window" } });
+    const pluginAction = JSON.stringify({ action: "browse-nav", params: { url: "https://example.com" } });
+    const fence = String.fromCharCode(96, 96, 96);
+
     check(
-        "containsActionTag 不误判普通文本",
-        containsActionTag("这是一个普通回答") === false && containsActionTag(null) === false
+        "hasActionEnvelope 识别内置与插件 JSON 动作",
+        [readAction, screenshotAction, pluginAction].every((value) => hasActionEnvelope(value))
+    );
+    check(
+        "hasActionEnvelope 识别 ```json 围栏与说明文字",
+        hasActionEnvelope("先执行：\n" + fence + "json\n" + readAction + "\n" + fence)
+    );
+    check(
+        "hasActionEnvelope 拒绝普通文本、XML 与空值",
+        hasActionEnvelope("这是一个普通回答") === false &&
+            hasActionEnvelope('<read path="."/>') === false &&
+            hasActionEnvelope("<answer>x</answer>") === false &&
+            hasActionEnvelope("") === false &&
+            hasActionEnvelope(null) === false
+    );
+    check(
+        "hasActionEnvelope 拒绝多个 envelope",
+        hasActionEnvelope(readAction + "\n" + screenshotAction) === false
     );
 
     // ------------------------------------------------------------
@@ -316,20 +335,21 @@ async function main() {
         // 若函数引用了模块作用域变量，这一步就会失败。
         const revived = new Function("return (" + collectFiberCandidates.toString() + ")")();
 
+        const action = JSON.stringify({ action: "read", params: { path: "." } });
         const element = {};
         element.__reactProps$abc123 = {
-            memoizedValue: { children: "普通文本".repeat(30) },
+            memoizedValue: { children: action },
         };
 
         const candidates = revived(element);
         check(
-            "三向 BFS 能从 props 里捞到候选文本",
+            "三向 BFS 能从 props 里捞到 JSON 动作候选",
             Array.isArray(candidates) && candidates.length > 0,
             Array.isArray(candidates) ? String(candidates.length) : typeof candidates
         );
         check(
-            "候选带 hasAction 标记",
-            Array.isArray(candidates) && typeof candidates[0].hasAction === "boolean",
+            "序列化后的候选带 hasAction=true",
+            Array.isArray(candidates) && candidates[0] && candidates[0].hasAction === true,
             JSON.stringify(candidates[0] && candidates[0].hasAction)
         );
     }
@@ -337,9 +357,10 @@ async function main() {
     {
         const revived = new Function("return (" + collectChildFiberCandidate.toString() + ")")();
 
+        const action = JSON.stringify({ action: "answer", params: { text: "a".repeat(150) } });
         const element = {};
         element.__reactFiber$abc123 = {
-            memoizedProps: { content: "<answer>" + "a".repeat(150) + "</answer>" },
+            memoizedProps: { content: action },
             child: null,
         };
 
@@ -350,14 +371,86 @@ async function main() {
             result ? JSON.stringify(result.totalCandidates) : "null"
         );
         check(
-            "child-only 扫描识别 Action 文本",
+            "child-only 扫描识别 JSON Action 文本",
             result && result.top && result.top.isAction === true,
             result && result.top ? String(result.top.isAction) : "null"
         );
     }
 
     // ------------------------------------------------------------
-    // 9. 平台特有方法仍然在位（钩子没把差异吃掉）
+    // 9. Qwen 长回复分段合并、重复节点去重与空回复
+    // ------------------------------------------------------------
+    {
+        function makeSegmentedProvider(segments) {
+            const provider = make(QwenProvider);
+            const seen = [];
+            provider.isPageAlive = () => true;
+            provider.page = {
+                locator: () => ({ count: async () => segments.length }),
+            };
+            provider.extractOne = async (index) => {
+                seen.push(index);
+                const value = segments[index] || "";
+                return {
+                    text: value,
+                    fromFiber: false,
+                    hasAction: hasActionEnvelope(value),
+                };
+            };
+            return { provider, seen };
+        }
+
+        const longAction = JSON.stringify(
+            {
+                action: "write",
+                params: { path: "long.txt", content: "abcdefghij".repeat(30) },
+            },
+            null,
+            2
+        );
+        const lines = longAction.split("\n");
+        const firstLineCut = Math.floor(lines.length / 3);
+        const secondLineCut = Math.floor((lines.length * 2) / 3);
+        // 按行分段，模拟 DOM 消息边界；段间接回车不会把换行塞进 JSON 字符串。
+        const chunks = [
+            lines.slice(0, firstLineCut).join("\n"),
+            lines.slice(firstLineCut, secondLineCut).join("\n"),
+            lines.slice(secondLineCut).join("\n"),
+        ];
+
+        const segmented = makeSegmentedProvider(chunks);
+        const merged = await segmented.provider.getLastResponse();
+        check(
+            "Qwen 合并长回复分段后返回完整 JSON envelope",
+            merged === longAction,
+            merged.slice(0, 80)
+        );
+        check(
+            "Qwen 合并时覆盖最近的分段而不只读最后一段",
+            segmented.seen.indexOf(0) !== -1 && segmented.seen.indexOf(1) !== -1,
+            JSON.stringify(segmented.seen)
+        );
+
+        const deduped = makeSegmentedProvider([chunks[0], chunks[0], chunks[1], chunks[2]]);
+        const dedupedResult = await deduped.provider.getLastResponse();
+        check(
+            "Qwen 合并前去除重复渲染的分段，避免拼出两个 envelope",
+            dedupedResult === longAction,
+            dedupedResult.slice(0, 80)
+        );
+
+        const noMessages = makeSegmentedProvider([]);
+        check("Qwen 没有助手消息时返回空回复", (await noMessages.provider.getLastResponse()) === "");
+
+        const emptySegments = makeSegmentedProvider(["", "   "]);
+        check(
+            "Qwen 分段均为空时返回空回复",
+            (await emptySegments.provider.getLastResponse()).trim() === ""
+        );
+    }
+
+    // ------------------------------------------------------------
+    // 10. 平台特有方法仍然在位（钩子没把差异吃掉）
     // ------------------------------------------------------------
     {
         const deepseek = make(DeepSeekProvider);
@@ -390,19 +483,20 @@ async function main() {
     }
 
     // ------------------------------------------------------------
-    // 10. GLM 的 fiber 兜底必须只向下遍历，不能爬到用户消息
+    // 11. GLM 的 fiber 兜底必须只向下遍历，不能爬到用户消息
     // ------------------------------------------------------------
     {
         const glm = make(GlmProvider);
         let capturedFn = null;
         let capturedArg = null;
+        const action = JSON.stringify({ action: "read", params: { path: "a.js" } });
         const fakeHandle = {
             evaluate: async (fn, arg) => {
                 capturedFn = fn;
                 capturedArg = arg;
                 return {
-                    top: { value: '<read path="a.js"/>' },
-                    candidates: [{ value: '<read path="a.js"/>' }, { value: "正文文本" }],
+                    top: { value: action },
+                    candidates: [{ value: action }, { value: "正文文本".repeat(12) }],
                     totalCandidates: 2,
                 };
             },
@@ -415,12 +509,13 @@ async function main() {
             capturedFn === collectFiberCandidates ? "仍是三向 BFS" : ""
         );
         check(
-            "GLM fiber 兜底传入 action 标签清单",
-            Array.isArray(capturedArg) && capturedArg.length > 0
+            "GLM fiber 兜底不再依赖 action 标签清单参数",
+            capturedArg === undefined,
+            JSON.stringify(capturedArg)
         );
         check(
-            "GLM fiber 兜底返回数组且形状与基类一致",
-            Array.isArray(out) && out.length === 2 && out[0].value === '<read path="a.js"/>'
+            "GLM fiber 兜底返回数组且保留 JSON 动作与正文",
+            Array.isArray(out) && out.length === 2 && out[0].value === action
         );
 
         // evaluate 抛错时要降级为空数组，不能让兜底把整轮取回复带崩
@@ -433,16 +528,18 @@ async function main() {
         check("GLM fiber 兜底异常时返回空数组", Array.isArray(degraded) && degraded.length === 0);
 
         // z.ai 会把 loading 动画的内联 CSS 作为 children prop 挂在消息上，
-        // 必须过滤掉，否则 extractXML 拿到 CSS 会报 "No XML Action found"。
+        // 必须过滤掉，否则 extractOne 会把 CSS 当正文返回。
         const cssNoise =
             ".thinking-pulse { animation: thinking-pulse 1.6s ease-in-out; --uib-size: 28px; } @keyframes thinking-pulse { 0% { opacity: 0.3; } 50% { opacity: 1; } }";
+        const readAction = JSON.stringify({ action: "read", params: { path: "b.js" } });
+        const body = "正常正文内容一段".repeat(4);
         const noisyHandle = {
             evaluate: async () => ({
                 top: { value: cssNoise },
                 candidates: [
                     { value: cssNoise },
-                    { value: '<read path="b.js"/>' },
-                    { value: "正常正文内容一段" },
+                    { value: readAction },
+                    { value: body },
                 ],
                 totalCandidates: 3,
             }),
@@ -454,9 +551,23 @@ async function main() {
             JSON.stringify(filtered.map((c) => c.value.slice(0, 20)))
         );
         check(
-            "GLM fiber 兜底保留动作与正文",
-            filtered.some((c) => c.value === '<read path="b.js"/>') &&
-                filtered.some((c) => c.value === "正常正文内容一段")
+            "GLM fiber 兜底保留 JSON 动作与正文",
+            filtered.some((c) => c.value === readAction) &&
+                filtered.some((c) => c.value === body)
+        );
+
+        const actionWithCss = cssNoise + "\n" + readAction;
+        const cssActionHandle = {
+            evaluate: async () => ({
+                top: { value: actionWithCss },
+                candidates: [{ value: actionWithCss }],
+                totalCandidates: 1,
+            }),
+        };
+        const keptAction = await glm.extractFromReactFiber(cssActionHandle);
+        check(
+            "GLM fiber 兜底不把带 JSON envelope 的候选当 CSS 噪声",
+            keptAction.length === 1 && keptAction[0].value === actionWithCss
         );
 
         // 其他平台不应被这次覆盖影响：基类仍用三向 collectFiberCandidates
@@ -472,7 +583,7 @@ async function main() {
     }
 
     // ------------------------------------------------------------
-    // 11. ChatGPT 复用页面落在旧会话时，新任务自动开一条全新会话
+    // 12. ChatGPT 复用页面落在旧会话时，新任务自动开一条全新会话
     //     （失声会话对长短消息都不出正文，重试无法自救）
     // ------------------------------------------------------------
     {
@@ -575,7 +686,7 @@ async function main() {
     }
 
     // ------------------------------------------------------------
-    // 12. ChatGPT 提交必须以「输入框真的清空」为准，不能以「按键没抛错」为准
+    // 13. ChatGPT 提交必须以「输入框真的清空」为准，不能以「按键没抛错」为准
     //
     // 真机踩到的坑：新会话里 Enter 按下去了，但编辑器未就绪、没提交，
     // 1821 字符一直留在输入框，user 消息 0 条，然后一路静等到整轮超时。

@@ -15,7 +15,7 @@ module.exports = {
     { workspace, resolvePath(target), execScope }
     返回值与内置动作保持一致：{ ok, action, error? , ... }，并附带 plugin / durationMs。
     */
-    async invokeAction(name, node, host = {}) {
+    async invokeAction(name, params, host = {}) {
         this.load();
         const entry = this.actions.get(String(name || ""));
         if (!entry) {
@@ -49,18 +49,18 @@ module.exports = {
             };
         }
 
-        const attrsResult = sdk.normalizeAttrs(entry.def, node);
-        if (!attrsResult.ok) {
+        const paramsResult = sdk.validateParams(entry.def.schema, params);
+        if (!paramsResult.ok) {
             return {
                 ok: false,
                 action: entry.name,
                 plugin: entry.plugin,
-                error: attrsResult.error,
+                error: paramsResult.error,
             };
         }
         if (entry.def.validate) {
             try {
-                entry.def.validate(node);
+                entry.def.validate(paramsResult.value);
             } catch (error) {
                 return {
                     ok: false,
@@ -77,14 +77,14 @@ module.exports = {
             record,
             entry,
             host,
-            attrs: attrsResult.value,
+            params: paramsResult.value,
             signal: controller.signal,
         });
 
         let result;
         try {
             result = await runWithTimeout(
-                () => entry.def.run(node, ctx),
+                () => entry.def.run(paramsResult.value, ctx),
                 entry.def.meta.timeoutMs,
                 controller
             );

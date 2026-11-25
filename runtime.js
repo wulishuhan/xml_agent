@@ -1,7 +1,7 @@
 /**
 Runtime —— 系统的执行核心与安全边界。
 
-LLM 不直接操作电脑：所有操作都必须经过 XML Action，由本模块按动作表执行。
+LLM 不直接操作电脑：所有操作都必须经过 JSON Action，由本模块按动作表执行。
 本模块现在只负责四件事：
 1. Workspace 与路径沙箱（resolvePath）；
 2. 查表执行内置动作（actions/ 里的定义对象）与插件动作（plugins/registry）；
@@ -240,12 +240,15 @@ class Runtime {
         }
         this.getWorkspace();
         const actionName = action.action;
-        const node = action.node;
+        const params = action.params;
         if (!actionName || typeof actionName !== "string") {
             throw new Error("Action name is required");
         }
+        if (!params || typeof params !== "object" || Array.isArray(params)) {
+            throw new Error("Action params must be an object");
+        }
         logger.debug("Runtime Action:", actionName);
-        return await this.invokeActionByName(actionName, node);
+        return await this.invokeActionByName(actionName, params);
     }
 
     /**
@@ -266,15 +269,15 @@ class Runtime {
     3. 超时后不主动结束子进程。exec 的命令级超时会先一步杀掉 child；这里再
        killAllProcesses 会把模型有意留在后台的服务（exec --background）一起带走。
     */
-    async runBuiltinAction(actionName, definition, node) {
+    async runBuiltinAction(actionName, definition, params) {
         const context = this.createBuiltinContext();
         const timeoutMs = resolveActionTimeout(actionName, definition.meta);
         if (!timeoutMs) {
-            return await definition.run(node, context);
+            return await definition.run(params, context);
         }
 
         let timer = null;
-        const work = Promise.resolve().then(() => definition.run(node, context));
+        const work = Promise.resolve().then(() => definition.run(params, context));
         const deadline = new Promise((resolve, reject) => {
             timer = setTimeout(() => {
                 logger.warn(
@@ -301,11 +304,11 @@ class Runtime {
     统一的动作分发：内置动作表优先，其次是插件注册表。
     screenshot 自 v1.1.0 起走插件分支，因此这里不再需要区分调用方。
     */
-    async invokeActionByName(actionName, node) {
+    async invokeActionByName(actionName, params) {
         const definition = getBuiltinAction(actionName);
         if (definition) {
             // 兼容同步/异步 run：await 一个非 Promise 值不会有任何副作用。
-            const result = await this.runBuiltinAction(actionName, definition, node);
+            const result = await this.runBuiltinAction(actionName, definition, params);
             // 内置动作同样把"是否改动 workspace"暴露到结果里，
             // 让 Trace / 审计对内置与插件动作口径一致（插件侧在 registry/invoke.js 里加）。
             if (result && typeof result === "object" && !Array.isArray(result)) {
@@ -315,7 +318,7 @@ class Runtime {
             }
             return result;
         }
-        const pluginResult = await this.runPluginAction(actionName, node);
+        const pluginResult = await this.runPluginAction(actionName, params);
         if (pluginResult) {
             return pluginResult;
         }
@@ -337,41 +340,41 @@ class Runtime {
     /**
     调用插件动作。不是插件动作时返回 null（便于调用方判断）。
     */
-    async runPluginAction(actionName, node) {
+    async runPluginAction(actionName, params) {
         const registry = getRegistrySafe();
         if (!registry || !registry.hasAction(actionName)) {
             return null;
         }
-        return await registry.invokeAction(actionName, node, this.createPluginHost());
+        return await registry.invokeAction(actionName, params, this.createPluginHost());
     }
 
     // --------------------------------------------------------
     // 兼容层：既有调用方直接调 runtime.read(...) / runtime.screenshot(...) 仍可用。
-    // 新代码请统一走 run({ action, node })。
+    // 新代码请统一走 run({ action, params })。
     // --------------------------------------------------------
 
-    read(node) {
-        return this.invokeActionByName("read", node);
+    read(params) {
+        return this.invokeActionByName("read", params);
     }
 
-    write(node) {
-        return this.invokeActionByName("write", node);
+    write(params) {
+        return this.invokeActionByName("write", params);
     }
 
-    execute(node) {
-        return this.invokeActionByName("exec", node);
+    execute(params) {
+        return this.invokeActionByName("exec", params);
     }
 
-    screenshot(node) {
-        return this.invokeActionByName("screenshot", node);
+    screenshot(params) {
+        return this.invokeActionByName("screenshot", params);
     }
 
-    answer(node) {
-        return this.invokeActionByName("answer", node);
+    answer(params) {
+        return this.invokeActionByName("answer", params);
     }
 
-    done(node) {
-        return this.invokeActionByName("done", node);
+    done(params) {
+        return this.invokeActionByName("done", params);
     }
 
     /**
@@ -381,13 +384,13 @@ class Runtime {
     get actionHandlers() {
         const handlers = {};
         for (const name of getBuiltinActions().keys()) {
-            handlers[name] = (node) => this.invokeActionByName(name, node);
+            handlers[name] = (params) => this.invokeActionByName(name, params);
         }
         const registry = getRegistrySafe();
         if (registry && registry.actions) {
             for (const name of registry.actions.keys()) {
                 if (!handlers[name]) {
-                    handlers[name] = (node) => this.invokeActionByName(name, node);
+                    handlers[name] = (params) => this.invokeActionByName(name, params);
                 }
             }
         }

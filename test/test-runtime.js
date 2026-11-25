@@ -1,90 +1,99 @@
-const path = require("path");
+const assert = require("assert");
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { run, setWorkspace, getWorkspace } = require("../runtime");
 
-// 设置 workspace 为当前项目根目录
-const workspaceRoot = path.resolve(__dirname, "..");
-setWorkspace(workspaceRoot);
+const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "xmlagent-runtime-"));
+fs.writeFileSync(path.join(workspace, "package.json"), '{"name":"runtime-fixture"}\n', "utf8");
+fs.mkdirSync(path.join(workspace, "config"), { recursive: true });
+fs.writeFileSync(path.join(workspace, "config", "sample.json"), '{"enabled":true}\n', "utf8");
+setWorkspace(workspace);
 
-console.log("============================================================");
-console.log("Runtime Module Test");
-console.log("============================================================");
-console.log("");
-console.log("Workspace:", getWorkspace());
-console.log("");
+let pass = 0;
+let total = 0;
 
-// 注意：runtime.run 现在是异步的（exec 改为异步 child_process），
-// 因此所有调用都需要 await。
-async function main() {
-    // 测试1: 读取文件
-    console.log("--- Test 1: read file ---");
-    const readResult = await run({
-        action: "read",
-        node: { "@_path": "package.json" },
-    });
-    console.log("Read result:", readResult.ok ? "SUCCESS" : "FAILED");
-    if (readResult.ok) {
-        console.log(" File size:", readResult.size, "bytes");
-        console.log(" Content preview:", readResult.content.substring(0, 100) + "...");
+async function check(name, fn) {
+    total += 1;
+    try {
+        await fn();
+        pass += 1;
+        console.log("PASS - " + name);
+    } catch (error) {
+        console.log("FAIL - " + name + "  [" + error.message + "]");
     }
-    console.log("");
-
-    // 测试2: 读取目录
-    console.log("--- Test 2: read directory ---");
-    const readDirResult = await run({
-        action: "read",
-        node: { "@_path": "config" },
-    });
-    console.log("Read directory result:", readDirResult.ok ? "SUCCESS" : "FAILED");
-    if (readDirResult.ok) {
-        console.log(" Entries:", readDirResult.entries.join(", "));
-    }
-    console.log("");
-
-    // 测试3: 写入文件
-    console.log("--- Test 3: write file ---");
-    const testFilePath = "workspace/test-runtime-output.txt";
-    const testContent = "Runtime test content written at " + new Date().toISOString();
-    const writeResult = await run({
-        action: "write",
-        node: { "@_path": testFilePath, "#text": testContent },
-    });
-
-    console.log("Write result:", writeResult.ok ? "SUCCESS" : "FAILED");
-    if (writeResult.ok) {
-        console.log(" Written to:", testFilePath);
-        console.log(" Size:", writeResult.size, "bytes");
-    }
-    console.log("");
-
-    // 测试4: 验证写入的文件
-    console.log("--- Test 4: verify written file ---");
-    const verifyResult = await run({
-        action: "read",
-        node: { "@_path": testFilePath },
-    });
-    console.log("Verify result:", verifyResult.ok ? "SUCCESS" : "FAILED");
-    if (verifyResult.ok) {
-        console.log(" Content:", verifyResult.content);
-    }
-    console.log("");
-
-    // 测试5: 执行简单命令
-    console.log("--- Test 5: exec command ---");
-    const execResult = await run({
-        action: "exec",
-        node: { "@_command": "node --version" },
-    });
-    console.log("Exec result:", execResult.ok ? "SUCCESS" : "FAILED");
-    if (execResult.ok) {
-        console.log(" Output:", execResult.output.trim());
-    }
-    console.log("");
-
-    console.log("All tests completed.");
 }
 
-main().catch((error) => {
-    console.error("Test run failed:", error.message);
-    process.exit(1);
-});
+async function main() {
+    console.log("============================================================");
+    console.log("Runtime Module Test");
+    console.log("============================================================");
+    console.log("Workspace:", getWorkspace());
+    console.log("");
+
+    await check("read 读取 JSON 动作参数指定的文件", async () => {
+        const result = await run({ action: "read", params: { path: "package.json" } });
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.type, "file");
+        assert.strictEqual(JSON.parse(result.content).name, "runtime-fixture");
+    });
+
+    await check("read 读取目录并返回 entries", async () => {
+        const result = await run({ action: "read", params: { path: "config" } });
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.type, "directory");
+        assert.deepStrictEqual(result.entries, ["sample.json"]);
+    });
+
+    await check("write 按 params.content 逐字写入并自动创建目录", async () => {
+        const content = "Runtime test content\r\nwith trailing spaces  \n";
+        const result = await run({
+            action: "write",
+            params: { path: "workspace/test-runtime-output.txt", content },
+        });
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.path, "workspace/test-runtime-output.txt");
+        assert.strictEqual(result.size, Buffer.byteLength(content, "utf8"));
+        assert.strictEqual(
+            fs.readFileSync(path.join(workspace, "workspace", "test-runtime-output.txt"), "utf8"),
+            content
+        );
+    });
+
+    await check("read 验证写入内容与 CRLF 均未变化", async () => {
+        const result = await run({
+            action: "read",
+            params: { path: "workspace/test-runtime-output.txt" },
+        });
+        assert.strictEqual(result.ok, true);
+        assert.strictEqual(result.content, "Runtime test content\r\nwith trailing spaces  \n");
+    });
+
+    await check("exec 使用 params.command 执行命令", async () => {
+        const result = await run({ action: "exec", params: { command: "node --version" } });
+        assert.strictEqual(result.ok, true, result.error);
+        assert.match(result.output, /^v\d+\./);
+    });
+
+    await check("Runtime.run 拒绝缺少 params 的旧节点结构", async () => {
+        await assert.rejects(
+            () => run({ action: "read", node: {} }),
+            /Action params must be an object/
+        );
+    });
+
+    console.log("");
+    console.log("Total: " + pass + "/" + total);
+}
+
+main()
+    .catch((error) => {
+        console.error("Test run failed:", error.message);
+        process.exitCode = 1;
+    })
+    .finally(() => {
+        fs.rmSync(workspace, { recursive: true, force: true });
+        if (pass !== total) {
+            process.exitCode = 1;
+        }
+    });

@@ -10,7 +10,6 @@ const { normalizePresetImages } = require("./agent/inputs");
 const { runStep } = require("./agent/step");
 const { getBuiltinAction } = require("./actions");
 const { getRegistrySafe } = require("./plugins/registry");
-const { buildWorkspaceManifest } = require("./workspace/manifest");
 const { listSkills: scanSkills, syncSkillsToWorkspace } = require("./skills");
 const { createHistory } = require("./workspace/history");
 const { EventEmitter } = require("events");
@@ -301,7 +300,6 @@ class Agent extends EventEmitter {
         this.stopRequested = false;
         try {
             const currentWorkspace = this.runtime.getWorkspace();
-            const manifest = buildWorkspaceManifest(currentWorkspace);
             // 工作区里的技能清单：扫描失败不该让整轮任务起不来（只失去技能提示）。
             const skills = this.collectSkills(currentWorkspace);
             this.emitEvent("agent.started", {
@@ -342,12 +340,11 @@ class Agent extends EventEmitter {
             if (this.stopRequested || this.status !== "running") {
                 return this.getResult();
             }
-            let prompt = getFirstPrompt(currentWorkspace, manifest, this.task, {
+            let prompt = getFirstPrompt(currentWorkspace, this.task, {
                 registry: this.plugins,
                 skills: skills,
                 systemPromptVariant: this.promptVariant,
-                // 少数平台（如 Gemini）的渲染器会把裸 XML 标签整块丢掉，
-                // 需要 provider 自己声明"输出格式怎么适配"。
+                // 少数平台需要 provider 声明 JSON 动作的输出格式约束。
                 providerHint:
                     typeof this.provider.getActionMarkupHint === "function"
                         ? this.provider.getActionMarkupHint()

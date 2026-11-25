@@ -3,7 +3,7 @@
 给 Agent 用的"技能文件"：一份自包含的指令文档，模型按需 `read` 进来照着做。
 
 对应 `docs/PLUGIN_DESIGN.md` 里的**技能文件模式**——插件文档太长会把系统提示词撑爆，
-所以只往提示词里注入一行摘要 + `<read path=".agent/skills/xxx.md"/>`，细节由模型自己按需读取。
+所以只往提示词里注入一行摘要 + `{"action":"read","params":{"path":".agent/skills/xxx.md"}}`，细节由模型自己按需读取。
 
 ## 用法
 

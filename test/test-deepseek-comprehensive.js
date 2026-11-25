@@ -15,7 +15,7 @@ DeepSeek Provider 真机综合测试（CDP 浏览器）
 发送真实 prompt，等待真实回复
 
 
-覆盖：短文 / 长文 / 代码 / markdown / XML Action / 特殊字符
+覆盖：短文 / 长文 / 代码 / markdown / JSON Action / 特殊字符
 
 
 重点验证：内容不失真（markdown 结构、代码围栏、特殊字符不丢失）
@@ -54,18 +54,14 @@ config/agent-config.js 里 chromePath 指向本机 Chrome
 const path = require("path");
 const fs = require("fs");
 const { createProvider } = require("../providers");
-const { extractXML } = require("../parse/xml-parse");
+const { extractAction } = require("../parse/json-action");
 const { createRuntime } = require("../runtime");
 const agentConfig = require("../config/agent-config");
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const OUTPUT_DIR = path.join(PROJECT_ROOT, "test-output-deepseek");
-const CDATA_OPEN = "<" + "![CDATA[";
-const CDATA_CLOSE = "]" + "]>";
 const BACKSLASH = String.fromCharCode(92);
 const BACKTICK = String.fromCharCode(96);
 const STAR = String.fromCharCode(42);
-const LT = String.fromCharCode(60);
-const GT = String.fromCharCode(62);
 const TILDE = String.fromCharCode(126);
 function parseArgs(argv) {
     const args = {
@@ -131,13 +127,13 @@ async function runCase(provider, runtime, name, prompt, check) {
     let parseError = null;
 
     try {
-        action = extractXML(response);
+        action = extractAction(response);
     } catch (e) {
         parseError = e.message;
     }
 
     if (parseError) {
-        console.log("extractXML FAILED: " + parseError);
+        console.log("extractAction FAILED: " + parseError);
     } else if (action) {
         console.log("Parsed action: " + action.action);
     }
@@ -188,17 +184,10 @@ async function runCase(provider, runtime, name, prompt, check) {
     };
 }
 function buildExampleWriteLine() {
-    return (
-        LT +
-        'write path="src/example.js"' +
-        GT +
-        CDATA_OPEN +
-        'console.log("hi");' +
-        CDATA_CLOSE +
-        LT +
-        "/write" +
-        GT
-    );
+    return JSON.stringify({
+        action: "write",
+        params: { path: "src/example.js", content: 'console.log("hi");' },
+    });
 }
 async function main() {
     const args = parseArgs(process.argv.slice(2));
@@ -238,11 +227,11 @@ async function main() {
             runtime,
             "short-plain-text",
             [
-                "你是一个 XML Agent。可用 XML Action 示例：",
+                "你是一个 JSON Agent。可用 JSON Action 示例：",
                 exampleLine,
                 "",
                 "请写一个 answer action，回答内容为：DeepSeek 短文测试通过。",
-                "只输出一个 XML Action，不要输出任何解释。",
+                "只输出一个 JSON Action，不要输出任何解释。",
             ].join("\n"),
             async (response, action, result) => {
                 return [
@@ -262,20 +251,18 @@ async function main() {
             runtime,
             "short-markdown",
             [
-                "你是一个 XML Agent。可用 XML Action 示例：",
+                "你是一个 JSON Agent。可用 JSON Action 示例：",
                 exampleLine,
                 "",
                 "请写一个 write action 写入 docs/short.md，内容是一个 markdown 短文档：",
                 "1. 一级标题：短文档",
                 "2. 三个无序列表项：一、二、三",
                 "3. 一段粗体文字",
-                "只输出一个500字以上的 XML Action，不要输出任何解释。",
+                "只输出一个 JSON Action，不要输出任何解释。",
             ].join("\n"),
             async (response, action, result) => {
-                const p =
-                    action && action.node && action.node["@_path"]
-                        ? path.join(OUTPUT_DIR, action.node["@_path"])
-                        : null;
+                const rel = action && action.params ? action.params.path : null;
+                const p = rel ? path.join(OUTPUT_DIR, rel) : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
 
                 return [
@@ -298,13 +285,13 @@ async function main() {
             runtime,
             "long-markdown",
             [
-                "你是一个 XML Agent。可用 XML Action 示例：",
+                "你是一个 JSON Agent。可用 JSON Action 示例：",
                 exampleLine,
                 "",
                 "请写一个 write action 写入 docs/long.md。",
                 "这是严格的长文本压力测试，不允许用几句话敷衍，也不要为了满足长度要求机械重复同一句话。",
-                "正文必须是完整、连贯、有实际信息量的 Markdown 使用指南，正文有效内容至少 500 个中文字符（不包含 XML Action 标签、CDATA 标记和代码围栏本身）。",
-                "请确保最终写入文件的正文实际达到这个长度；如果初稿不足 500 个中文字符，请继续补充后再输出 XML。",
+                "正文必须是完整、连贯、有实际信息量的 Markdown 使用指南，正文有效内容至少 500 个中文字符（不包含代码围栏本身）。",
+                "请确保最终写入文件的正文实际达到这个长度；如果初稿不足 500 个中文字符，请继续补充后再输出 JSON。",
                 "内容要求：",
                 "1. 一级标题：项目使用指南",
                 "2. 简介至少 3 句话，并介绍项目用途、适用场景和基本工作方式",
@@ -318,13 +305,11 @@ async function main() {
                 "10. 一段不少于 3 句话的总结",
                 "11. 适当使用列表、段落和 Markdown 强调格式，让文档具有真实 README 的结构。",
                 "不要省略章节，不要只给目录，不要输出测试说明。",
-                "只输出一个 XML Action，不要输出解释。",
+                "只输出一个 JSON Action，不要输出解释。",
             ].join("\n"),
             async (response, action, result) => {
-                const p =
-                    action && action.node && action.node["@_path"]
-                        ? path.join(OUTPUT_DIR, action.node["@_path"])
-                        : null;
+                const rel = action && action.params ? action.params.path : null;
+                const p = rel ? path.join(OUTPUT_DIR, rel) : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
                 const fenceCount = countOccurrences(text, fence);
                 const chineseCount = (text.match(/[\u4e00-\u9fff]/g) || []).length;
@@ -354,7 +339,7 @@ async function main() {
             runtime,
             "long-code",
             [
-                "你是一个 XML Agent。可用 XML Action 示例：",
+                "你是一个 JSON Agent。可用 JSON Action 示例：",
                 exampleLine,
                 "",
                 "请写一个 write action 写入 src/toolkit.js。",
@@ -370,11 +355,10 @@ async function main() {
                 "6. 不要省略函数实现，不要使用伪代码、TODO 或“此处省略”。",
                 "7. deepClone 必须正确处理循环引用：递归复制对象属性之前，必须先把当前源对象和新对象放入 WeakMap；遇到 WeakMap 已存在的对象时直接返回已缓存副本。",
                 "8. deepClone 的循环引用测试必须可以通过：cloned.self === cloned，不能出现 Maximum call stack size exceeded。",
-                "只输出一个 XML Action，不要输出解释。",
+                "只输出一个 JSON Action，不要输出解释。",
             ].join("\n"),
             async (response, action, result, rt) => {
-                const rel =
-                    action && action.node && action.node["@_path"] ? action.node["@_path"] : null;
+                const rel = action && action.params ? action.params.path : null;
                 const p = rel ? path.join(OUTPUT_DIR, rel) : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
 
@@ -382,9 +366,7 @@ async function main() {
 
                 if (rel) {
                     try {
-                        execResult = await rt.execute({
-                            "@_command": "node " + rel,
-                        });
+                        execResult = await rt.execute({ command: "node " + rel });
                     } catch (e) {
                         execResult = { ok: false, output: "" };
                     }
@@ -415,7 +397,7 @@ async function main() {
             runtime,
             "json-file",
             [
-                "你是一个 XML Agent。可用 XML Action 示例：",
+                "你是一个 JSON Agent。可用 JSON Action 示例：",
                 exampleLine,
                 "",
                 "请写一个 write action 写入 config/demo.json，内容为合法 JSON：",
@@ -423,13 +405,11 @@ async function main() {
                 "2. version 字段为 1",
                 "3. tags 字段为长度 3 的字符串数组，元素 a b c",
                 "4. nested 字段为对象，ok=true，count=3",
-                "只输出一个 XML Action，不要输出解释。",
+                "只输出一个 JSON Action，不要输出解释。",
             ].join("\n"),
             async (response, action, result) => {
-                const p =
-                    action && action.node && action.node["@_path"]
-                        ? path.join(OUTPUT_DIR, action.node["@_path"])
-                        : null;
+                const rel = action && action.params ? action.params.path : null;
+                const p = rel ? path.join(OUTPUT_DIR, rel) : null;
 
                 let parsed = null;
 
@@ -464,7 +444,7 @@ async function main() {
             runtime,
             "special-chars",
             [
-                "你是一个 XML Agent。可用 XML Action 示例：",
+                "你是一个 JSON Agent。可用 JSON Action 示例：",
                 exampleLine,
                 "",
                 "请写一个 write action 写入 docs/special.md，内容包含：",
@@ -473,13 +453,11 @@ async function main() {
                 "3. 一行反斜杠路径，例如 C 盘 Users 下 test 目录",
                 "4. 一行数学比较符号：小于、大于、小于等于、大于等于、不等于",
                 "5. 一行火箭和勾选 emoji",
-                "只输出一个 XML Action，不要输出解释。",
+                "只输出一个 JSON Action，不要输出解释。",
             ].join("\n"),
             async (response, action, result) => {
-                const p =
-                    action && action.node && action.node["@_path"]
-                        ? path.join(OUTPUT_DIR, action.node["@_path"])
-                        : null;
+                const rel = action && action.params ? action.params.path : null;
+                const p = rel ? path.join(OUTPUT_DIR, rel) : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
 
                 return [
@@ -509,7 +487,7 @@ async function main() {
             runtime,
             "inline-formatting",
             [
-                "你是一个 XML Agent。可用 XML Action 示例：",
+                "你是一个 JSON Agent。可用 JSON Action 示例：",
                 exampleLine,
                 "",
                 "请写一个 write action 写入 docs/inline.md，内容为一行 markdown，包含：",
@@ -517,13 +495,11 @@ async function main() {
                 "2. 一个斜体片段",
                 "3. 一个行内 code 片段，内容为 npm run build",
                 "4. 一个链接，文本 Example 指向 https://example.com",
-                "只输出一个 XML Action，不要输出解释。",
+                "只输出一个 JSON Action，不要输出解释。",
             ].join("\n"),
             async (response, action, result) => {
-                const p =
-                    action && action.node && action.node["@_path"]
-                        ? path.join(OUTPUT_DIR, action.node["@_path"])
-                        : null;
+                const rel = action && action.params ? action.params.path : null;
+                const p = rel ? path.join(OUTPUT_DIR, rel) : null;
                 const text = p && fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
 
                 return [

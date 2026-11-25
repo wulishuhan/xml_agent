@@ -43,7 +43,7 @@ const SHRINK_ORDER = ["tail", "filesRead", "commands", "errors", "filesWritten"]
 const MIN_LIMIT = 3;
 
 const NOISE_PATTERN =
-    /^(Agent step \d+|Provider request \(step \d+\)|Provider response received \(\d+ chars\)|Starting provider: .*|Provider started: .*|Provider closed: .*|XML action parsed: .*|🚀 Starting agent\.\.\.|🚀 Agent started)$/;
+    /^(Agent step \d+|Provider request \(step \d+\)|Provider response received \(\d+ chars\)|Starting provider: .*|Provider started: .*|Provider closed: .*|JSON action parsed: .*|🚀 Starting agent\.\.\.|🚀 Agent started)$/;
 
 function pad2(value) {
     return String(value).padStart(2, "0");
@@ -152,7 +152,7 @@ function collect(records) {
         }
 
         if (event.type === "action.parse_error") {
-            errors.push("XML 解析失败：" + oneLine(event.error || ""));
+            errors.push("JSON 解析失败：" + oneLine(event.error || ""));
             continue;
         }
         if (event.type === "provider.error" || event.type === "provider.close_error") {

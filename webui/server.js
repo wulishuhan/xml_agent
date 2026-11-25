@@ -13,7 +13,7 @@ v1.1.0 起路由按领域拆到 webui/routes/：
     providers.js     provider 列表
     upload-api.js    用户附件上传（前端在用）
 
-注意：截图没有 HTTP 入口。它是 screenshot 插件的 XML 动作，由模型调用，
+注意：截图没有 HTTP 入口。它是 screenshot 插件的 JSON 动作，由模型调用，
 引擎实现随插件放在 plugins/builtin/screenshot/engine/，核心不参与。
 
 本文件只负责：启动顺序（会话恢复 → 配置应用 → 插件加载）、静态资源、

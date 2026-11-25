@@ -7,8 +7,7 @@
 3. exec 输出超 maxBuffer 时 stdoutTruncated 仍是 false，且只留头部，
    失败摘要（在尾部）全丢；
 4. 命令里任意位置出现 " --background" 就被当后台任务，并且这段文本会被从命令里删掉；
-5. write 的快速解析不去解码属性实体，与 read / 通用解析路径不一致
-   （写进去 a&amp;b.txt，按 a&amp;b.txt 读不到）；
+5. JSON 路径中的 & 无需实体解码，写与读保持一致；
 6. read 把二进制当文本塞进提示词；插件超时定时器 unref 后形同虚设；
    emitHook 对抛错的 handler 不计数；
 7. configSchema 只有类型没有上下限，keepDays:-5 能通过校验；
@@ -25,7 +24,7 @@ const { spawnSync } = require("child_process");
 
 const { createRuntime } = require("../../runtime");
 const { getBuiltinAction } = require("../../actions");
-const { extractXML } = require("../../parse/xml-parse");
+const { extractAction } = require("../../parse/json-action");
 const { createRegistry } = require("../../plugins/registry");
 const sdk = require("../../plugins/sdk");
 
@@ -139,7 +138,7 @@ async function testExec() {
     );
 
     await check("超大输出：保留首尾并如实标记 truncated", async () => {
-        const result = await getBuiltinAction("exec").run({ "@_command": "node emit.js" }, ctx);
+        const result = await getBuiltinAction("exec").run({ command: "node emit.js" }, ctx);
         assert.strictEqual(result.ok, true, "命令本身是成功的");
         assert.strictEqual(result.outputTruncated, true, "必须标记为已截断");
         assert.ok(result.output.startsWith("HEAD"), "头部要保留");
@@ -153,7 +152,7 @@ async function testExec() {
 
     fs.writeFileSync(path.join(workspace, "say.js"), 'console.log(" --background");\n');
     await check("命令里含 --background 字符串不会被误判为后台", async () => {
-        const result = await getBuiltinAction("exec").run({ "@_command": "node say.js" }, ctx);
+        const result = await getBuiltinAction("exec").run({ command: "node say.js" }, ctx);
         assert.strictEqual(result.ok, true);
         assert.notStrictEqual(result.background, true);
         assert.ok(result.output.indexOf("--background") !== -1, "命令输出应原样保留");
@@ -162,7 +161,7 @@ async function testExec() {
     fs.writeFileSync(path.join(workspace, "wait.js"), "setTimeout(function () {}, 20000);\n");
     await check("结尾的 --background 仍然进入后台", async () => {
         const result = await getBuiltinAction("exec").run(
-            { "@_command": "node wait.js --background" },
+            { command: "node wait.js --background" },
             ctx
         );
         assert.strictEqual(result.ok, true);
@@ -181,36 +180,43 @@ async function testWriteRead() {
     const runtime = createRuntime(workspace);
     const ctx = runtime.createBuiltinContext();
 
-    await check("快速解析路径解码属性实体（写与读一致）", () => {
-        const parsed = extractXML('<write path="a&amp;b.txt"><![CDATA[hi]]></write>');
-        const result = getBuiltinAction("write").run(parsed.node, ctx);
+    await check("JSON 路径按字面处理，写与读一致", () => {
+        const parsed = extractAction(
+            JSON.stringify({ action: "write", params: { path: "a&b.txt", content: "hi" } })
+        );
+        const result = getBuiltinAction("write").run(parsed.params, ctx);
         assert.strictEqual(result.path, "a&b.txt");
         assert.ok(fs.existsSync(path.join(workspace, "a&b.txt")));
 
-        const readNode = extractXML('<read path="a&amp;b.txt"/>');
-        const readResult = getBuiltinAction("read").run(readNode.node, ctx);
+        const readAction = extractAction(
+            JSON.stringify({ action: "read", params: { path: "a&b.txt" } })
+        );
+        const readResult = getBuiltinAction("read").run(readAction.params, ctx);
         assert.strictEqual(readResult.ok, true, "刚写进去的文件必须读得到");
         assert.strictEqual(readResult.content, "hi");
     });
 
     await check("写目标是已存在目录时给出可读错误", () => {
         fs.mkdirSync(path.join(workspace, "adir"), { recursive: true });
-        const result = getBuiltinAction("write").run({ "@_path": "adir", "#text": "x" }, ctx);
+        const result = getBuiltinAction("write").run({ path: "adir", content: "x" }, ctx);
         assert.strictEqual(result.ok, false);
         assert.match(result.error, /directory/i);
         assert.ok(result.error.indexOf(".tmp.") === -1, "错误信息不应泄漏临时文件名");
     });
 
-    await check("write 保留文件末尾换行", () => {
-        const parsed = extractXML('<write path="keep.js"><![CDATA[\nline1\n]]></write>');
-        getBuiltinAction("write").run(parsed.node, ctx);
+    await check("write 逐字保留起始与末尾换行", () => {
+        const content = "\nline1\n";
+        const parsed = extractAction(
+            JSON.stringify({ action: "write", params: { path: "keep.js", content } })
+        );
+        getBuiltinAction("write").run(parsed.params, ctx);
         const text = fs.readFileSync(path.join(workspace, "keep.js"), "utf8");
-        assert.strictEqual(text, "line1\n");
+        assert.strictEqual(text, content);
     });
 
     await check("read 拒绝二进制文件并标记 binary", () => {
         fs.writeFileSync(path.join(workspace, "img.png"), Buffer.from([0x89, 0x50, 0x00, 0x01]));
-        const result = getBuiltinAction("read").run({ "@_path": "img.png" }, ctx);
+        const result = getBuiltinAction("read").run({ path: "img.png" }, ctx);
         assert.strictEqual(result.ok, false);
         assert.strictEqual(result.binary, true);
         assert.strictEqual(result.content, undefined, "不能把二进制内容带出去");
@@ -218,7 +224,7 @@ async function testWriteRead() {
 
     await check("read 仍能正常读文本", () => {
         fs.writeFileSync(path.join(workspace, "ok.txt"), "hello 世界\n");
-        const result = getBuiltinAction("read").run({ "@_path": "ok.txt" }, ctx);
+        const result = getBuiltinAction("read").run({ path: "ok.txt" }, ctx);
         assert.strictEqual(result.ok, true);
         assert.strictEqual(result.content, "hello 世界\n");
     });
@@ -297,7 +303,7 @@ async function testPluginRuntime() {
                 "    ctx.actions.register({",
                 '        name: "slow-act",',
                 "        run: () => new Promise(() => {}),",
-                '        meta: { timeoutMs: 120, permission: ["workspace:read"], prompt: { usage: "<slow-act/>" } },',
+                '        meta: { timeoutMs: 120, permission: ["workspace:read"], prompt: { usage: "{\\"action\\":\\"slow-act\\",\\"params\\":{}}" } },',
                 "    });",
                 "} };",
             ].join("\n")
@@ -407,7 +413,10 @@ async function testHttpErrors() {
     await testWriteRead();
     await testPluginRuntime();
     await testConfigRange();
-    await testHttpErrors();
+    // 纯逻辑回归可用 XML_AGENT_SKIP_HTTP_TESTS=1 跳过会监听端口的 HTTP 用例。
+    if (process.env.XML_AGENT_SKIP_HTTP_TESTS !== "1") {
+        await testHttpErrors();
+    }
 
     console.log("");
     console.log(

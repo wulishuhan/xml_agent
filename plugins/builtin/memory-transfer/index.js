@@ -12,7 +12,7 @@
  * - 权限单独成 sessions:read / sessions:write 两档，装到别人的机器上时会被要求授权。
  *
  * 模型侧只有一条动作：
- *     <memory-transfer from="aaa" to="bbb" mode="full" compress="auto"/>
+ *     {"action":"memory-transfer","params":{"from":"aaa","to":"bbb","mode":"full","compress":"auto"}}
  * 目标会话不存在时按源的 workspace/provider 自动新建（状态为已完成，不会自动开跑）。
  * compress 不传时用插件配置里的默认档位（默认 auto：只有超预算才压）。
  */
@@ -84,8 +84,11 @@ function promptView(result) {
 const ACTION = {
     name: "memory-transfer",
     schema: {
-        attrs: {
-            from: { type: "string", required: true, nonEmpty: true, maxLength: 128 },
+        type: "object",
+        additionalProperties: false,
+        required: ["from"],
+        properties: {
+            from: { type: "string", minLength: 1, maxLength: 128, pattern: "\\S" },
             // to 可省略：省略时自动新开一个会话，适合「上下文快满了，接着干」的场景
             to: { type: "string", maxLength: 128 },
             mode: { type: "string", default: "full", enum: MODES },
@@ -94,26 +97,25 @@ const ACTION = {
             digest: { type: "string", enum: DIGEST_MODES },
         },
     },
-    async run(node, ctx) {
-        const attrs = ctx.attrs;
+    async run(params, ctx) {
         try {
             const result = ctx.sessions.transfer({
-                from: attrs.from,
-                to: attrs.to,
-                mode: attrs.mode,
-                compress: attrs.compress,
-                digest: attrs.digest,
+                from: params.from,
+                to: params.to,
+                mode: params.mode,
+                compress: params.compress,
+                digest: params.digest,
             });
             return Object.assign({ action: "memory-transfer" }, result);
         } catch (error) {
             return {
                 ok: false,
                 action: "memory-transfer",
-                from: attrs.from,
-                to: attrs.to,
-                mode: attrs.mode,
-                compress: attrs.compress || null,
-                digest: attrs.digest || null,
+                from: params.from,
+                to: params.to,
+                mode: params.mode,
+                compress: params.compress || null,
+                digest: params.digest || null,
                 code: (error && error.code) || null,
                 error: (error && error.message) || String(error),
             };
@@ -122,7 +124,7 @@ const ACTION = {
     meta: {
         prompt: {
             group: "session",
-            usage: '<memory-transfer from="aaa" to="bbb" mode="digest" digest="auto"/>',
+            usage: '{"action":"memory-transfer","params":{"from":"aaa","to":"bbb","mode":"digest","digest":"auto"}}',
             note:
                 "把一个会话的记忆转到另一个会话 id；省略 to 会自动新开一个会话并在结果里返回它的 id。" +
                 "mode=full 连过程记录和模型对话线程一起搬，" +
@@ -288,7 +290,7 @@ function setup(ctx) {
             {
                 kind: "note",
                 text:
-                    '用法：对话里让模型调用 <memory-transfer from="aaa" to="bbb" mode="digest" digest="auto"/>，' +
+                    '用法：对话里让模型调用 {"action":"memory-transfer","params":{"from":"aaa","to":"bbb","mode":"digest","digest":"auto"}}，' +
                     '或 POST /api/plugins/memory-transfer/api/transfer {"from":"aaa","to":"bbb","mode":"digest"}。' +
                     "mode：full=记录+模型上下文，records=只搬记录，link=只接续模型上下文，" +
                     "digest=只带任务+摘要（上下文满了换会话用这个）。" +

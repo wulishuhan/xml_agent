@@ -17,8 +17,11 @@ const PROMPT_BODY_LIMIT = 4000;
 const ACTION = {
     name: "fetch",
     schema: {
-        attrs: {
-            url: { type: "string", required: true, nonEmpty: true, maxLength: 2000 },
+        type: "object",
+        additionalProperties: false,
+        required: ["url"],
+        properties: {
+            url: { type: "string", minLength: 1, maxLength: 2000, pattern: "\\S" },
             method: {
                 type: "string",
                 default: "GET",
@@ -29,17 +32,16 @@ const ACTION = {
             maxBytes: { type: "integer", min: 1, max: 4194304 },
         },
     },
-    async run(node, ctx) {
-        const attrs = ctx.attrs;
-        const url = attrs.url;
-        const method = String(attrs.method || "GET").toUpperCase();
+    async run(params, ctx) {
+        const url = params.url;
+        const method = params.method;
         try {
             const response = await ctx.http.request({
                 url,
                 method,
-                body: attrs.body,
-                timeoutMs: attrs.timeout,
-                maxBytes: attrs.maxBytes,
+                body: params.body,
+                timeoutMs: params.timeout,
+                maxBytes: params.maxBytes,
                 signal: ctx.signal,
             });
             const ok = response.status >= 200 && response.status < 400;
@@ -73,11 +75,11 @@ const ACTION = {
     meta: {
         prompt: {
             group: "network",
-            usage: '<fetch url="http://127.0.0.1:3000/api/health" method="GET"/>',
+            usage: '{"action":"fetch","params":{"url":"http://127.0.0.1:3000/api/health","method":"GET"}}',
             note:
                 "发起 HTTP 请求并返回状态码与响应体（默认最多 1MB，超出会标记 truncated）。" +
                 "只允许访问插件配置 allowHosts 白名单内的主机；不跟随重定向，3xx 会原样返回。" +
-                "需要 POST 时把内容放在 body 属性里。",
+                "需要 POST 时把内容放在 params.body。",
             priority: 50,
         },
         permission: ["network:http"],

@@ -1,7 +1,7 @@
 # XML Agent 插件开发指南（API v1）
 
-> 适用版本：xml_agent >= 1.1.0　|　API 版本：`apiVersion: 1`
-> 设计背景与演进计划见 `docs/PLUGIN_DESIGN.md`。
+> 适用版本：当前 1.3.0 代码线（XML→JSON Action 迁移后）　|　API 版本：`apiVersion: 1`
+> 当前架构与历史演进见 `docs/PLUGIN_DESIGN.md`；旧 XML 动作 API 不再适用。
 
 一个插件就是**一个目录**：
 
@@ -26,7 +26,7 @@
     "version": "1.0.0",
     "kind": "action",
     "apiVersion": 1,
-    "description": "把 text 属性原样回显，用于验证插件链路",
+    "description": "把 params.text 原样回显，用于验证插件链路",
     "permissions": [],
     "activation": "always"
 }
@@ -40,17 +40,20 @@ module.exports = {
         ctx.actions.register({
             name: "echo",
             schema: {
-                attrs: {
-                    text: { type: "string", required: true, nonEmpty: true },
+                type: "object",
+                additionalProperties: false,
+                required: ["text"],
+                properties: {
+                    text: { type: "string", minLength: 1, pattern: "\\S" },
                 },
             },
-            run(node, ctx2) {
-                return { ok: true, action: "echo", text: ctx2.attrs.text };
+            run(params, ctx) {
+                return { ok: true, action: "echo", text: ctx.params.text };
             },
             meta: {
                 prompt: {
                     group: "plugin",
-                    usage: '<echo text="hello"/>',
+                    usage: '{"action":"echo","params":{"text":"hello"}}',
                     note: "把 text 原样返回，用于测试。",
                 },
             },
@@ -59,7 +62,7 @@ module.exports = {
 };
 ```
 
-重启服务（或 `POST /api/plugins/reload`）后，模型就能看到并使用 `<echo text="hello"/>`。
+重启服务（或 `POST /api/plugins/reload`）后，模型就能看到并使用 `{"action":"echo","params":{"text":"hello"}}`。模型每轮只输出一个这样的 envelope，可裸 JSON 或放在单个 `json` 代码块中。
 
 ---
 
@@ -71,7 +74,7 @@ module.exports = {
 | `version`          | ✅   | 语义化版本                                                                            |
 | `kind`             |      | `action` / `hook` / `provider` / `ui`，默认 `action`                                  |
 | `apiVersion`       |      | 必须是 `1`                                                                            |
-| `engines.xmlAgent` |      | 版本区间，如 `">=1.1.0 <2.0.0"`，支持 `>=` `<=` `>` `<` `=` `^` `~`，空格分隔多个条件 |
+| `engines.xmlAgent` |      | 版本区间，如 `">=1.3.0 <2.0.0"`，支持 `>=` `<=` `>` `<` `=` `^` `~`，空格分隔多个条件 |
 | `permissions`      |      | 权限 scope 数组，**动作申请的权限必须是这里的子集**                                   |
 | `activation`       |      | `always`（默认）/ `manual` / `{ "keywords": ["抓取", "接口"] }`                       |
 | `configSchema`     |      | 插件配置声明，见 §7                                                                   |
@@ -79,7 +82,7 @@ module.exports = {
 | `deprecated`       |      | `true` 时不注入提示词                                                                 |
 
 **权限 scope 全集**：
-`workspace:read`、`workspace:write`、`shell:exec`、`network:http`、`system:screen`、`system:window`、`secrets:read`。
+`workspace:read`、`workspace:write`、`shell:exec`、`network:http`、`system:screen`、`system:window`、`secrets:read`、`sessions:read`、`sessions:write`。
 
 **默认授权策略**：
 
@@ -105,13 +108,21 @@ module.exports = {
 ```js
 {
     name: "fetch",                    // 动作名；不允许与内置动作同名
-    schema: { attrs: {...}, allowExtra: false },
-    validate(node) {},                // 可选：复杂校验，抛错即为拒绝
-    run(node, ctx) {},                // 必需：可以是 async
+    schema: {                         // 标准 JSON Schema，只描述 params
+        type: "object",
+        additionalProperties: false,
+        required: ["url"],
+        properties: {
+            url: { type: "string", minLength: 1 },
+            method: { type: "string", enum: ["GET", "POST"], default: "GET" },
+        },
+    },
+    validate(params) {},              // 可选：复杂校验，抛错即为拒绝
+    run(params, ctx) {},              // 必需：可以是 async；params 与 ctx.params 已校验
     meta: {
         prompt: {                     // 必需
             group: "network",         //   提示词分组
-            usage: '<fetch url="..."/>',  // 必需：模型侧用法示例
+            usage: '{"action":"fetch","params":{"url":"https://example.com"}}', // 模型侧 JSON 示例
             note: "说明文字",          //   可选
             priority: 50,             //   预算裁剪时的优先级（大者保留）
         },
@@ -122,10 +133,12 @@ module.exports = {
         summary: (result) => "...",   // Trace / 报告用的统一摘要
         promptResult: (result) => {}, // 可选：回给模型的精简视图（见下）
         afterRun: (result, ctx) => {},// 可选：执行后钩子，可返回新的 result
-        fastPath: (text) => null,     // 可选：自定义快速解析器（CDATA 复杂写法用）
+        collectImages: (result) => [],// 可选：返回需上传给模型的图片路径
     },
 }
 ```
+
+动作定义不再有 `attrs`、`children` 或 `fastPath` 字段。`meta.prompt.usage` 应给出完整的 `{action, params}` JSON envelope，而不是 XML 标签。
 
 **`meta.promptResult`（重要）**：动作返回的结果会被 JSON 序列化进下一轮提示词。
 如果结果里可能带大块数据（HTTP 响应体、文件内容），务必提供精简视图，否则会把模型上下文撑爆：
@@ -152,25 +165,53 @@ promptResult: (result) => ({
 
 ---
 
-## 四、属性 schema 语法
+## 四、动作参数 JSON Schema
 
-`schema.attrs` 的每个键对应一个 XML 属性：
+`schema` 是标准 JSON Schema，描述 `params` 对象，不是整个 envelope。常用关键字：
 
-| 字段          | 说明                                                        |
-| ------------- | ----------------------------------------------------------- |
-| `type`        | `string`（默认）/ `integer` / `number` / `boolean` / `enum` |
-| `required`    | 缺失即报错                                                  |
-| `default`     | 缺失时补默认值（补在 `ctx.attrs` 上，`node` 保持不变）      |
-| `nonEmpty`    | 字符串不允许为空白                                          |
-| `enum`        | 允许值列表（`type: "string"` 时用）                         |
-| `values`      | 允许值列表（`type: "enum"` 时用）                           |
-| `min` / `max` | 数字范围                                                    |
-| `maxLength`   | 字符串长度上限                                              |
+| 关键字                    | 说明                                                                |
+| ------------------------- | ------------------------------------------------------------------- |
+| `type`                    | `object` / `string` / `integer` / `number` / `boolean` / `array` 等 |
+| `properties`              | 每个参数的定义                                                      |
+| `required`                | 必填参数名数组                                                      |
+| `additionalProperties`    | 建议设为 `false`，拒绝拼错的未知参数                                |
+| `items`                   | 数组元素的 schema                                                   |
+| `enum`                    | 允许值列表                                                          |
+| `default`                 | 缺失时补默认值，会反映到 `run(params, ctx)` 与 `ctx.params`         |
+| `minLength` / `maxLength` | 字符串长度范围                                                      |
+| `pattern`                 | 字符串正则，例如 `"\\S"` 表示不能全是空白                           |
+| `minimum` / `maximum`     | 数值范围                                                            |
+| `minItems` / `maxItems`   | 数组长度范围                                                        |
 
-**未知属性默认报错**（帮助模型发现拼写错误，错误信息会列出允许的属性）。
-确需放行任意属性时设 `schema.allowExtra = true`。
+示例：
 
-校验结果在 `ctx.attrs` 里是已套用默认值、已完成类型转换的对象。
+```js
+schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["targets"],
+    properties: {
+        targets: {
+            type: "array",
+            minItems: 1,
+            maxItems: 8,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["source"],
+                properties: {
+                    source: { type: "string", enum: ["screen", "window", "browser_page"] },
+                    path: { type: "string", minLength: 1 },
+                },
+            },
+        },
+    },
+}
+```
+
+宿主使用 Ajv 校验，并启用 `useDefaults`；不做隐式类型转换，模型必须输出正确的 JSON 类型。校验会克隆参数，避免修改原始 envelope。
+
+解析期由 `plugins/registry/catalog.js` 的 `validateAction(name, params)` 校验；执行期 `plugins/registry/invoke.js` 会再次校验，然后调用 `run(params, ctx)`。因此 `params` 与 `ctx.params` 都是已套用默认值的对象。
 
 ---
 
@@ -241,8 +282,8 @@ ctx.providers.register(
 - 必需：`start()` / `send(prompt)` / `close()`
 - 可选：`uploadImages(paths)` / `getConversationIdFromUrl(url)` / `ensurePageAlive()`
 - 可选：`getActionMarkupHint()` —— 返回一段"本平台输出格式约束"，会被拼进首轮提示词。
-  只有当平台会破坏 XML 时才需要实现：例如 Gemini 的渲染器会把裸的 `<answer>` 标签
-  整块丢弃（DOM 里只剩文本），必须要求模型把动作放进代码块。
+  只有当平台会破坏裸 JSON 或代码块时才需要实现；约束应要求模型输出一个 JSON envelope，
+  可裸 JSON 或使用单个 `json` 代码块，不能输出 XML 或多个动作。
 - 属性：`currentConversationId`
 
 注册成功后：
@@ -258,22 +299,25 @@ ctx.providers.register(
 
 ---
 
-## 六、运行期的 ctx（`run(node, ctx)` 的第二个参数）
+## 六、运行期的 ctx（`run(params, ctx)` 的第二个参数）
 
-| 成员                             | 说明                                                              |
-| -------------------------------- | ----------------------------------------------------------------- |
-| `ctx.attrs`                      | 已校验并套用默认值的属性表                                        |
-| `ctx.workspace`                  | 当前 workspace 绝对路径                                           |
-| `ctx.signal`                     | `AbortSignal`，动作超时会被 abort（传给 `ctx.http` 即可自动中断） |
-| `ctx.config`                     | 插件配置                                                          |
-| `ctx.fs`                         | workspace 作用域文件访问（越界直接抛错）                          |
-| `ctx.http`                       | 受控 HTTP 客户端                                                  |
-| `ctx.storage`                    | 插件私有存储                                                      |
-| `ctx.secrets`                    | 只读密钥（按 `secrets:read` 门控，未授权时为 `null`）             |
-| `ctx.logger`                     | 带前缀的日志                                                      |
-| `ctx.permissions`                | `{ check(scope), policy(scope), granted }`                        |
-| `ctx.events.emit(type, payload)` | 触发插件自己的钩子事件                                            |
-| `ctx.redact(text)`               | 用已知密钥值做脱敏                                                |
+| 成员                             | 说明                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `ctx.params`                     | 已通过 JSON Schema 与 `validate()` 校验、已套用默认值的参数对象；与 `run` 的第一个参数相同 |
+| `ctx.action`                     | 当前动作名                                                                                 |
+| `ctx.workspace`                  | 当前 workspace 绝对路径                                                                    |
+| `ctx.signal`                     | `AbortSignal`，动作超时会被 abort（传给 `ctx.http` 即可自动中断）                          |
+| `ctx.config`                     | 插件配置                                                                                   |
+| `ctx.fs`                         | workspace 作用域文件访问（越界直接抛错）                                                   |
+| `ctx.http`                       | 受控 HTTP 客户端                                                                           |
+| `ctx.storage`                    | 插件私有存储                                                                               |
+| `ctx.secrets`                    | 只读密钥（按 `secrets:read` 门控，未授权时为 `null`）                                      |
+| `ctx.sessions`                   | 会话记忆门面（按 `sessions:read` / `sessions:write` 门控）                                 |
+| `ctx.host.execScope`             | 宿主的文件动作作用域；`exec` shell 不受工作区沙箱限制                                      |
+| `ctx.logger`                     | 带前缀的日志                                                                               |
+| `ctx.permissions`                | `{ check(scope), policy(scope), granted }`                                                 |
+| `ctx.events.emit(type, payload)` | 触发插件自己的钩子事件                                                                     |
+| `ctx.redact(text)`               | 用已知密钥值做脱敏                                                                         |
 
 ### ctx.fs
 
@@ -342,9 +386,11 @@ const response = await ctx.http.request({
 ## 七、configSchema 与配置
 
 ```json
-"configSchema": {
-    "allowHosts": { "type": "array", "default": ["127.0.0.1"], "description": "..." },
-    "httpTimeoutMs": { "type": "integer", "default": 30000, "min": 1000, "max": 60000 }
+{
+    "configSchema": {
+        "allowHosts": { "type": "array", "default": ["127.0.0.1"], "description": "..." },
+        "httpTimeoutMs": { "type": "integer", "default": 30000, "min": 1000, "max": 60000 }
+    }
 }
 ```
 
@@ -376,7 +422,7 @@ handler 抛错或返回 rejected Promise 都只记一条 warn，不影响主流�
 | `agent.started` / `agent.completed` / `agent.stopped` / `agent.error`          | 生命周期                     |
 | `step.started`                                                                 | 每一步开始                   |
 | `provider.request` / `provider.response` / `provider.retry` / `provider.error` | 模型调用                     |
-| `action.parsed` / `action.parse_error`                                         | XML 解析                     |
+| `action.parsed` / `action.parse_error`                                         | JSON envelope 提取与参数校验 |
 | `runtime.result`                                                               | 每个动作执行完（含插件动作） |
 | `answer`                                                                       | 模型给出最终答案             |
 | `action.denied`                                                                | 插件动作因权限被拒           |
@@ -499,8 +545,9 @@ sdk.assertPluginConformance(require("./index.js")); // 抛错即不符合契约
 
 - `XML_AGENT_PLUGINS=0`：一键回到"仅内置动作"，用于确认问题是否由插件引起；
 - `GET /api/plugins`：查看每个插件的 `status` / `error` / `actions` / `effectivePermissions` / `config`；
-- `POST /api/plugins/reload`：改完插件代码后热重载（会重新执行 `index.js`，子模块可能仍在 require 缓存里）；
-- `node test/test-plugins.js`：仓库自带的端到端用例，可作为写插件时的参考实现。
+- `POST /api/plugins/reload`：改完插件代码后热重载（会重新执行 `index.js`，并清除插件目录下子模块的 require 缓存）；
+- `node test/test-json-action.js`：JSON envelope 提取与参数校验用例；
+- `node test/test-plugins.js`：仓库自带的插件端到端用例，可作为写插件时的参考实现。
 
 ---
 
@@ -515,8 +562,8 @@ sdk.assertPluginConformance(require("./index.js")); // 抛错即不符合契约
 
 内置插件是最好的参考实现：
 
-| 插件                         | 演示了什么                                                                                                                                                                                                                       |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `plugins/builtin/fetch`      | action + schema 校验 + `ctx.http` + `meta.promptResult`（回给模型的精简视图）                                                                                                                                                    |
-| `plugins/builtin/screenshot` | action + 自定义 `validate` + `meta.fastPath` + `meta.collectImages`（产物自动上传给模型）+ `engine/` 私有实现；**它本来是内置动作，v1.1.0 迁成插件，之后又把引擎从核心 `capture/` 下沉进来**，可作为"把已有能力插件化"的完整模板 |
-| `plugins/builtin/audit-log`  | hook + `ctx.api` + 声明式面板（三合一）                                                                                                                                                                                          |
+| 插件                         | 演示了什么                                                                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `plugins/builtin/fetch`      | action + schema 校验 + `ctx.http` + `meta.promptResult`（回给模型的精简视图）                                                                                                                          |
+| `plugins/builtin/screenshot` | action + JSON Schema（`targets` 数组）+ `meta.collectImages`（产物自动上传给模型）+ `engine/` 私有实现；它已在 v1.1.0 迁成插件，引擎也从核心 `capture/` 下沉进插件，可作为"把已有能力插件化"的完整模板 |
+| `plugins/builtin/audit-log`  | hook + `ctx.api` + 声明式面板（三合一）                                                                                                                                                                |

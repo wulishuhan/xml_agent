@@ -13,9 +13,9 @@ async function runTests() {
     console.log("Test 1: Start a background process");
     const action1 = {
         action: "exec",
-        node: {
+        params: {
             // 固定端口，方便下面用 HTTP 探活（--background 会被 exec 剥掉，故用 --port）
-            "@_command": "node test/test-server.js --port=9999 --background",
+            command: "node test/test-server.js --port=9999 --background",
         },
     };
 

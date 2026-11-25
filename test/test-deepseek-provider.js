@@ -2,7 +2,7 @@ const assert = require("assert");
 const {
     DeepSeekProvider,
     balanceMarkdownFences,
-    extractXmlFromCandidate,
+    extractJsonActionCandidate,
 } = require("../providers/deepseek");
 
 let passed = 0;
@@ -29,8 +29,8 @@ check("exports balanceMarkdownFences", () => {
     assert.strictEqual(typeof balanceMarkdownFences, "function");
 });
 
-check("exports extractXmlFromCandidate", () => {
-    assert.strictEqual(typeof extractXmlFromCandidate, "function");
+check("exports extractJsonActionCandidate", () => {
+    assert.strictEqual(typeof extractJsonActionCandidate, "function");
 });
 
 // ===== 2. 会话 URL 解析 =====
@@ -75,32 +75,47 @@ check("buildTargetUrl strips trailing slash", () => {
     assert.strictEqual(p.buildTargetUrl(), "https://chat.deepseek.com/a/chat/s/abc-123");
 });
 
-// ===== 3. XML 候选提取 =====
-const LT = String.fromCharCode(60);
-const GT = String.fromCharCode(62);
+// ===== 3. JSON Action 候选提取 =====
 const BT = String.fromCharCode(96);
-const DQ = String.fromCharCode(34);
+const FENCE = BT + BT + BT;
+const READ_ACTION = JSON.stringify({ action: "read", params: { path: "." } });
 
-check("extractXmlFromCandidate finds answer tag", () => {
-    const raw = "一些前置文本 " + LT + "answer" + GT + "真正的回答" + LT + "/answer" + GT + " 后置";
-    const xml = extractXmlFromCandidate(raw);
-    assert.ok(xml);
-    assert.ok(xml.indexOf(LT + "answer" + GT) === 0);
+check("extractJsonActionCandidate finds bare JSON with surrounding text", () => {
+    const raw = "Some introduction " + READ_ACTION + " trailing text";
+    assert.strictEqual(extractJsonActionCandidate(raw), READ_ACTION);
 });
 
-check("extractXmlFromCandidate strips xml code fence", () => {
-    const fence = BT + BT + BT;
-    const readTag = LT + "read path=" + DQ + "a.js" + DQ + "/" + GT;
-    const raw = fence + "xml\n" + readTag + "\n" + fence;
-    const xml = extractXmlFromCandidate(raw);
-    assert.ok(xml);
-    assert.ok(xml.indexOf(LT + "read") === 0);
+check("extractJsonActionCandidate strips json code fence", () => {
+    const raw = FENCE + "json\n" + READ_ACTION + "\n" + FENCE;
+    assert.strictEqual(extractJsonActionCandidate(raw), READ_ACTION);
 });
 
-check("extractXmlFromCandidate returns null for plain text", () => {
-    assert.strictEqual(extractXmlFromCandidate("just a normal answer"), null);
-    assert.strictEqual(extractXmlFromCandidate(""), null);
-    assert.strictEqual(extractXmlFromCandidate(null), null);
+check("extractJsonActionCandidate preserves nested params and escaping", () => {
+    const fixture = {
+        action: "write",
+        params: {
+            path: "a.js",
+            content: 'const value = { nested: true };\nconsole.log("quoted", "\\\\path");',
+            options: { nested: { enabled: true } },
+        },
+    };
+    const raw = JSON.stringify(fixture);
+    assert.strictEqual(extractJsonActionCandidate("说明\n" + raw), raw);
+});
+
+check("extractJsonActionCandidate keeps multiple envelopes for parser validation", () => {
+    const second = JSON.stringify({ action: "done", params: {} });
+    const raw = READ_ACTION + "\n" + second;
+    assert.strictEqual(extractJsonActionCandidate(raw), raw);
+});
+
+check("extractJsonActionCandidate returns null for plain text, XML and empty values", () => {
+    assert.strictEqual(extractJsonActionCandidate("just a normal answer"), null);
+    assert.strictEqual(extractJsonActionCandidate('<read path="."/>'), null);
+    assert.strictEqual(extractJsonActionCandidate(FENCE + "xml\n<done/>\n" + FENCE), null);
+    assert.strictEqual(extractJsonActionCandidate('{"ok":true}'), null);
+    assert.strictEqual(extractJsonActionCandidate(""), null);
+    assert.strictEqual(extractJsonActionCandidate(null), null);
 });
 
 // ===== 4. Markdown fence 平衡 =====
