@@ -89,7 +89,16 @@ function attributes(node) {
     }
     for (const key of Object.keys(node)) {
         if (key.startsWith("@_")) {
-            result[key.slice(2)] = decodeXmlEntities(node[key]);
+            const name = key.slice(2);
+            const raw = decodeXmlEntities(node[key]);
+            // XML 属性天生是字符串，但 schema 里 offset/limit 是 integer。
+            // 不转的话 ajv 会把合法的分页读动作判成格式错误。
+            if ((name === "offset" || name === "limit") &&
+                typeof raw === "string" && /^-?\d+$/.test(raw.trim())) {
+                result[name] = Number(raw.trim());
+            } else {
+                result[name] = raw;
+            }
         }
     }
     return result;

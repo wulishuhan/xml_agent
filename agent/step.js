@@ -12,12 +12,12 @@
 
 const { nextDelay } = require("./retry");
 const {
-    getDonePrompt,
-    getSendErrorPrompt,
-    getRuntimeErrorPrompt,
-    getRuntimeOkPrompt,
-} = require("../prompts/index");
-const { getErrorPromptForProtocol } = require("../prompts/protocol");
+    getErrorPromptForProtocol,
+    getRuntimeOkPromptForProtocol,
+    getRuntimeErrorPromptForProtocol,
+    getDonePromptForProtocol,
+    getSendErrorPromptForProtocol,
+} = require("../prompts/protocol");
 const { createHistoryRecord } = require("../workspace/history");
 const { extractActionForProtocol } = require("../parse/action");
 
@@ -110,7 +110,11 @@ async function runStep(agent, { prompt, providerErrorState }) {
         }
         return {
             stop: false,
-            prompt: getSendErrorPrompt(error, { variant: agent.promptVariant ?? 0 }),
+            prompt: getSendErrorPromptForProtocol(
+                error,
+                { variant: agent.promptVariant ?? 0 },
+                agent.protocol
+            ),
         };
     }
 
@@ -179,7 +183,7 @@ async function runStep(agent, { prompt, providerErrorState }) {
         });
         return {
             stop: false,
-            prompt: getDonePrompt(),
+            prompt: getDonePromptForProtocol(agent.protocol),
         };
     }
 
@@ -197,13 +201,17 @@ async function runStep(agent, { prompt, providerErrorState }) {
     if (result.ok === false) {
         return {
             stop: false,
-            prompt: getRuntimeErrorPrompt(result, promptVariantOptions),
+            prompt: getRuntimeErrorPromptForProtocol(
+                result,
+                promptVariantOptions,
+                agent.protocol
+            ),
         };
     }
 
     return {
         stop: false,
-        prompt: getRuntimeOkPrompt(result, promptVariantOptions),
+        prompt: getRuntimeOkPromptForProtocol(result, promptVariantOptions, agent.protocol),
     };
 }
 

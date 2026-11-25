@@ -21,10 +21,16 @@ const { normalizeProtocol } = require("../parse/action");
 const jsonFirst = require("./json/first-prompt");
 const jsonVariants = require("./json/system-prompt-variants");
 const jsonError = require("./json/error-prompt");
+const jsonRuntime = require("./json/runtime-prompt");
+const jsonDone = require("./json/done-prompt");
+const jsonSendError = require("./json/send-error-prompt");
 
 const xmlFirst = require("./xml/first-prompt");
 const xmlVariants = require("./xml/system-prompt-variants");
 const xmlError = require("./xml/error-prompt");
+const xmlRuntime = require("./xml/runtime-prompt");
+const xmlDone = require("./xml/done-prompt");
+const xmlSendError = require("./xml/send-error-prompt");
 
 function firstModule(protocol) {
     return normalizeProtocol(protocol) === "json" ? jsonFirst : xmlFirst;
@@ -34,6 +40,9 @@ function variantsModule(protocol) {
 }
 function errorModule(protocol) {
     return normalizeProtocol(protocol) === "json" ? jsonError : xmlError;
+}
+function runtimeModule(protocol) {
+    return normalizeProtocol(protocol) === "json" ? jsonRuntime : xmlRuntime;
 }
 
 function getFirstPromptForProtocol(workspace, task, options = {}, protocol) {
@@ -62,9 +71,35 @@ function systemPromptVariantCountFor(protocol) {
     return variantsModule(protocol).SYSTEM_PROMPT_VARIANT_COUNT;
 }
 
+/** 每轮执行结果回贴提示：措辞里带协议格式示例，必须按协议路由。 */
+function getRuntimeOkPromptForProtocol(result, options = {}, protocol) {
+    return runtimeModule(protocol).getRuntimeOkPrompt(result, options);
+}
+function getRuntimeErrorPromptForProtocol(result, options = {}, protocol) {
+    return runtimeModule(protocol).getRuntimeErrorPrompt(result, options);
+}
+
+/** 收尾提示：要求模型单独回一个结束动作，格式必须跟当前协议一致。 */
+function getDonePromptForProtocol(protocol) {
+    return normalizeProtocol(protocol) === "json"
+        ? jsonDone.getDonePrompt()
+        : xmlDone.getDonePrompt();
+}
+
+/** 发送失败续接提示：措辞里带协议格式要求，必须按协议路由。 */
+function getSendErrorPromptForProtocol(error, options = {}, protocol) {
+    return normalizeProtocol(protocol) === "json"
+        ? jsonSendError.getSendErrorPrompt(error, options)
+        : xmlSendError.getSendErrorPrompt(error, options);
+}
+
 module.exports = {
     getFirstPromptForProtocol,
     getErrorPromptForProtocol,
+    getRuntimeOkPromptForProtocol,
+    getRuntimeErrorPromptForProtocol,
+    getDonePromptForProtocol,
+    getSendErrorPromptForProtocol,
     getSystemPromptVariantForProtocol,
     pickSystemPromptVariantForProtocol,
     systemPromptVariantCountFor,

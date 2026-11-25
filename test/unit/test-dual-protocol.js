@@ -20,6 +20,10 @@ const { extractXmlAction } = require("../../parse/xml-action");
 const {
     getFirstPromptForProtocol,
     getErrorPromptForProtocol,
+    getRuntimeOkPromptForProtocol,
+    getRuntimeErrorPromptForProtocol,
+    getDonePromptForProtocol,
+    getSendErrorPromptForProtocol,
     getSystemPromptVariantForProtocol,
     pickSystemPromptVariantForProtocol,
     systemPromptVariantCountFor,
@@ -195,6 +199,90 @@ async function main() {
             schema.buildConfig({ AGENT_ACTION_PROTOCOL: "bogus" }).agent.protocol,
             "xml"
         );
+    });
+
+    // ---- 逐轮回贴提示按协议路由（E2E 实测暴露的漏修路径）----
+    // 首轮提示词对了不算完：每步结果回贴里若写死"只输出 JSON 动作对象"，
+    // XML 会话会在第 2 步被带偏，进而解析失败。这里把两协议的措辞钉死。
+    check("XML 成功回贴只讲 XML，不含 JSON 动作指令", () => {
+        const prompt = getRuntimeOkPromptForProtocol(
+            { ok: true, action: "read", path: ".", entries: [] },
+            {},
+            "xml"
+        );
+        assert.ok(!prompt.includes("JSON 动作对象"), "XML 回贴不该出现 JSON 指令");
+        assert.ok(prompt.includes("<answer>"), "XML 回贴应给出 <answer> 示例");
+        assert.ok(prompt.includes("<done/>"), "XML 回贴应给出 <done/> 示例");
+    });
+
+    check("JSON 成功回贴只讲 JSON，不含 XML 动作示例", () => {
+        const prompt = getRuntimeOkPromptForProtocol(
+            { ok: true, action: "read", path: ".", entries: [] },
+            {},
+            "json"
+        );
+        assert.ok(prompt.includes("JSON 动作对象"), "JSON 回贴应给出 JSON 指令");
+        assert.ok(!prompt.includes("<answer>"), "JSON 回贴不该出现 XML 示例");
+    });
+
+    check("XML 失败回贴只讲 XML，不含 JSON 动作指令", () => {
+        const prompt = getRuntimeErrorPromptForProtocol(
+            { ok: false, action: "read", error: "not found" },
+            {},
+            "xml"
+        );
+        assert.ok(!prompt.includes("JSON 动作对象"), "XML 失败回贴不该出现 JSON 指令");
+        assert.ok(prompt.includes("<answer>"), "XML 失败回贴应给出 <answer> 兜底示例");
+    });
+
+    check("JSON 失败回贴只讲 JSON", () => {
+        const prompt = getRuntimeErrorPromptForProtocol(
+            { ok: false, action: "read", error: "not found" },
+            {},
+            "json"
+        );
+        assert.ok(prompt.includes("JSON 动作对象"), "JSON 失败回贴应给出 JSON 指令");
+    });
+
+    check("XML 分页属性转成整数，能被 schema 接受", () => {
+        const action = extractXmlAction('<read path="a.js" offset="4000" limit="2000"/>');
+        assert.strictEqual(action.params.offset, 4000);
+        assert.strictEqual(action.params.limit, 2000);
+    });
+
+    check("XML 分页续读提示给出 XML 动作", () => {
+        const prompt = getRuntimeOkPromptForProtocol(
+            { ok: true, action: "read", path: "a.js", truncated: true, nextOffset: 4000, limit: 4000 },
+            {},
+            "xml"
+        );
+        assert.ok(prompt.includes('<read path="a.js" offset="4000"'), "应给出 XML 续读动作");
+        assert.ok(!prompt.includes("JSON 动作对象"), "续读提示不该夹带 JSON 动作指令");
+    });
+
+    check("收尾 done 提示按协议路由，XML 不吐 JSON、JSON 不吐 XML", () => {
+        const xmlDone = getDonePromptForProtocol("xml");
+        const jsonDone = getDonePromptForProtocol("json");
+        assert.ok(xmlDone.includes("<done/>"), "XML 收尾应要求 <done/>");
+        assert.ok(!xmlDone.includes('"action":"done"'), "XML 收尾不该出现 JSON 动作");
+        assert.ok(jsonDone.includes('"action":"done"'), "JSON 收尾应要求 JSON 动作");
+        assert.ok(!jsonDone.includes("<done/>"), "JSON 收尾不该出现 XML 动作");
+    });
+
+    check("发送失败续接提示按协议路由，XML 不吐 JSON 指令", () => {
+        const xmlPrompt = getSendErrorPromptForProtocol(
+            Object.assign(new Error("empty response"), { code: "EMPTY_RESPONSE" }),
+            { variant: 0 },
+            "xml"
+        );
+        const jsonPrompt = getSendErrorPromptForProtocol(
+            Object.assign(new Error("empty response"), { code: "EMPTY_RESPONSE" }),
+            { variant: 0 },
+            "json"
+        );
+        assert.ok(!xmlPrompt.includes("JSON 动作对象"), "XML 续接提示不该出现 JSON 指令");
+        assert.ok(xmlPrompt.includes("按开头"), "XML 续接提示应指向首条格式");
+        assert.ok(jsonPrompt.includes("JSON 动作对象"), "JSON 续接提示应给出 JSON 指令");
     });
 
     console.log("\nTotal: " + pass + "/" + total);
