@@ -380,6 +380,14 @@ class BrowserAgent {
             args.push("--headless=new");
             args.push("--disable-gpu");
         }
+        // 有些平台（如 Gemini）按出口 IP 判定地区可用性。自定义 profile 的
+        // Chromium 不一定读系统代理，导致开 VPN 后浏览器仍在直连。显式指定
+        // 代理可解；不设置环境变量时行为完全不变。
+        // 例：BROWSER_PROXY=http://127.0.0.1:7897
+        const proxy = process.env.BROWSER_PROXY || process.env.XML_AGENT_BROWSER_PROXY || "";
+        if (proxy.trim()) {
+            args.push("--proxy-server=" + proxy.trim());
+        }
         return args;
     }
     async startChromeCdpServer() {

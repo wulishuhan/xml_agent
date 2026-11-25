@@ -119,6 +119,17 @@ check("BrowserAgent edge launch args contain edge flags", () => {
     assert.ok(args.includes("--remote-debugging-port=9222"));
     assert.ok(args.some((a) => a.includes("msEdgeSidebarV2")));
 });
+check("BrowserAgent launch args honor BROWSER_PROXY env", () => {
+    const prev = process.env.BROWSER_PROXY;
+    const agent = new browserAgentModule.BrowserAgent({ browserType: "edge", autoStart: false });
+    process.env.BROWSER_PROXY = "http://127.0.0.1:7897";
+    const withProxy = agent.buildLaunchArgs(9222, "C:/tmp/e");
+    assert.ok(withProxy.includes("--proxy-server=http://127.0.0.1:7897"));
+    delete process.env.BROWSER_PROXY;
+    const without = agent.buildLaunchArgs(9222, "C:/tmp/e");
+    assert.ok(!without.some((a) => a.startsWith("--proxy-server=")), "unset env should not add proxy");
+    if (prev !== undefined) process.env.BROWSER_PROXY = prev;
+});
 // 7. agent-config 归一化
 check("agent-config exports normalizeBrowserType", () => {
     assert.strictEqual(agentConfig.normalizeBrowserType("edge"), "edge");
