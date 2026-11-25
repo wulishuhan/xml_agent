@@ -1,6 +1,6 @@
 # XML Agent
 
-一个基于 Node.js 实现的工程型 AI Agent Framework（当前版本 **1.3.0**）。
+一个基于 Node.js 实现的工程型 AI Agent Framework（当前版本 **1.4.0**）。
 
 核心设计理念：
 
@@ -1249,7 +1249,7 @@ npm run test:electron   # 需要 Electron 运行时
 | `docs/PLUGIN_API.md`                       | 插件开发契约：清单字段、JSON Action 定义、JSON Schema、ctx 能力、钩子、错误码 |
 | `docs/PLUGIN_DESIGN.md`                    | 当前 JSON 架构与文件职责，以及 v1.1.0 XML 方案的历史演进记录                  |
 | `docs/ARCHITECTURE_FLOW.md`                | 架构与数据流：模块职责、动作分发、子进程生命周期                              |
-| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.3.0.md` | 各版本更新日志                                                                |
+| `docs/RELEASE_NOTES_1.0.1.md` ~ `1.4.0.md` | 各版本更新日志                                                                |
 
 ---
 
