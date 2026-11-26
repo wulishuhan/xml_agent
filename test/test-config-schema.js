@@ -340,6 +340,49 @@ check(
     agentConfig.session.maxSessions === 100,
     String(agentConfig.session.maxSessions)
 );
+// BUG1 回归：启动同步补齐后的全字段时，必须保留外部显式设置的环境变量。
+// 复现过的坑：AGENT_ACTION_PROTOCOL=json 在 WebUI 启动时被文件默认值改回 xml。
+{
+    const startupTarget = {};
+    const startupEnv = {
+        AGENT_MAX_STEPS: "7",
+        AGENT_ACTION_PROTOCOL: "json",
+        XML_AGENT_RESPONSE_TIMEOUT_MS: "1234",
+    };
+    schema.applyProvided(schema.defaultsForUI(), {
+        target: startupTarget,
+        env: startupEnv,
+        preserveExistingEnv: true,
+    });
+    check(
+        "启动同步保留显式 env: maxSteps",
+        startupEnv.AGENT_MAX_STEPS === "7" && startupTarget.agent.maxSteps === undefined,
+        startupEnv.AGENT_MAX_STEPS + " / target=" + String(startupTarget.agent.maxSteps)
+    );
+    check(
+        "启动同步保留显式 env: protocol=json 不被改回 xml",
+        startupEnv.AGENT_ACTION_PROTOCOL === "json" && startupTarget.agent.protocol === undefined,
+        startupEnv.AGENT_ACTION_PROTOCOL + " / target=" + String(startupTarget.agent.protocol)
+    );
+    check(
+        "启动同步保留显式 env: responseTimeoutMs",
+        startupEnv.XML_AGENT_RESPONSE_TIMEOUT_MS === "1234",
+        startupEnv.XML_AGENT_RESPONSE_TIMEOUT_MS
+    );
+    check(
+        "启动同步仍补齐未设置的字段",
+        startupTarget.agent.maxProviderErrors === 3 && startupEnv.AGENT_MAX_PROVIDER_ERRORS === "3",
+        JSON.stringify(startupTarget.agent)
+    );
+    // 用户点保存（默认 preserveExistingEnv=false）时，UI 值可覆盖既有 env。
+    schema.applyProvided({ agent: { maxSteps: 55 } }, { target: startupTarget, env: startupEnv });
+    check(
+        "保存路径可覆盖显式 env",
+        startupEnv.AGENT_MAX_STEPS === "55" && startupTarget.agent.maxSteps === 55,
+        startupEnv.AGENT_MAX_STEPS
+    );
+}
+
 agentConfig.agent.maxSteps = previousSteps;
 if (previousEnv === undefined) {
     delete process.env.AGENT_MAX_STEPS;

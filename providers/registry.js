@@ -138,6 +138,7 @@ const BUILTIN_DEFINITIONS = [
     require("./deepseek"),
     require("./glm"),
     require("./gemini"),
+    require("./grok"),
 ].map((module, index) => {
     const meta = module.meta;
     if (!meta) {

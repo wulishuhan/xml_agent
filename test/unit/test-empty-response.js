@@ -2,7 +2,7 @@
 空回复守门单测（providers/browser-chat.js 的 waitForNewResponseKey）
 
 真实踩过的坑：GLM 某一轮没有产出任何内容，页面上只挂了一个"正在思考"占位。
-旧逻辑要求"新回复非空"才算成立，于是一直空转到 responseTimeout（默认 10 分钟）。
+旧逻辑要求"新回复非空"才算成立，于是一直空转到 responseTimeout（默认 3 分钟）。
 这里把新的契约钉住：
 1. 空占位持续超过 responseContentGrace 就报 EMPTY_RESPONSE，而不是等满总超时；
 2. 占位被换成新的一条时重新计时，不误杀正常的长思考；
@@ -205,6 +205,40 @@ async function main() {
                 error ? error.message : "未抛错"
             );
         }
+    }
+
+    // ------------------------------------------------------------
+    // 7. BUG3 回归：短总超时下 grace / initialTimeout 必须收敛，
+    //    否则 EMPTY_RESPONSE 分支不可达，限流冷却信号丢失。
+    // ------------------------------------------------------------
+    {
+        const short = new GlmProvider({ autoStart: false, responseTimeout: 5000 });
+        check(
+            "短超时：grace 严格小于总超时",
+            short.responseContentGrace < short.responseTimeout,
+            "grace=" + short.responseContentGrace + " timeout=" + short.responseTimeout
+        );
+        check(
+            "短超时：initialTimeout 严格小于总超时",
+            short.responseInitialTimeout < short.responseTimeout,
+            "initial=" + short.responseInitialTimeout + " timeout=" + short.responseTimeout
+        );
+
+        const tiny = new GlmProvider({ autoStart: false, responseTimeout: 1000 });
+        check(
+            "极小超时：grace 仍小于总超时",
+            tiny.responseContentGrace < tiny.responseTimeout,
+            "grace=" + tiny.responseContentGrace + " timeout=" + tiny.responseTimeout
+        );
+
+        const normal = new GlmProvider({ autoStart: false });
+        check(
+            "默认超时：守门窗口不被改动",
+            normal.responseTimeout === 180000 &&
+                normal.responseInitialTimeout === 60000 &&
+                normal.responseContentGrace === 60000,
+            "timeout=" + normal.responseTimeout
+        );
     }
 
     console.log("");

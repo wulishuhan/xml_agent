@@ -90,10 +90,13 @@ try {
     console.warn("[WebUI] Failed to apply browser settings to runtime:", error.message);
 }
 
-// 把已保存的 Agent 配置同步到运行环境
+// 把已保存的 Agent 配置同步到运行环境。
+// 启动时必须保留外部显式设置的环境变量（例如 AGENT_ACTION_PROTOCOL=json）：
+// 配置文件里是补齐后的全字段，若无条件写回同名 env，会把这些显式设置改回默认值。
+// 用户在设置面板点"保存"时走正常路径（可覆盖 env），不受此处影响。
 try {
     const savedAgentConfig = agentConfigApi.readAgentConfig();
-    agentConfigApi.applyToRuntime(savedAgentConfig);
+    agentConfigApi.applyToRuntime(savedAgentConfig, { preserveExistingEnv: true });
 } catch (error) {
     console.warn("[WebUI] Failed to apply agent config to runtime:", error.message);
 }

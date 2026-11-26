@@ -329,6 +329,7 @@
         { id: "deepseek", label: "DeepSeek" },
         { id: "glm", label: "GLM" },
         { id: "gemini", label: "Gemini" },
+        { id: "grok", label: "Grok" },
     ];
     const providerOptions = ref(FALLBACK_PROVIDER_OPTIONS.slice());
     const task = ref("");

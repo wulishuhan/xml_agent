@@ -104,6 +104,17 @@ const FIELDS = [
         message: "agent.runTimeoutMs must be a non-negative integer",
     },
     {
+        // 单次发送后等待模型回复的总时长上限（毫秒）。
+        // 正常回复几秒到几十秒即可完成，3 分钟足够兜底；过大只会在页面卡住、
+        // 模型静默或 DOM 改版时白等。设置面板可调，仍可用环境变量覆盖。
+        path: "agent.responseTimeoutMs",
+        default: 3 * 60 * 1000,
+        type: INT,
+        min: 1,
+        env: ["XML_AGENT_RESPONSE_TIMEOUT_MS"],
+        message: "agent.responseTimeoutMs must be a positive integer",
+    },
+    {
         // 动作协议：xml（默认）或 json。两套协议共用执行层，只影响提示词与解析。
         path: "agent.protocol",
         default: "xml",
@@ -609,6 +620,11 @@ function applyEnvOverrides(config, env) {
 function applyProvided(config, options = {}) {
     const target = options.target && typeof options.target === "object" ? options.target : {};
     const env = options.env;
+    // 启动同步场景：配置文件里存的往往是补齐后的全字段（含默认值），若照单
+    // 写回同名环境变量，会把用户在环境里显式设置的值（如 AGENT_ACTION_PROTOCOL=json）
+    // 悄悄改回默认值。为 true 时，只写环境里尚未设置的字段；已经存在的保留。
+    // 用户点"保存"时走 false，允许 UI 的显式选择覆盖既有环境变量。
+    const preserveExistingEnv = options.preserveExistingEnv === true;
     const applied = [];
     if (!config || typeof config !== "object") {
         return applied;
@@ -621,9 +637,21 @@ function applyProvided(config, options = {}) {
         if (value === undefined || value === null) {
             continue;
         }
+        const hasEnv = env && Array.isArray(field.env) && field.env.length > 0;
+        const envName = hasEnv ? field.env[0] : null;
+        // 保留外部显式设置：目标对象里该字段也保持原值，避免 env 与单例不一致。
+        if (
+            preserveExistingEnv &&
+            envName !== null &&
+            Object.prototype.hasOwnProperty.call(env, envName) &&
+            env[envName] !== undefined &&
+            env[envName] !== ""
+        ) {
+            continue;
+        }
         setPath(target, field.path, value);
-        if (env && Array.isArray(field.env) && field.env.length > 0) {
-            env[field.env[0]] = String(value);
+        if (envName !== null) {
+            env[envName] = String(value);
         }
         applied.push(field.path);
     }

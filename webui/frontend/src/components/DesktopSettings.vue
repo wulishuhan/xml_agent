@@ -230,6 +230,19 @@
                             <input v-model.number="agentMaxProviderErrors" type="number" min="1" />
                             <div class="settings-hint">{{ t("maxProviderErrorsHint") }}</div>
                         </div>
+                        <div class="settings-field">
+                            <label>{{ t("responseTimeoutMs") }}</label>
+                            <input
+                                v-model.number="agentResponseTimeoutMs"
+                                type="number"
+                                min="1000"
+                                step="1000"
+                            />
+                            <div class="settings-hint">
+                                {{ (agentResponseTimeoutMs / 1000).toFixed(0) }}s -
+                                {{ t("responseTimeoutMsHint") }}
+                            </div>
+                        </div>
                         <h3 class="tab-section-title">{{ t("runtimeConfig") }}</h3>
                         <div class="settings-field">
                             <label>{{ t("maxFileSize") }}</label>
@@ -411,6 +424,8 @@
             maxStepsHint: "Agent 单次任务允许执行的最大步骤数",
             maxProviderErrors: "最大 Provider 错误次数",
             maxProviderErrorsHint: "连续失败多少次后停止重试",
+            responseTimeoutMs: "回复会话超时时间",
+            responseTimeoutMsHint: "等待模型单次回复的最长时间（毫秒），超时即停止等待并报错",
             maxFileSize: "最大文件大小",
             maxFileSizeHint: "单个文件读取的最大大小限制",
             maxReadSize: "最大读取大小",
@@ -492,6 +507,8 @@
             maxStepsHint: "Maximum number of steps per agent task",
             maxProviderErrors: "Max Provider Errors",
             maxProviderErrorsHint: "Stop retrying after this many consecutive failures",
+            responseTimeoutMs: "Response Timeout",
+            responseTimeoutMsHint: "Max wait for a single model reply (ms); times out with an error",
             maxFileSize: "Max File Size",
             maxFileSizeHint: "Maximum size for reading a single file",
             maxReadSize: "Max Read Size",
@@ -577,6 +594,7 @@
     const agentProtocol = ref("xml");
     const agentMaxSteps = ref(100);
     const agentMaxProviderErrors = ref(3);
+    const agentResponseTimeoutMs = ref(3 * 60 * 1000);
     const runtimeMaxFileSize = ref(5 * 1024 * 1024);
     const runtimeMaxReadSize = ref(2 * 1024 * 1024);
     const runtimeMaxExecTimeout = ref(300000);
@@ -672,6 +690,7 @@
             agentProtocol.value = config.agent.protocol ?? "xml";
             agentMaxSteps.value = config.agent.maxSteps || 100;
             agentMaxProviderErrors.value = config.agent.maxProviderErrors || 3;
+            agentResponseTimeoutMs.value = config.agent.responseTimeoutMs || 3 * 60 * 1000;
         }
             if (config.runtime) {
                 runtimeMaxFileSize.value = config.runtime.maxFileSize || 5 * 1024 * 1024;
@@ -757,6 +776,7 @@
             protocol: agentProtocol.value,
             maxSteps: agentMaxSteps.value,
             maxProviderErrors: agentMaxProviderErrors.value,
+            responseTimeoutMs: agentResponseTimeoutMs.value,
         },
             runtime: {
                 maxFileSize: runtimeMaxFileSize.value,

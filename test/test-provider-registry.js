@@ -63,9 +63,9 @@ async function main() {
         const list = providers.listProviders();
         const ids = list.map((item) => item.id);
         check(
-            "五个内置 provider 都已注册（顺序即前端下拉顺序）",
+            "六个内置 provider 都已注册（顺序即前端下拉顺序）",
             JSON.stringify(ids) ===
-                JSON.stringify(["chatgpt", "qwen", "deepseek", "glm", "gemini"]),
+                JSON.stringify(["chatgpt", "qwen", "deepseek", "glm", "gemini", "grok"]),
             ids.join(",")
         );
         check(
@@ -179,6 +179,15 @@ async function main() {
             // 下面这条是本次修复：provider 自己支持 /s/<id>，但 server 端此前只认 /c/<id>
             ["glm", "https://zchat.z.ai/s/abc-123", "abc-123"],
             ["glm", "https://zchat.z.ai/c/abc-123", "abc-123"],
+            // Grok：主路径 /c/<uuid>，兼容旧 /chat/ 与 /share/c/
+            [
+                "grok",
+                "https://grok.com/c/7c4197f2-10a1-4ebb-a84a-fea89f4f1d06",
+                "7c4197f2-10a1-4ebb-a84a-fea89f4f1d06",
+            ],
+            ["grok", "https://grok.com/chat/abc123", "abc123"],
+            ["grok", "https://grok.com/share/c/abc123", "abc123"],
+            ["grok", "https://grok.com", null],
             // 未声明正则的 provider 回落默认 /c/<id>（保持 1.0.x 行为）
             ["some-unknown", "https://x.example/c/xyz-9", "xyz-9"],
             ["deepseek", "", null],
@@ -282,8 +291,56 @@ module.exports = {
         check(
             "provider 地址只来自 provider 元数据",
             providers.resolveTargetUrl("chatgpt") === "https://chatgpt.com" &&
-                providers.resolveTargetUrl("qwen") === "https://chat.qwen.ai"
+                providers.resolveTargetUrl("qwen") === "https://chat.qwen.ai" &&
+                providers.resolveTargetUrl("grok") === "https://grok.com"
         );
+
+        // Grok 限流检测：命中限额文案要抛错并给出明确提示，正常文案要放行。
+        // 用 mock page 注入页面文案，不起浏览器。
+        const { GrokProvider } = require("../providers/grok");
+        const grok = new GrokProvider({ autoStart: false });
+        const withText = (text) => {
+            grok.page = { evaluate: async () => text };
+            grok.isPageAlive = () => true;
+            return grok.assertNotRateLimited();
+        };
+        let quotaErr = null;
+        try {
+            await withText("... 免费版限额已达上限，请稍后重试 ...");
+        } catch (error) {
+            quotaErr = error;
+        }
+        check(
+            "Grok 限额文案触发明确错误",
+            !!quotaErr && /限额|额度|重试/.test(quotaErr.message),
+            quotaErr ? quotaErr.message.slice(0, 60) : "未抛错"
+        );
+        let normalOk = true;
+        try {
+            await withText("Grok | 这是一条正常的助手回复内容");
+        } catch (error) {
+            normalOk = false;
+        }
+        check("Grok 正常文案不触发限额误报", normalOk);
+
+        // BUG2 回归：正常技术对话里出现 rate limit / quota 等词不得误判为平台限额。
+        // 这些通用词已从 QUOTA_PATTERNS 移除，只有平台强特征原文才命中。
+        const techSamples = [
+            "请解释这段代码里的 rate limit 限流逻辑",
+            "这是一段关于 quota 配额管理的正常回复",
+            "usage limit 和 too many requests 都是 HTTP 429 相关概念",
+            "upgrade to 新版本后接口变了",
+        ];
+        let techFalsePositive = null;
+        for (const sample of techSamples) {
+            try {
+                await withText(sample);
+            } catch (error) {
+                techFalsePositive = sample + " -> " + error.message.slice(0, 40);
+                break;
+            }
+        }
+        check("Grok 技术对话不误判限额", techFalsePositive === null, techFalsePositive || "4 条样本均放行");
     } finally {
         pluginRegistryModule.resetRegistry();
         for (const dir of [storeRoot, userDir]) {

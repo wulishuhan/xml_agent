@@ -119,7 +119,7 @@ function parseBytes(value) {
 
 只应用用户实际提供的字段，因此不会用默认值覆盖用户显式设置的环境变量。
 */
-function applyToRuntime(config) {
+function applyToRuntime(config, options) {
     if (!config || typeof config !== "object") {
         return [];
     }
@@ -133,6 +133,8 @@ function applyToRuntime(config) {
     return schema.applyProvided(config, {
         target: agentConfig || {},
         env: process.env,
+        // 启动同步时保留外部显式设置的环境变量；用户点保存时（默认）则可覆盖。
+        preserveExistingEnv: !!(options && options.preserveExistingEnv),
     });
 }
 

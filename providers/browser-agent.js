@@ -158,7 +158,7 @@ class BrowserAgent {
         this.responseTimeout = this.getNumberOption(
             options.responseTimeout,
             process.env.XML_AGENT_RESPONSE_TIMEOUT_MS,
-            10 * 60 * 1000
+            3 * 60 * 1000
         );
         this.responseStableTime = this.getNumberOption(
             options.responseStableTime,
@@ -177,12 +177,21 @@ class BrowserAgent {
         );
         // 新回复"已经出现但一直没有可读内容"的最长容忍时间。
         // 平台偶尔会残留一个空占位（例如 GLM 的"正在思考"），
-        // 若不设这个上限，调用方会一直等到 responseTimeout（默认 10 分钟）。
+        // 若不设这个上限，调用方会一直等到 responseTimeout（默认 3 分钟）。
+        // 必须显著小于 responseTimeout，否则空占位会退化成等满总超时才报错。
         this.responseContentGrace = this.getNumberOption(
             options.responseContentGrace,
             process.env.XML_AGENT_RESPONSE_CONTENT_GRACE_MS,
-            3 * 60 * 1000
+            60 * 1000
         );
+        // 两个内部守门窗口必须严格小于总超时，否则对应分支永远不可达：
+        // - responseInitialTimeout >= responseTimeout：等首字的报错被总超时抢先；
+        // - responseContentGrace >= responseTimeout：空占位的 EMPTY_RESPONSE 错误码丢失，
+        //   agent/step.js 的限流冷却拿不到信号，会高速重试撞平台。
+        // responseTimeoutMs 现在可在设置面板调到很小（最低 1s），这里统一收敛。
+        const graceCeiling = Math.max(1, Math.floor(this.responseTimeout / 2));
+        this.responseInitialTimeout = Math.min(this.responseInitialTimeout, graceCeiling);
+        this.responseContentGrace = Math.min(this.responseContentGrace, graceCeiling);
         this.inputSelectors = options.inputSelectors || [];
         this.targetUrl =
             options.targetUrl !== undefined ? options.targetUrl : "https://chatgpt.com";

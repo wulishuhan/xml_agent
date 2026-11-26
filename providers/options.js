@@ -77,6 +77,9 @@ function buildProviderOptions(input = {}) {
         reuseExistingPage: agentConfig.browser.reuseExistingPage,
         focusCdpPage: input.focusCdpPage,
         conversationId: input.conversationId || null,
+        // 单次回复等待上限：设置面板 > 环境变量 > schema 默认值。
+        // provider 侧 getNumberOption 以 options 为最高优先级。
+        responseTimeout: agentConfig.agent.responseTimeoutMs,
         // 拟人化节流参数（env > schema 默认值，provider 侧再做一次归一化）
         humanize: agentConfig.browser.humanize,
         humanizeMaxChars: agentConfig.browser.humanizeMaxChars,
