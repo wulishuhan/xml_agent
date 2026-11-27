@@ -52,18 +52,65 @@ function countOccurrences(text, needle) {
     return count;
 }
 
+/**
+ * 统计 offset 之前的换行数（用于把字符偏移换算成行号）。
+ *
+ * 三种换行都要认：\r\n（CRLF）、单独 \n（LF）、单独 \r（1990s Mac 老式换行）。
+ * 旧实现只数 \n，老式 \r-only 文件里整段都被当成第 1 行，diff 行号全错。
+ * \r\n 必须只算一次，所以遇到 \r 时把紧随的 \n 一并跳过。
+ */
 function countNewlines(text, upTo) {
     let count = 0;
-    let index = text.indexOf("\n");
-    while (index !== -1 && index < upTo) {
-        count += 1;
-        index = text.indexOf("\n", index + 1);
+    let index = 0;
+    while (index < upTo && index < text.length) {
+        const ch = text.charAt(index);
+        if (ch === "\r") {
+            count += 1;
+            index += text.charAt(index + 1) === "\n" ? 2 : 1;
+        } else if (ch === "\n") {
+            count += 1;
+            index += 1;
+        } else {
+            index += 1;
+        }
     }
     return count;
 }
 
 function lineOf(text, offset) {
     return 1 + countNewlines(text, offset);
+}
+
+/**
+ * 把原子写入抛出的 syscall 错误（典型是 EPERM: rename tmp -> file）转成
+ * 模型能看懂的提示：说清属于权限/磁盘/目录哪一类，保留错误码与原始消息。
+ * 直接 rethrow 会让模型看到 "EPERM: operation not permitted, rename ...tmp..."
+ * 这种无从下手的信息，进而反复重试同一个写操作。
+ */
+function describeWriteFailure(error) {
+    const code = error && error.code ? error.code : "";
+    const raw = error && error.message ? error.message : String(error);
+    let reason = raw;
+    if (code === "EPERM" || code === "EACCES") {
+        reason = "permission denied (file or directory is read-only, or no write access)";
+    } else if (code === "ENOSPC") {
+        reason = "disk full";
+    } else if (code === "ENOENT") {
+        reason = "parent directory does not exist";
+    } else if (code === "EISDIR") {
+        reason = "target is a directory";
+    } else if (code === "ENOTDIR") {
+        reason = "a path component is not a directory";
+    }
+    return (
+        "Failed to write file" +
+        (code ? " [" + code + "]" : "") +
+        ": " +
+        reason +
+        ". The original file is unchanged. (raw: " +
+        raw +
+        ")"
+    );
 }
 
 /**
@@ -638,7 +685,11 @@ module.exports = {
             } catch (_) {
                 // ignore
             }
-            throw error;
+            // 不再 rethrow 裸 syscall 错误：包装成可读提示，让模型知道是
+            // 只读/权限/磁盘这类问题，而不是反复重试同一个写操作。
+            return fail(describeWriteFailure(error), {
+                matched: usedLoose ? "loose" : "exact",
+            });
         }
 
         const result = {

@@ -595,6 +595,54 @@ async function main() {
         assert.strictEqual(result.ok, false);
         assert.ok(/line 2 of the original file/.test(result.error), result.error);
     });
+
+    // 第 9 段：换行行号 + 写入失败友好提示
+
+    await check("老式 \\r-only 换行的 diff 行号正确（不重复计数 \\r\\n / \\n）", async () => {
+        // 三种换行都把 c(); 放在第 3 行；行号必须一致为 3
+        for (const [name, content] of [
+            ["cr", "a();\rb();\rc();\r"],
+            ["crlf", "a();\r\nb();\r\nc();\r\n"],
+            ["lf", "a();\nb();\nc();\n"],
+        ]) {
+            seed("eol-" + name + ".js", content);
+            const result = await runEdit({
+                path: "eol-" + name + ".js",
+                changes: [{ old: "c();", new: "C();" }],
+            });
+            assert.strictEqual(result.ok, true, name + ": " + result.error);
+            assert.ok(
+                /@@ -3,1/.test(result.diff),
+                name + " 行号应为 3，实际 diff=" + JSON.stringify(result.diff)
+            );
+        }
+    });
+
+    await check("只读文件写入失败给出友好提示且原文件不变", async () => {
+        const target = path.join(workspace, "readonly.js");
+        fs.writeFileSync(target, "const a = 1;\n", "utf8");
+        fs.chmodSync(target, 0o444);
+        try {
+            const result = await runEdit({
+                path: "readonly.js",
+                changes: [{ old: "const a = 1;", new: "const a = 2;" }],
+            });
+            assert.strictEqual(result.ok, false);
+            // 主提示要点明"权限/只读"，不能再是裸 syscall 文本
+            assert.ok(
+                /permission denied|read-only/i.test(result.error),
+                result.error
+            );
+            assert.ok(/Failed to write file/.test(result.error), result.error);
+            assert.strictEqual(
+                fs.readFileSync(target, "utf8"),
+                "const a = 1;\n",
+                "失败不得改动原文件"
+            );
+        } finally {
+            fs.chmodSync(target, 0o644);
+        }
+    });
 }
 
 main()
