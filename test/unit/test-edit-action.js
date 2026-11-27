@@ -173,6 +173,10 @@ async function main() {
         assert.strictEqual(result.ok, true);
         assert.strictEqual(read("multi.js"), "alpha();\nb();\ngamma();\n");
         assert.strictEqual(result.changes, 2);
+        assert.deepStrictEqual(result.changeResults, [
+            { index: 1, ok: true, matched: "exact", startLine: 1, replacements: 1 },
+            { index: 2, ok: true, matched: "exact", startLine: 3, replacements: 1 },
+        ]);
     });
 
     await check("new 留空表示删除", async () => {
@@ -195,6 +199,7 @@ async function main() {
         assert.strictEqual(result.ok, true);
         assert.strictEqual(read("all.js"), "baz();\nbar();\nbaz();\n");
         assert.strictEqual(result.changes, 2);
+        assert.strictEqual(result.changeResults[0].replacements, 2);
     });
 
     await check("CRLF 文件保持 CRLF，插入内容也转成 CRLF", async () => {
@@ -228,6 +233,10 @@ async function main() {
         assert.strictEqual(result.ok, false);
         assert.ok(/Found 2 matches/.test(result.error), result.error);
         assert.ok(/lines 1, 3/.test(result.error), result.error);
+        assert.strictEqual(result.changeResults[0].index, 1);
+        assert.strictEqual(result.changeResults[0].ok, false);
+        assert.strictEqual(result.changeResults[0].matches, 2);
+        assert.deepStrictEqual(result.changeResults[0].lines, [1, 3]);
         assert.strictEqual(read("dup.js"), "foo();\nbar();\nfoo();\n");
     });
 
@@ -240,6 +249,9 @@ async function main() {
         assert.strictEqual(result.ok, false);
         assert.ok(/not found/.test(result.error), result.error);
         assert.ok(/line 1/.test(result.error), result.error);
+        assert.deepStrictEqual(result.changeResults[0].lines, [1]);
+        assert.strictEqual(result.changeResults[0].nonContiguous, false);
+        assert.strictEqual(result.changeResults[0].suggestedLine, 1);
         assert.strictEqual(read("miss.js"), "alpha();\nbeta();\ngamma();\n");
     });
 
@@ -253,10 +265,50 @@ async function main() {
             ],
         });
         assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.failedChanges, 1);
+        assert.ok(/1 of 2 changes failed/.test(result.error), result.error);
+        assert.strictEqual(result.changeResults.length, 2);
+        assert.strictEqual(result.changeResults[0].ok, true);
+        assert.strictEqual(result.changeResults[1].index, 2);
+        assert.strictEqual(result.changeResults[1].ok, false);
         assert.strictEqual(read("partial.js"), "a();\nb();\n");
         assert.deepStrictEqual(
             fs.readdirSync(workspace).filter((name) => name.indexOf(".tmp.") !== -1),
             []
+        );
+    });
+
+    await check("不连续 old 返回全部行号并指向最独特锚点", async () => {
+        seed(
+            "noncontiguous.txt",
+            "remove me\nalpha\n\ncommon phrase\n\nmiddle\n\n[PROGRESS: P6完成 | 本段字数: 732 | 累计字数: 3579]\n\nfinal ending\n"
+        );
+        const result = await runEdit({
+            path: "noncontiguous.txt",
+            changes: [
+                { old: "remove me\n", new: "" },
+                {
+                    old: "common phrase\n\n[PROGRESS: P6完成 | 本段字数: 732 | 累计字数: 3579]\n\nfinal ending",
+                    new: "bad",
+                },
+                { old: "middle", new: "MIDDLE" },
+            ],
+        });
+        assert.strictEqual(result.ok, false);
+        assert.strictEqual(result.failedChanges, 1);
+        assert.deepStrictEqual(
+            result.changeResults.map((item) => item.ok),
+            [true, false, true]
+        );
+        const failure = result.changeResults[1];
+        assert.strictEqual(failure.index, 2);
+        assert.deepStrictEqual(failure.lines, [4, 8, 10]);
+        assert.strictEqual(failure.nonContiguous, true);
+        assert.strictEqual(failure.suggestedLine, 8);
+        assert.ok(/not one contiguous block/.test(failure.error), failure.error);
+        assert.strictEqual(
+            read("noncontiguous.txt"),
+            "remove me\nalpha\n\ncommon phrase\n\nmiddle\n\n[PROGRESS: P6完成 | 本段字数: 732 | 累计字数: 3579]\n\nfinal ending\n"
         );
     });
 
@@ -268,6 +320,7 @@ async function main() {
         });
         assert.strictEqual(result.ok, false);
         assert.ok(/Content validation failed/.test(result.error), result.error);
+        assert.strictEqual(result.changeResults[0].ok, true);
         assert.strictEqual(read("data.json"), '{"a":1}');
     });
 
@@ -340,6 +393,7 @@ async function main() {
         });
         assert.strictEqual(result.ok, true);
         assert.strictEqual(result.matched, "loose");
+        assert.strictEqual(result.changeResults[0].matched, "loose");
         assert.ok(typeof result.hint === "string" && result.hint.length > 0);
         assert.strictEqual(
             read("loose.js"),

@@ -15,7 +15,8 @@
  *   （old 长度不足 MIN_LOOSE_LENGTH 时不启用，避免短串误命中别处）。
  *   命中后按原文位置替换，并把缩进差补到 new 的每一行上。
  *
- * 任何一处 change 失败就整体放弃、不落盘 —— 改到一半的文件比没改更难收拾。
+ * 先在内存中逐项模拟并记录结果；任何一处 change 失败就整体放弃、不落盘，
+ * 改到一半的文件比没改更难收拾。
  */
 
 const fs = require("fs");
@@ -223,25 +224,69 @@ function applyIndentShift(newText, shift) {
         .join("\n");
 }
 
-/** 找不到时给一条"最接近的位置"，比只说 not found 有用得多。 */
-function notFoundHint(text, oldText) {
-    const probe = oldText
+/** 找不到时列出 old 各行在原文中的位置，并指出它们是否拼成了不连续块。 */
+function describeNotFound(text, oldText) {
+    const oldLines = oldText
         .split(/\r?\n/)
         .map((line) => line.trim())
-        .find((line) => line.length >= 8);
-    if (!probe) {
-        return "";
+        .filter((line) => line.length >= 8);
+    const located = [];
+
+    for (const line of oldLines) {
+        const needle = line.slice(0, 40);
+        const lines = [];
+        let from = 0;
+        while (true) {
+            const index = text.indexOf(needle, from);
+            if (index === -1) {
+                break;
+            }
+            lines.push(lineOf(text, index));
+            from = index + needle.length;
+        }
+        if (lines.length) {
+            located.push({ text: line, lines });
+        }
     }
-    const needle = probe.slice(0, 40);
-    const index = text.indexOf(needle);
-    if (index === -1) {
-        return "";
+
+    if (!located.length) {
+        return { lines: [], nonContiguous: false, suggestedLine: null, hint: "" };
     }
-    return (
-        " The closest line of old appears at line " +
-        lineOf(text, index) +
-        ", but the block around it differs — re-read the file and copy the exact text."
-    );
+
+    const lines = Array.from(
+        new Set(located.reduce((all, item) => all.concat(item.lines), []))
+    ).sort((a, b) => a - b);
+    const expectedSpan = Math.max(1, oldText.split(/\r?\n/).length);
+    const actualSpan = lines[lines.length - 1] - lines[0] + 1;
+    const nonContiguous = lines.length > 1 && actualSpan > expectedSpan;
+    const specific = located
+        .slice()
+        .sort((a, b) => a.lines.length - b.lines.length || b.text.length - a.text.length)[0];
+    const suggestedLine = specific.lines[0];
+
+    let hint;
+    if (nonContiguous) {
+        hint =
+            " Parts of old appear at lines " +
+            lines.join(", ") +
+            ", but they are not one contiguous block. The most specific anchor is at line " +
+            suggestedLine +
+            " — re-read around that line and copy the exact text.";
+    } else if (lines.length === 1) {
+        hint =
+            " The closest line of old appears at line " +
+            lines[0] +
+            ", but the block around it differs — re-read the file and copy the exact text.";
+    } else {
+        hint =
+            " Parts of old appear at lines " +
+            lines.join(", ") +
+            ", but not as the supplied block — re-read around line " +
+            suggestedLine +
+            " and copy the exact text.";
+    }
+
+    return { lines, nonContiguous, suggestedLine, hint };
 }
 
 function splitDiffLines(value) {
@@ -356,49 +401,72 @@ module.exports = {
         }
 
         let text = buffer.toString("utf8");
+        const originalText = text;
         const eol = text.indexOf("\r\n") !== -1 ? "\r\n" : "\n";
         const all = params.all === true;
         const applied = [];
+        const changeResults = [];
         let usedLoose = false;
         let addedLines = 0;
         let removedLines = 0;
+        let failedChanges = 0;
 
-        for (const change of changes) {
+        const recordFailure = (index, error, extra) => {
+            failedChanges += 1;
+            changeResults.push(Object.assign({ index, ok: false, error }, extra || {}));
+        };
+
+        for (let changeIndex = 0; changeIndex < changes.length; changeIndex += 1) {
+            const change = changes[changeIndex];
+            const resultIndex = changeIndex + 1;
             const oldText = toFileEol(change.old, eol);
             let newText = toFileEol(change.new, eol);
             const found = locate(text, oldText);
 
             if (!found.count) {
-                return fail(
-                    "Text to replace not found in " + filePath + "." + notFoundHint(text, oldText),
-                    { matched: "none" }
+                const diagnostic = describeNotFound(originalText, oldText);
+                recordFailure(
+                    resultIndex,
+                    "Text to replace not found in " + filePath + "." + diagnostic.hint,
+                    {
+                        matched: "none",
+                        lines: diagnostic.lines,
+                        nonContiguous: diagnostic.nonContiguous,
+                        suggestedLine: diagnostic.suggestedLine,
+                    }
                 );
+                continue;
             }
             if (found.count > 1 && !all) {
-                const lines = occurrenceLines(text, oldText, 5);
-                return fail(
+                const lines = occurrenceLines(originalText, oldText, 5);
+                recordFailure(
+                    resultIndex,
                     "Found " +
                         found.count +
                         " matches of old (lines " +
                         lines.join(", ") +
                         (found.count > lines.length ? ", …" : "") +
                         "). Add more surrounding lines to make it unique, or use all=true to replace every match.",
-                    { matches: found.count, lines }
+                    { matched: found.mode, matches: found.count, lines }
                 );
+                continue;
             }
             // 宽松匹配只能定位到"唯一一处"（位置来自归一化视图的映射）。
             // 又要 all=true 就会变成"答应替换全部，实际只改一处"，
             // 这种静默少做比直接报错更难发现。
             if (found.mode === "loose" && found.count > 1 && all) {
-                return fail(
+                recordFailure(
+                    resultIndex,
                     "all=true cannot be combined with an indentation-loose match (found " +
                         found.count +
                         "). Copy old exactly as it appears in the file, or edit one occurrence at a time.",
-                    { matches: found.count, matched: "loose" }
+                    { matched: "loose", matches: found.count }
                 );
+                continue;
             }
 
             let count = 0;
+            let firstStartLine = null;
             if (found.mode === "exact") {
                 let cursor = 0;
                 while (true) {
@@ -407,6 +475,9 @@ module.exports = {
                         break;
                     }
                     const startLine = lineOf(text, index);
+                    if (firstStartLine === null) {
+                        firstStartLine = startLine;
+                    }
                     text = text.slice(0, index) + newText + text.slice(index + oldText.length);
                     applied.push({ startLine, removed: oldText, added: newText });
                     removedLines += splitDiffLines(oldText).length;
@@ -450,22 +521,63 @@ module.exports = {
                 }
                 const matched = text.slice(start, end);
                 newText = applyIndentShift(newText, detectIndentShift(oldText, matched));
-                const startLine = lineOf(text, start);
+                firstStartLine = lineOf(text, start);
                 text = text.slice(0, start) + newText + text.slice(end);
-                applied.push({ startLine, removed: matched, added: newText });
+                applied.push({ startLine: firstStartLine, removed: matched, added: newText });
                 removedLines += splitDiffLines(matched).length;
                 addedLines += splitDiffLines(newText).length;
                 count = 1;
             }
 
             if (!count) {
-                return fail(
-                    "Text to replace not found in " + filePath + "." + notFoundHint(text, oldText),
+                const diagnostic = describeNotFound(originalText, oldText);
+                recordFailure(
+                    resultIndex,
+                    "Text to replace not found in " + filePath + "." + diagnostic.hint,
                     {
                         matched: "none",
+                        lines: diagnostic.lines,
+                        nonContiguous: diagnostic.nonContiguous,
+                        suggestedLine: diagnostic.suggestedLine,
                     }
                 );
+                continue;
             }
+
+            changeResults.push({
+                index: resultIndex,
+                ok: true,
+                matched: found.mode,
+                startLine: firstStartLine,
+                replacements: count,
+            });
+        }
+
+        if (failedChanges > 0) {
+            const firstFailure = changeResults.find((result) => !result.ok);
+            const matchedModes = Array.from(
+                new Set(changeResults.map((result) => result.matched).filter(Boolean))
+            );
+            const error =
+                changes.length === 1
+                    ? firstFailure.error
+                    : failedChanges +
+                      " of " +
+                      changes.length +
+                      " changes failed; no changes were written. First failure at change " +
+                      firstFailure.index +
+                      ": " +
+                      firstFailure.error;
+            return fail(error, {
+                changeResults,
+                failedChanges,
+                matched:
+                    matchedModes.length === 1
+                        ? matchedModes[0]
+                        : matchedModes.length
+                          ? "mixed"
+                          : "none",
+            });
         }
 
         try {
@@ -473,11 +585,15 @@ module.exports = {
         } catch (validationError) {
             return fail("Content validation failed: " + validationError.message, {
                 matched: usedLoose ? "loose" : "exact",
+                changeResults,
             });
         }
         const size = Buffer.byteLength(text, "utf8");
         if (size > agentConfig.runtime.maxFileSize) {
-            return fail("File too large", { matched: usedLoose ? "loose" : "exact" });
+            return fail("File too large", {
+                matched: usedLoose ? "loose" : "exact",
+                changeResults,
+            });
         }
 
         // 原子写入：与 write 一致，先写临时文件再重命名，中断时不会留下半个文件
@@ -501,6 +617,7 @@ module.exports = {
             action: "edit",
             path: filePath,
             changes: applied.length,
+            changeResults,
             lines: { added: addedLines, removed: removedLines },
             matched: usedLoose ? "loose" : "exact",
             size,
