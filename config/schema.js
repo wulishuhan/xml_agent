@@ -115,13 +115,14 @@ const FIELDS = [
         message: "agent.responseTimeoutMs must be a positive integer",
     },
     {
-        // 动作协议：xml（默认）或 json。两套协议共用执行层，只影响提示词与解析。
+        // 动作协议：xml（默认）、json 或实验性的 wenyan。三者共用执行层，只影响提示词与解析。
+        // wenyan 为实验协议，仅在用户显式选择时启用，默认行为仍是 xml。
         path: "agent.protocol",
         default: "xml",
         type: ENUM,
-        options: ["xml", "json"],
+        options: ["xml", "json", "wenyan"],
         env: ["AGENT_ACTION_PROTOCOL"],
-        message: "agent.protocol must be one of: xml, json",
+        message: "agent.protocol must be one of: xml, json, wenyan",
     },
     {
         path: "runtime.maxFileSize",

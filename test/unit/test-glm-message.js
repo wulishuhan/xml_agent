@@ -332,6 +332,36 @@ async function main() {
         check("两个代码块内容正确", output.indexOf("one") !== -1 && output.indexOf("two") !== -1);
     }
 
+    // ------------------------------------------------------------
+    // N. 裸「思考过程」标题不在折叠容器里时也要剥掉
+    // ------------------------------------------------------------
+    {
+        const output = await renderGlmMessage(
+            build("div.chat-assistant", [
+                build("div.markdown-prose", [
+                    build("p", [text("思考过程")]),
+                    build("p", [text("阅 a.js")]),
+                ]),
+            ])
+        );
+
+        check("裸思考过程标题被剥离", output.indexOf("思考过程") === -1, JSON.stringify(output));
+        check("剥离后正文保留", output === "阅 a.js", JSON.stringify(output));
+    }
+
+    // ------------------------------------------------------------
+    // N+1. Tailwind className 串不能污染正文
+    // ------------------------------------------------------------
+    {
+        const { isStyleNoise } = require("../../providers/glm");
+        const classNoise =
+            "focus-ring h-auto min-h-0 justify-start gap-1 rounded-md bg-transparent px-0 py-0 text-en-body-description-regular text-text-tertiary shadow-none hover:bg-transparent hover:text-text-secondary";
+
+        check("Tailwind className 串被识别为噪声", isStyleNoise(classNoise) === true);
+        check("普通英文正文不误判", isStyleNoise("The final answer is two now.") === false);
+        check("文言动作不误判", isStyleNoise("阅 a.js") === false);
+    }
+
     console.log("");
     console.log("Total: " + pass + "/" + total);
 

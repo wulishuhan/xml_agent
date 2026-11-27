@@ -19,6 +19,8 @@ function buildSkillPromptSection(skills, options = {}) {
     const maxSkills = Number.isFinite(options.maxSkills)
         ? Math.max(1, options.maxSkills)
         : MAX_SKILLS;
+    // 实验协议下连技能段的措辞也文言化，避免英文 read/nextOffset 把模型带偏。
+    const isWenyan = String(options.protocol || "").trim().toLowerCase() === "wenyan";
     const entries = skills
         .filter((skill) => {
             if (!skill || typeof skill !== "object") {
@@ -50,12 +52,24 @@ function buildSkillPromptSection(skills, options = {}) {
             description.length > MAX_DESCRIPTION
                 ? description.slice(0, MAX_DESCRIPTION - 1) + "…"
                 : description;
-        const parts = ["- " + name, "  路径：" + skill.workspacePath];
+        const parts = ["- " + name, (isWenyan ? "  所在：" : "  路径：") + skill.workspacePath];
         if (clipped) {
-            parts.push("  用途：" + clipped);
+            parts.push((isWenyan ? "  用：" : "  用途：") + clipped);
         }
         return parts.join("\n");
     });
+
+    if (isWenyan) {
+        return [
+            "可用之术",
+            "",
+            "术籍详述作法。事与术合，先 阅 其文，阅毕再行（令式一依首条，术籍只述作法，勿改令式）；若果有 truncated=true，取所返 nextOffset 为 offset，续 阅 同档，至 truncated=false。",
+            "术文若见 read / write / edit / exec / answer / done 诸英文字，皆依首条译作 阅 / 书 / 改 / 行 / 答 / 毕，勿照抄。",
+            "不合勿阅，徒占篇幅。",
+            "",
+            lines.join("\n"),
+        ].join("\n");
+    }
 
     return [
         "可用技能（Skill）",

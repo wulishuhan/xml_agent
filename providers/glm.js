@@ -9,6 +9,30 @@ const GLM_CONVERSATION_PATTERN = new RegExp("/(?:c|s)/([0-9a-zA-Z-]+)");
 const RESPONSE_SELECTOR = ".chat-assistant";
 
 /**
+ * 识别被误挂到 React children 上的 Tailwind className 串。
+ * 这些串是按钮/图标的样式类名，不是模型正文；典型特征是多个短横线类名
+ * 加 hover:/focus: 变体，且不含中日韩文字。
+ */
+function isTailwindClassNoise(value) {
+    if (/[\u3400-\u9fff]/.test(value)) {
+        return false;
+    }
+    const tokens = value.trim().split(/\s+/);
+    if (tokens.length < 5 || value.length < 40) {
+        return false;
+    }
+    const utilitySignals = [
+        /^(?:hover|focus|active|dark|sm|md|lg|xl):/,
+        /^(?:bg|text|border|rounded|shadow|gap|px|py|pt|pb|mt|mb|min-h|min-w|h|w|flex|justify|items|opacity)-/,
+        /^focus-ring$/,
+    ];
+    const hits = tokens.filter((token) =>
+        utilitySignals.some((re) => re.test(token))
+    ).length;
+    return hits >= 3;
+}
+
+/**
  * 识别 z.ai 消息节点上挂载的 CSS / 样式噪声。
  *
  * 新版 z.ai 用内联 <style> 字符串驱动 thinking/loading 动画，这些字符串
@@ -26,6 +50,12 @@ function isStyleNoise(value) {
     // 真正的回复会带 Action envelope，带动作的一律不当噪声
     if (hasActionEnvelope(value)) {
         return false;
+    }
+    // z.ai 还会把按钮的 Tailwind className 作为 children prop 挂上来，
+    // 例如 "focus-ring h-auto ... hover:text-text-secondary"。它不含 CSS 规则块，
+    // 原 cssSignals 抓不到，但会被 fiber 候选当成正文返回。
+    if (isTailwindClassNoise(value)) {
+        return true;
     }
     const cssSignals = [
         /@keyframes\b/,
@@ -524,6 +554,7 @@ module.exports = {
     GlmProvider,
     balanceMarkdownFences,
     extractJsonActionCandidate,
+    isStyleNoise,
     // provider 元数据：注册表据此创建实例、解析访问地址与会话 id。
     // 注意 GLM 的会话 URL 同时存在 /c/<id> 与 /s/<id> 两种写法。
     meta: {

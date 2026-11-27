@@ -32,17 +32,58 @@ const xmlRuntime = require("./xml/runtime-prompt");
 const xmlDone = require("./xml/done-prompt");
 const xmlSendError = require("./xml/send-error-prompt");
 
+const wenyanFirst = require("./wenyan/first-prompt");
+const wenyanVariants = require("./wenyan/system-prompt-variants");
+const wenyanError = require("./wenyan/error-prompt");
+const wenyanRuntime = require("./wenyan/runtime-prompt");
+const wenyanDone = require("./wenyan/done-prompt");
+const wenyanSendError = require("./wenyan/send-error-prompt");
+
+// 显式映射：xml / json 保持原样，未知协议由 normalizeProtocol 退回 xml。
+const MODULES = {
+    xml: {
+        first: xmlFirst,
+        variants: xmlVariants,
+        error: xmlError,
+        runtime: xmlRuntime,
+        done: xmlDone,
+        sendError: xmlSendError,
+        errorFn: "getXmlErrorPrompt",
+    },
+    json: {
+        first: jsonFirst,
+        variants: jsonVariants,
+        error: jsonError,
+        runtime: jsonRuntime,
+        done: jsonDone,
+        sendError: jsonSendError,
+        errorFn: "getJsonErrorPrompt",
+    },
+    wenyan: {
+        first: wenyanFirst,
+        variants: wenyanVariants,
+        error: wenyanError,
+        runtime: wenyanRuntime,
+        done: wenyanDone,
+        sendError: wenyanSendError,
+        errorFn: "getWenyanErrorPrompt",
+    },
+};
+
+function moduleFor(protocol) {
+    return MODULES[normalizeProtocol(protocol)];
+}
 function firstModule(protocol) {
-    return normalizeProtocol(protocol) === "json" ? jsonFirst : xmlFirst;
+    return moduleFor(protocol).first;
 }
 function variantsModule(protocol) {
-    return normalizeProtocol(protocol) === "json" ? jsonVariants : xmlVariants;
+    return moduleFor(protocol).variants;
 }
 function errorModule(protocol) {
-    return normalizeProtocol(protocol) === "json" ? jsonError : xmlError;
+    return moduleFor(protocol).error;
 }
 function runtimeModule(protocol) {
-    return normalizeProtocol(protocol) === "json" ? jsonRuntime : xmlRuntime;
+    return moduleFor(protocol).runtime;
 }
 
 function getFirstPromptForProtocol(workspace, task, options = {}, protocol) {
@@ -54,13 +95,10 @@ function getFirstPromptForProtocol(workspace, task, options = {}, protocol) {
     );
 }
 
-/** 返回 { prompt, exportName } —— exportName 是对应模块里错误提示词的导出函数名。 */
+/** 按协议取错误提示词；每个协议模块的导出名由 MODULES.errorFn 指定。 */
 function getErrorPromptForProtocol(error, options = {}, protocol) {
     const mod = errorModule(protocol);
-    const fn =
-        typeof mod.getJsonErrorPrompt === "function"
-            ? mod.getJsonErrorPrompt
-            : mod.getXmlErrorPrompt;
+    const fn = mod[MODULES[normalizeProtocol(protocol)].errorFn];
     return fn(error, options);
 }
 
@@ -86,16 +124,12 @@ function getRuntimeErrorPromptForProtocol(result, options = {}, protocol) {
 
 /** 收尾提示：要求模型单独回一个结束动作，格式必须跟当前协议一致。 */
 function getDonePromptForProtocol(protocol) {
-    return normalizeProtocol(protocol) === "json"
-        ? jsonDone.getDonePrompt()
-        : xmlDone.getDonePrompt();
+    return moduleFor(protocol).done.getDonePrompt();
 }
 
 /** 发送失败续接提示：措辞里带协议格式要求，必须按协议路由。 */
 function getSendErrorPromptForProtocol(error, options = {}, protocol) {
-    return normalizeProtocol(protocol) === "json"
-        ? jsonSendError.getSendErrorPrompt(error, options)
-        : xmlSendError.getSendErrorPrompt(error, options);
+    return moduleFor(protocol).sendError.getSendErrorPrompt(error, options);
 }
 
 module.exports = {

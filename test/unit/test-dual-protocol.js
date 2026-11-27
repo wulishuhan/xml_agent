@@ -21,6 +21,7 @@ const {
     DEFAULT_PROTOCOL,
 } = require("../../parse/action");
 const { extractXmlAction } = require("../../parse/xml-action");
+const { extractWenyanAction } = require("../../parse/wenyan-action");
 const {
     getFirstPromptForProtocol,
     getErrorPromptForProtocol,
@@ -51,11 +52,12 @@ async function main() {
     // ---- 1. 协议归一化 ----
     check("默认协议是 xml", () => {
         assert.strictEqual(DEFAULT_PROTOCOL, "xml");
-        assert.deepStrictEqual(SUPPORTED_PROTOCOLS, ["xml", "json"]);
+        assert.deepStrictEqual(SUPPORTED_PROTOCOLS, ["xml", "json", "wenyan"]);
     });
     check("合法协议原样保留（含大小写与空白）", () => {
         assert.strictEqual(normalizeProtocol("xml"), "xml");
         assert.strictEqual(normalizeProtocol(" JSON "), "json");
+        assert.strictEqual(normalizeProtocol(" wenyan "), "wenyan");
     });
     check("非法 / 空协议退回 xml", () => {
         for (const value of [undefined, null, "", "yaml", 42]) {
@@ -188,16 +190,21 @@ async function main() {
     });
 
     // ---- 5. 配置层 ----
-    check("agent.protocol 默认 xml，校验只接受 xml/json", () => {
+    check("agent.protocol 默认 xml，校验接受 xml/json/wenyan", () => {
         assert.strictEqual(schema.defaultsForUI().agent.protocol, "xml");
         assert.strictEqual(schema.buildConfig({}).agent.protocol, "xml");
         assert.deepStrictEqual(schema.validatePartial({ agent: { protocol: "json" } }), []);
+        assert.deepStrictEqual(schema.validatePartial({ agent: { protocol: "wenyan" } }), []);
         assert.ok(schema.validatePartial({ agent: { protocol: "yaml" } }).length > 0);
     });
     check("环境变量 AGENT_ACTION_PROTOCOL 可覆盖，非法值忽略", () => {
         assert.strictEqual(
             schema.buildConfig({ AGENT_ACTION_PROTOCOL: "json" }).agent.protocol,
             "json"
+        );
+        assert.strictEqual(
+            schema.buildConfig({ AGENT_ACTION_PROTOCOL: "wenyan" }).agent.protocol,
+            "wenyan"
         );
         assert.strictEqual(
             schema.buildConfig({ AGENT_ACTION_PROTOCOL: "bogus" }).agent.protocol,
@@ -376,6 +383,118 @@ async function main() {
         const file = path.join(__dirname, "../../skills/novel-writing/SKILL.md");
         const text = fs.readFileSync(file, "utf8");
         assert.ok(!/<(read|write|edit|exec|answer|done|screenshot)[\s/>]/.test(text));
+    });
+
+    const wenyanSkill = [
+        {
+            name: "demo",
+            workspacePath: ".agent/skills/demo.md",
+            description: "示范",
+            enabled: true,
+            active: true,
+        },
+    ];
+    check("技能段在 wenyan 下文言化，并给出英文动作名映射", () => {
+        const section = buildSkillPromptSection(wenyanSkill, { protocol: "wenyan" });
+        assert.ok(section.includes("可用之术"), section);
+        assert.ok(section.includes("先 阅 其文"), section);
+        assert.ok(section.includes("所在：.agent/skills/demo.md"), section);
+        assert.ok(section.includes("read / write / edit / exec / answer / done"), section);
+        assert.ok(section.includes("阅 / 书 / 改 / 行 / 答 / 毕"), section);
+        assert.ok(!section.includes("先用 read"), section);
+        assert.ok(!section.includes("路径："), section);
+    });
+
+    check("wenyan 首轮提示词注入技能时不夹带 read 动作语法", () => {
+        const first = getFirstPromptForProtocol(
+            "/tmp/proj",
+            "task",
+            { skills: wenyanSkill },
+            "wenyan"
+        );
+        assert.ok(first.includes("可用之术"), first);
+        assert.ok(!first.includes("先用 read"), first);
+        assert.ok(!/<read/.test(first), first);
+    });
+
+    // ---- 7. 文言文实验协议（wenyan）----
+    check("wenyan：单字动词解析为统一信封", () => {
+        assert.deepStrictEqual(extractWenyanAction("阅｜package.json"), {
+            action: "read",
+            params: { path: "package.json" },
+        });
+        assert.deepStrictEqual(extractWenyanAction("毕"), { action: "done", params: {} });
+    });
+
+    check("wenyan：正文用「」包裹，可含 ｜ 与换行", () => {
+        const r = extractWenyanAction('书｜a.js｜「const s = "a|b";\nnext();」');
+        assert.strictEqual(r.action, "write");
+        assert.strictEqual(r.params.content, 'const s = "a|b";\nnext();');
+    });
+
+    check("wenyan：多组 edit 与「全」", () => {
+        const r = extractWenyanAction("改｜f.js｜「a()」｜「A()」｜「b()」｜「B()」｜全");
+        assert.strictEqual(r.action, "edit");
+        assert.strictEqual(r.params.changes.length, 2);
+        assert.strictEqual(r.params.all, true);
+    });
+
+    check("wenyan：参数经既有 schema 校验（非法 limit 报错）", () => {
+        assert.throws(() => extractWenyanAction("阅｜a.js｜0｜xx"), /limit must be integer/);
+    });
+
+    check("wenyan：围栏与空格写法容错", () => {
+        assert.strictEqual(extractWenyanAction("```wenyan\n阅｜a.js\n```").params.path, "a.js");
+        assert.strictEqual(extractWenyanAction("阅 package.json").params.path, "package.json");
+    });
+
+    check("wenyan：紧凑写法（空格分隔）与 ｜ 写法等价", () => {
+        assert.deepStrictEqual(extractWenyanAction("阅 a.js 100 4000"), {
+            action: "read",
+            params: { path: "a.js", offset: 100, limit: 4000 },
+        });
+        assert.deepStrictEqual(extractWenyanAction("阅 a.js 100 4000"), extractWenyanAction("阅｜a.js｜100｜4000"));
+        assert.deepStrictEqual(extractWenyanAction("书 a.js「x=1」"), extractWenyanAction("书｜a.js｜「x=1」"));
+        assert.deepStrictEqual(extractWenyanAction("改 a.js「旧」「新」 全"), extractWenyanAction("改｜a.js｜「旧」｜「新」｜全"));
+        assert.deepStrictEqual(extractWenyanAction("行 npm test"), extractWenyanAction("行｜npm test"));
+        assert.deepStrictEqual(extractWenyanAction("摄 screen shot.png"), extractWenyanAction("摄｜screen｜shot.png"));
+        assert.deepStrictEqual(extractWenyanAction("答「hi」"), extractWenyanAction("答｜「hi」"));
+    });
+
+    check("wenyan 解析走独立路由，xml/json 不受影响", () => {
+        assert.strictEqual(extractActionForProtocol("答｜「hi」", "wenyan").action, "answer");
+        assert.strictEqual(
+            extractActionForProtocol("<answer><![CDATA[hi]]></answer>", "xml").action,
+            "answer"
+        );
+        assert.strictEqual(
+            extractActionForProtocol('{"action":"answer","params":{"content":"hi"}}', "json").action,
+            "answer"
+        );
+    });
+
+    check("wenyan 提示词纯文言，无 XML/JSON 串入、无插件示例", () => {
+        const first = getFirstPromptForProtocol("/tmp/proj", "task", {}, "wenyan");
+        assert.ok(first.includes("阅"));
+        assert.ok(!/<read/.test(first));
+        assert.ok(!/JSON Schema/.test(first));
+        assert.ok(!/fetch/.test(first)); // 插件示例未注入
+        for (const fn of [
+            getRuntimeOkPromptForProtocol,
+            getRuntimeErrorPromptForProtocol,
+            getDonePromptForProtocol,
+        ]) {
+            // 各路由产物非 JSON 信封、非 XML 标签
+            const out = fn === getDonePromptForProtocol ? fn("wenyan") : fn({ ok: true }, {}, "wenyan");
+            assert.ok(!/\{"action"/.test(out), String(out));
+            assert.ok(!/<(read|answer|done)/.test(out), String(out));
+        }
+    });
+
+    check("wenyan 变体与默认协议隔离", () => {
+        assert.strictEqual(systemPromptVariantCountFor("wenyan"), 4);
+        const defaultFirst = getFirstPromptForProtocol("/tmp/proj", "task", {}, "xml");
+        assert.ok(defaultFirst.includes("<read")); // xml 默认行为未变
     });
 
     console.log("\nTotal: " + pass + "/" + total);

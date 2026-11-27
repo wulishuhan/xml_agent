@@ -217,6 +217,17 @@
                                     <span class="segmented-title">JSON</span>
                                     <span class="segmented-sub">{{ t("protocolJsonSub") }}</span>
                                 </button>
+                                <button
+                                    type="button"
+                                    class="segmented-option"
+                                    :class="{ active: agentProtocol === 'wenyan' }"
+                                    role="radio"
+                                    :aria-checked="agentProtocol === 'wenyan'"
+                                    @click="agentProtocol = 'wenyan'"
+                                >
+                                    <span class="segmented-title">{{ t("protocolWenyan") }}</span>
+                                    <span class="segmented-sub">{{ t("protocolWenyanSub") }}</span>
+                                </button>
                             </div>
                             <div class="settings-hint">{{ t("actionProtocolHint") }}</div>
                         </div>
@@ -417,9 +428,12 @@
             runtimeConfig: "运行时配置",
             sessionConfig: "会话存储配置",
             actionProtocol: "动作协议",
-            actionProtocolHint: "XML 为默认协议，提示词更短；JSON 为可选协议。切换后对新任务生效。",
+            actionProtocolHint:
+                "XML 为默认协议；JSON 为可选协议；文言是实验协议，token 更省但需模型遵循纯文言指令。切换后对新任务生效。",
             protocolXmlSub: "默认 · 提示词精简",
             protocolJsonSub: "可选 · Schema 校验",
+            protocolWenyan: "文言（实验）",
+            protocolWenyanSub: "实验 · 最省 token",
             maxSteps: "最大步骤数",
             maxStepsHint: "Agent 单次任务允许执行的最大步骤数",
             maxProviderErrors: "最大 Provider 错误次数",
@@ -500,9 +514,12 @@
             runtimeConfig: "Runtime Configuration",
             sessionConfig: "Session Storage",
             actionProtocol: "Action Protocol",
-            actionProtocolHint: "XML is the default with a shorter prompt; JSON is optional. Applies to new tasks.",
+            actionProtocolHint:
+                "XML is the default; JSON is optional. Wenyan is experimental: it saves more tokens but requires the model to follow classical-Chinese instructions. Applies to new tasks.",
             protocolXmlSub: "Default · compact prompt",
             protocolJsonSub: "Optional · schema validated",
+            protocolWenyan: "Wenyan (exp.)",
+            protocolWenyanSub: "Experimental · fewest tokens",
             maxSteps: "Max Steps",
             maxStepsHint: "Maximum number of steps per agent task",
             maxProviderErrors: "Max Provider Errors",

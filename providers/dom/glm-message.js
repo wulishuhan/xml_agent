@@ -288,6 +288,10 @@ function renderGlmMessage(element) {
     }
 
     return render(clone)
+        // z.ai 有时把「思考过程」标签渲染成正文里的独立文本节点，而不是放进
+        // .thinking-chain-container。此时整条回复开头会多出这个标题，动作协议
+        // 会把「思」当动词而报 Unknown Action。标题固定出现在开头，直接剥掉。
+        .replace(/^\s*思考过程\s*(?:\n+|$)/, "")
         .replace(/\n{4,}/g, "\n\n")
         .trim();
 }
