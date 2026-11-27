@@ -32,10 +32,11 @@ console.log("hello");
 ]]></write>
 
 局部修改现有文件（优先用此，勿整篇重写）
-<edit path="src/a.js"><old><![CDATA[const port = 3000;]]></old><new><![CDATA[const port = process.env.PORT || 3000;]]></new></edit>
+<edit path="src/a.js"><change><old><![CDATA[const port = 3000;]]></old><new><![CDATA[const port = process.env.PORT || 3000;]]></new></change></edit>
+- 每处改动必须包在 <change> 里；多处就并列多个 <change>（只用这一种写法，不要省略 <change>）
 - old 须与原文逐字一致（含缩进）且唯一；不唯一则多带上下文，或用 all="true" 全替换
-- new 留空表示删除该段
-- 同文件多处可并列多个 change：<edit path="a.js"><change><old>…</old><new>…</new></change><change><old>…</old><new>…</new></change></edit>
+- <new> 必须写出：留空（<new></new> 或 <new/>）表示删除该段；完全不写 <new> 会报错
+- 同一 <edit> 里后一个 change 不要去改前一个 change 刚插入的文本；要改就分两次 edit
 - 任一处失配则整条不写入；文件不存在则用 write
 
 执行命令

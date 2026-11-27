@@ -17,6 +17,7 @@ const os = require("os");
 const path = require("path");
 
 const { extractAction } = require("../../parse/json-action");
+const { extractXmlAction } = require("../../parse/xml-action");
 const { createRuntime } = require("../../runtime");
 
 let pass = 0;
@@ -47,6 +48,10 @@ function read(relativePath) {
 
 function runEdit(params) {
     return runtime.run(extractAction(JSON.stringify({ action: "edit", params })));
+}
+
+function runXmlEdit(xml) {
+    return runtime.run(extractXmlAction(xml));
 }
 
 async function main() {
@@ -444,6 +449,151 @@ async function main() {
         assert.strictEqual(result.ok, true);
         assert.ok(result.diff.length <= 2200, String(result.diff.length));
         assert.ok(/省略|截断/.test(result.diff), result.diff.slice(-60));
+    });
+
+    console.log("\n=== 7. XML 协议（此前单测全是 JSON，这里是盲区补齐）===");
+    await check("XML <change> 写法正常替换", async () => {
+        seed("xml1.js", "const a = 1;\n");
+        const result = await runXmlEdit(
+            '<edit path="xml1.js"><change><old><![CDATA[const a = 1;]]></old>' +
+                '<new><![CDATA[const a = 2;]]></new></change></edit>'
+        );
+        assert.strictEqual(result.ok, true, result.error);
+        assert.strictEqual(read("xml1.js"), "const a = 2;\n");
+    });
+
+    await check("XML 漏写 <new> 报缺字段，不静默删除", async () => {
+        seed("xml2.js", "const x = 1;\nkeep();\n");
+        let error;
+        try {
+            await runXmlEdit('<edit path="xml2.js"><old><![CDATA[const x = 1;]]></old></edit>');
+        } catch (e) {
+            error = e;
+        }
+        assert.ok(error, "应抛出校验错误");
+        assert.ok(/required property 'new'/.test(error.message), error.message);
+        assert.strictEqual(read("xml2.js"), "const x = 1;\nkeep();\n");
+    });
+
+    await check("XML <new/> 自闭合仍表示合法删除", async () => {
+        seed("xml3.js", "const x = 1;\nkeep();\n");
+        const result = await runXmlEdit(
+            '<edit path="xml3.js"><old><![CDATA[const x = 1;]]></old><new/></edit>'
+        );
+        assert.strictEqual(result.ok, true, result.error);
+        assert.strictEqual(read("xml3.js"), "\nkeep();\n");
+    });
+
+    await check("XML <changes> 包装层可解析", () => {
+        const parsed = extractXmlAction(
+            '<edit path="a.js"><changes><change><old>x</old><new>y</new></change></changes></edit>'
+        );
+        assert.strictEqual(parsed.params.changes.length, 1);
+        assert.strictEqual(parsed.params.changes[0].old, "x");
+    });
+
+    await check("XML oldText/newText 别名可解析", () => {
+        const parsed = extractXmlAction(
+            '<edit path="a.js"><oldText>x</oldText><newText>y</newText></edit>'
+        );
+        assert.strictEqual(parsed.params.changes[0].old, "x");
+        assert.strictEqual(parsed.params.changes[0].new, "y");
+    });
+
+    await check("XML 混写直接 old/new 与 change 明确报错", () => {
+        assert.throws(
+            () =>
+                extractXmlAction(
+                    '<edit path="a.js"><old>one</old><new>ONE</new>' +
+                        '<change><old>two</old><new>TWO</new></change></edit>'
+                ),
+            /cannot mix direct/
+        );
+    });
+
+    await check("CDATA 内嵌 ]]> 不被截断", () => {
+        const parsed = extractXmlAction(
+            '<edit path="a.js"><old><![CDATA[const s = "]]>";]]></old><new><![CDATA[x]]></new></edit>'
+        );
+        assert.strictEqual(parsed.params.changes[0].old, 'const s = "]]>";');
+    });
+
+    console.log("\n=== 8. 宽松匹配与多 change 边界（此前盲区）===");
+    await check("宽松匹配多处且 all=false 时给出真实行号", async () => {
+        seed("loosedup.js", "if (alpha) {\n     beta();\n}\nif (alpha) {\n     beta();\n}\n");
+        const result = await runEdit({
+            path: "loosedup.js",
+            changes: [{ old: "if (alpha) {\nbeta();\n}", new: "x" }],
+        });
+        assert.strictEqual(result.ok, false);
+        assert.ok(Array.isArray(result.lines) && result.lines.length === 2, JSON.stringify(result.lines));
+        assert.deepStrictEqual(result.lines, [1, 4]);
+    });
+
+    await check("后续 change 命中前一处插入的文本时拒绝", async () => {
+        seed("overlap.js", "x = 1;\n");
+        const result = await runEdit({
+            path: "overlap.js",
+            changes: [
+                { old: "x = 1;", new: "x = 2; // x = 1;" },
+                { old: "x = 1;", new: "y = 9;" },
+            ],
+        });
+        assert.strictEqual(result.ok, false);
+        assert.ok(/inserted by an earlier change/.test(result.error), result.error);
+        assert.strictEqual(read("overlap.js"), "x = 1;\n");
+    });
+
+    await check("CRLF 文件 old 首行为空时不留孤立 \\r", async () => {
+        seed(
+            "crlfempty.js",
+            "header();\r\n        const alpha = 1;\r\n        const bravo = 2;\r\nfooter();\r\n"
+        );
+        const result = await runEdit({
+            path: "crlfempty.js",
+            // old 首行为空且无缩进（文件里是 8 空格）→ 走宽松匹配；
+            // needle 以 \n 开头，映射回 CRLF 的 \n，必须连带前面的 \r 一起替换
+            changes: [{ old: "\nconst alpha = 1;\nconst bravo = 2;", new: "X();" }],
+        });
+        assert.strictEqual(result.ok, true, result.error);
+        assert.strictEqual(result.matched, "loose");
+        const content = read("crlfempty.js");
+        // 不能出现 "header();\r<内容>" 这种孤立 \r（即 \r 后不是 \n）
+        assert.ok(!/header\(\);\r[^\n]/.test(content), JSON.stringify(content));
+        assert.ok(content.indexOf("footer();\r\n") !== -1, JSON.stringify(content));
+    });
+
+    await check("宽松匹配缩进差不一致时拒绝，不静默改错缩进", async () => {
+        seed("indent.js", "function f() {\n        const alpha = 1;\n        const bravo = 2;\n}\n");
+        const result = await runEdit({
+            path: "indent.js",
+            changes: [
+                {
+                    old: "  const alpha = 1;\n    const bravo = 2;",
+                    new: "  const alpha = 9;\n    const bravo = 8;",
+                },
+            ],
+        });
+        assert.strictEqual(result.ok, false);
+        assert.ok(/inconsistent indentation/.test(result.error), result.error);
+        assert.ok(read("indent.js").indexOf("alpha = 1") !== -1);
+    });
+
+    await check("找不到时提示原文件行号而非中间态", async () => {
+        seed(
+            "linehint.js",
+            "first();\nfunction probeLine() {\n  return 42;\n}\nlast();\n"
+        );
+        const result = await runEdit({
+            path: "linehint.js",
+            changes: [
+                { old: "first();", new: "FIRST();" },
+                // 首行 probeLine() 在原文件第 2 行；次行是幻觉内容，整块失配
+                { old: "function probeLine() {\n  return 999;\n}", new: "x" },
+            ],
+        });
+        assert.strictEqual(result.ok, false);
+        assert.ok(/line 2 of the original file/.test(result.error), result.error);
     });
 }
 

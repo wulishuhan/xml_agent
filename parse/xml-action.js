@@ -61,6 +61,44 @@ function getPluginRegistry() {
 // 清洗：去 markdown 围栏
 // ------------------------------------------------------------
 
+/**
+ * CDATA 内出现字面 `]]>` 时，XML 规范只允许用 `]]]]><![CDATA[>` 拆段表示。
+ * 模型几乎不会主动这么写，直接解析会把 `const s = "]]>";` 截断并错位成
+ * `const s = "";]]>` —— 静默改错 old 内容，导致 edit 永远找不到或匹配错位置。
+ *
+ * 这里在解析前把"后面不紧跟 '<' 的 ]]>" 自动拆成合法的两段 CDATA；
+ * 真正的结束符后面必是 `</old>` / `</new>` 等标签（以 '<' 开头），不会被误判。
+ * fast-xml-parser 会把相邻 CDATA 段拼回原文，得到正确的 `]]>`。
+ */
+function protectCdataClose(text) {
+    const OPEN = "<![CDATA[";
+    const CLOSE = "]]>";
+    let out = "";
+    let i = 0;
+    while (i < text.length) {
+        const start = text.indexOf(OPEN, i);
+        if (start === -1) {
+            out += text.slice(i);
+            break;
+        }
+        out += text.slice(i, start + OPEN.length);
+        i = start + OPEN.length;
+        let end = text.indexOf(CLOSE, i);
+        while (end !== -1 && text.charAt(end + CLOSE.length) !== "<") {
+            out += text.slice(i, end) + "]]]]><![CDATA[>";
+            i = end + CLOSE.length;
+            end = text.indexOf(CLOSE, i);
+        }
+        if (end === -1) {
+            out += text.slice(i);
+            break;
+        }
+        out += text.slice(i, end + CLOSE.length);
+        i = end + CLOSE.length;
+    }
+    return out;
+}
+
 function cleanXML(response) {
     if (!response || typeof response !== "string") {
         throw new Error("returned empty response");
@@ -74,7 +112,7 @@ function cleanXML(response) {
     if (text.endsWith(FENCE)) {
         text = text.substring(0, text.length - FENCE.length).trimEnd();
     }
-    return text.trim();
+    return protectCdataClose(text.trim());
 }
 
 // ------------------------------------------------------------
@@ -114,28 +152,55 @@ function blockText(value) {
 }
 
 /**
-edit 的 change 归一化。两种写法都支持：
-  <edit path="a"><old>..</old><new>..</new></edit>          （单组直接并列）
+edit 的 change 归一化。容忍模型常见的三种写法：
+  <edit path="a"><old>..</old><new>..</new></edit>              （单组直接并列）
   <edit path="a"><change><old>..</old><new>..</new></change> ...（多组）
-两种都产出 changes: [{ old, new }, ...]。new 缺失表示非法（schemas 要求 new 字段存在）。
+  <edit path="a"><changes><change>...</change></changes></edit>  （套一层 changes）
+字段名 oldText/newText 也按别名接受。
+
+关键修复：
+- 缺 <new> 时不再补 ""（那会被当成"合法删除"，静默删掉代码）；
+  保留缺失让 schema 报 "required property 'new'"，与 JSON 协议行为一致。
+- 根节点直接 <old>/<new> 与 <change> 混用时报错，不再静默丢弃其中一组。
 */
 function editChanges(node) {
-    const raw = node && node.change;
-    const items =
-        raw === undefined || raw === null ? [node] : Array.isArray(raw) ? raw : [raw];
+    if (!node || typeof node !== "object") {
+        return [];
+    }
+    // <changes> 只是透明包装层：取其内部的 change 列表，或把整块当单个 change。
+    let source = node;
+    if (node.changes !== undefined && node.changes !== null && typeof node.changes === "object") {
+        source = node.changes;
+    }
+    const hasWrapped = source.change !== undefined && source.change !== null;
+    const hasDirect = source.old !== undefined || source.new !== undefined;
+    if (hasWrapped && hasDirect) {
+        throw new Error(
+            "edit cannot mix direct <old>/<new> with <change> blocks in one <edit>; " +
+                "use one style consistently (some changes would be silently dropped)"
+        );
+    }
+    const items = hasWrapped
+        ? Array.isArray(source.change)
+            ? source.change
+            : [source.change]
+        : [source];
     const changes = [];
     for (const item of items) {
         if (!item || typeof item !== "object") {
             continue;
         }
-        if (item.old === undefined && item.new === undefined) {
+        const oldValue = item.old !== undefined ? item.old : item.oldText;
+        const newValue = item.new !== undefined ? item.new : item.newText;
+        if (oldValue === undefined && newValue === undefined) {
             continue;
         }
-        const hasNew = item.new !== undefined && item.new !== null;
-        changes.push({
-            old: blockText(item.old),
-            new: hasNew ? blockText(item.new) : "",
-        });
+        const change = { old: blockText(oldValue) };
+        // 只有 new 真的出现过才带上；缺失交给 schema 报错，杜绝静默删除。
+        if (newValue !== undefined && newValue !== null) {
+            change.new = blockText(newValue);
+        }
+        changes.push(change);
     }
     return changes;
 }

@@ -148,6 +148,59 @@ function occurrenceLines(text, needle, limit) {
     return lines;
 }
 
+/**
+ * 宽松模式下 old 的精确出现次数是 0，但归一化视图里有 count 处命中。
+ * 在归一化视图上找命中、用 map 映射回原文偏移，才能报出真实行号。
+ */
+function looseOccurrenceLines(text, oldText, limit) {
+    const haystack = normalizeForMatch(text);
+    const needle = normalizeForMatch(oldText).text;
+    if (!needle.length) {
+        return [];
+    }
+    const lines = [];
+    let from = 0;
+    while (lines.length < limit) {
+        const index = haystack.text.indexOf(needle, from);
+        if (index === -1) {
+            break;
+        }
+        lines.push(lineOf(text, haystack.map[index]));
+        from = index + needle.length;
+    }
+    return lines;
+}
+
+/**
+ * 判断 [start, end) 是否与任何"前一个 change 插入的区间"重叠。
+ * 重叠意味着本次 change 会匹配到前一次刚写进去的文本 —— 静默误命中。
+ */
+function overlapsInserted(start, end, insertedRanges) {
+    for (const range of insertedRanges) {
+        if (start < range.end && end > range.start) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** 文本被替换后，同步平移已记录的插入区间（后续偏移会随增删变化）。 */
+function shiftInsertedRanges(ranges, replaceStart, replaceEnd, insertedLength) {
+    const delta = insertedLength - (replaceEnd - replaceStart);
+    for (const range of ranges) {
+        if (range.start >= replaceEnd) {
+            range.start += delta;
+            range.end += delta;
+        } else if (range.end <= replaceStart) {
+            // 完全在替换区间之前，不受影响
+        } else {
+            // 插入区间被本次 change 覆盖了一部分，不再追踪它
+            range.start = replaceStart;
+            range.end = replaceStart;
+        }
+    }
+}
+
 function leadingIndent(line) {
     const match = /^[ \t]*/.exec(line);
     return match ? match[0] : "";
@@ -158,15 +211,20 @@ function leadingIndent(line) {
  *
  * 只看第一行是不够的：块的第一行往往没有缩进（`if (x) {` 就在行首），
  * 真正的差异在块内部 —— 只看第一行会得出"没差别"，于是把模型的缩进原样插进去。
- * 所以逐行比对，取出现次数最多的那一种差值（按行投票），空行不参与。
+ * 所以逐行比对，空行不参与。
+ *
+ * 关键修复：不再按行投票取多数。旧逻辑遇到"各行差值不一致"（模型把一行写
+ * 成 4 空格、相邻行写成 6 空格）会选多数，把少数行静默改错；tab/空格混用
+ * 时又完全无法判定，于是把模型的空格缩进原样写进 tab 文件。两种情况都返回
+ * error，让本次 edit 整体失败，要求模型照抄原文 —— 静默写错远比明确报错糟。
  */
 function detectIndentShift(oldText, matched) {
     const oldLines = oldText.split(/\r?\n/);
     const fileLines = matched.split(/\r?\n/);
     if (oldLines.length !== fileLines.length) {
-        return null;
+        return { error: "matched block has a different line count than old" };
     }
-    const votes = new Map();
+    let shift = null;
     for (let i = 0; i < oldLines.length; i++) {
         const oldLine = oldLines[i];
         const fileLine = fileLines[i];
@@ -188,20 +246,25 @@ function detectIndentShift(oldText, matched) {
             prefix = oldIndent.slice(fileIndent.length);
         }
         if (!prefix) {
-            continue;
+            return {
+                error:
+                    "incompatible indentation between old and file (e.g. tabs vs spaces) at line " +
+                    (i + 1) +
+                    " of the block; copy old exactly as it appears in the file",
+            };
         }
-        const key = mode + ":" + prefix;
-        const entry = votes.get(key) || { mode, prefix, count: 0 };
-        entry.count += 1;
-        votes.set(key, entry);
-    }
-    let best = null;
-    for (const entry of votes.values()) {
-        if (!best || entry.count > best.count) {
-            best = entry;
+        const current = { mode, prefix };
+        if (shift && (shift.mode !== current.mode || shift.prefix !== current.prefix)) {
+            return {
+                error:
+                    "inconsistent indentation inside old at line " +
+                    (i + 1) +
+                    " of the block; copy old exactly as it appears in the file",
+            };
         }
+        shift = current;
     }
-    return best;
+    return { shift };
 }
 
 /** 把缩进差补到 new 的每一行（空行不加，否则会产生尾随空白）。 */
@@ -223,23 +286,40 @@ function applyIndentShift(newText, shift) {
         .join("\n");
 }
 
-/** 找不到时给一条"最接近的位置"，比只说 not found 有用得多。 */
-function notFoundHint(text, oldText) {
+/**
+ * 找不到时给一条"最接近的位置"，比只说 not found 有用得多。
+ *
+ * 必须用原始文件文本（而非已应用前面 change 的中间态）来定位：模型 read 到的
+ * 是原文件，报一个中间态行号会让模型按错误行号改、反复失败。
+ * 探针也放宽到 >= 4 字符，避免短标识符（如 `a();`）直接给空提示。
+ */
+function notFoundHint(originalText, text, oldText) {
     const probe = oldText
         .split(/\r?\n/)
         .map((line) => line.trim())
-        .find((line) => line.length >= 8);
+        .find((line) => line.length >= 4);
     if (!probe) {
-        return "";
+        return " No distinctive line in old (all shorter than 4 chars) — re-read the file and copy a longer exact block.";
     }
     const needle = probe.slice(0, 40);
-    const index = text.indexOf(needle);
-    if (index === -1) {
-        return "";
+    const originalIndex = originalText.indexOf(needle);
+    const currentIndex = text.indexOf(needle);
+    if (originalIndex === -1 && currentIndex === -1) {
+        return (
+            " No line of old appears verbatim, even after earlier changes — re-read the file " +
+            "and copy the exact text."
+        );
+    }
+    const parts = [];
+    if (originalIndex !== -1) {
+        parts.push("line " + lineOf(originalText, originalIndex) + " of the original file");
+    }
+    if (currentIndex !== -1 && currentIndex !== originalIndex) {
+        parts.push("line " + lineOf(text, currentIndex) + " after earlier changes");
     }
     return (
-        " The closest line of old appears at line " +
-        lineOf(text, index) +
+        " The closest line of old appears at " +
+        parts.join(" / ") +
         ", but the block around it differs — re-read the file and copy the exact text."
     );
 }
@@ -356,34 +436,50 @@ module.exports = {
         }
 
         let text = buffer.toString("utf8");
+        // 原始文本快照：notFoundHint 必须基于它算行号（模型 read 到的就是这份），
+        // 否则前一个 change 改动后行号漂移，提示会把模型引到错误位置。
+        const originalText = text;
         const eol = text.indexOf("\r\n") !== -1 ? "\r\n" : "\n";
         const all = params.all === true;
         const applied = [];
+        // 已插入内容的区间（相对当前 text 的绝对偏移）。后续 change 若命中这些
+        // 区间，说明它匹配到的是前一个 change 刚写进去的文本 —— 几乎总是误命中，
+        // 静默改错。检测后明确拒绝，让模型拆成两次 edit 或调整顺序。
+        const insertedRanges = [];
         let usedLoose = false;
         let addedLines = 0;
         let removedLines = 0;
 
-        for (const change of changes) {
+        for (let changeIndex = 0; changeIndex < changes.length; changeIndex++) {
+            const change = changes[changeIndex];
             const oldText = toFileEol(change.old, eol);
             let newText = toFileEol(change.new, eol);
             const found = locate(text, oldText);
 
             if (!found.count) {
                 return fail(
-                    "Text to replace not found in " + filePath + "." + notFoundHint(text, oldText),
-                    { matched: "none" }
+                    "Text to replace not found in " +
+                        filePath +
+                        "." +
+                        notFoundHint(originalText, text, oldText),
+                    { matched: "none", changeIndex }
                 );
             }
             if (found.count > 1 && !all) {
-                const lines = occurrenceLines(text, oldText, 5);
+                // 宽松匹配时 old 的精确出现次数是 0，必须用归一化视图找行号，
+                // 否则提示会变成 "(lines , …)" 这种没有定位信息的空列表。
+                const lines =
+                    found.mode === "loose"
+                        ? looseOccurrenceLines(text, oldText, 5)
+                        : occurrenceLines(text, oldText, 5);
                 return fail(
                     "Found " +
                         found.count +
                         " matches of old (lines " +
-                        lines.join(", ") +
+                        (lines.length ? lines.join(", ") : "unknown") +
                         (found.count > lines.length ? ", …" : "") +
                         "). Add more surrounding lines to make it unique, or use all=true to replace every match.",
-                    { matches: found.count, lines }
+                    { matches: found.count, lines, changeIndex }
                 );
             }
             // 宽松匹配只能定位到"唯一一处"（位置来自归一化视图的映射）。
@@ -406,11 +502,24 @@ module.exports = {
                     if (index === -1) {
                         break;
                     }
+                    const endIndex = index + oldText.length;
+                    if (overlapsInserted(index, endIndex, insertedRanges)) {
+                        return fail(
+                            "change " +
+                                changeIndex +
+                                " matches text inserted by an earlier change in the same edit; " +
+                                "this is likely unintended. Split the changes into separate edit actions " +
+                                "or include more context to target the original text.",
+                            { matched: "inserted-overlap", changeIndex }
+                        );
+                    }
                     const startLine = lineOf(text, index);
-                    text = text.slice(0, index) + newText + text.slice(index + oldText.length);
+                    text = text.slice(0, index) + newText + text.slice(endIndex);
                     applied.push({ startLine, removed: oldText, added: newText });
                     removedLines += splitDiffLines(oldText).length;
                     addedLines += splitDiffLines(newText).length;
+                    shiftInsertedRanges(insertedRanges, index, endIndex, newText.length);
+                    insertedRanges.push({ start: index, end: index + newText.length });
                     cursor = index + newText.length;
                     count += 1;
                     if (!all) {
@@ -424,17 +533,33 @@ module.exports = {
                 // 既让"文件里的缩进"可比较，也让替换连带换掉整行缩进，
                 // 否则会变成"原缩进 + 新缩进"。只有匹配点前面全是空白（即在行首）才补。
                 let start = found.haystack.map[index];
-                let back = start;
-                while (
-                    back > 0 &&
-                    (text.charAt(back - 1) === " " || text.charAt(back - 1) === "\t")
-                ) {
-                    back -= 1;
+                if (found.needle.charAt(0) === "\n") {
+                    // needle 以换行开头 = old 的首行是空行，匹配点就是上一行的换行符。
+                    // map 指向 \r\n 里的 \n，必须把前面的 \r 一并纳入替换区间，
+                    // 否则会留下 "header();\rREPLACED\r\n" 这种孤立 \r。
+                    if (start > 0 && text.charAt(start - 1) === "\r") {
+                        start -= 1;
+                    }
+                } else {
+                    // 归一化视图跳过了行首缩进，映射回来后把缩进补进匹配区间，
+                    // 否则会变成"原缩进 + 新缩进"。仅当回退后确实在行首才采纳。
+                    let back = start;
+                    while (
+                        back > 0 &&
+                        (text.charAt(back - 1) === " " || text.charAt(back - 1) === "\t")
+                    ) {
+                        back -= 1;
+                    }
+                    const atLineStart =
+                        back > 0 &&
+                        (text.charAt(back - 1) === "\n" ||
+                            (text.charAt(back - 1) === "\r" &&
+                                back > 1 &&
+                                text.charAt(back - 2) === "\n"));
+                    if (atLineStart) {
+                        start = back;
+                    }
                 }
-                if (back > 0 && text.charAt(back - 1) !== "\n") {
-                    back = start;
-                }
-                start = back;
                 const last = found.haystack.map[index + found.needle.length - 1];
                 let end = last + 1;
                 // 命中段的行尾空白一并吃掉，否则替换后会在行尾留下空格
@@ -449,21 +574,41 @@ module.exports = {
                     end = scan;
                 }
                 const matched = text.slice(start, end);
-                newText = applyIndentShift(newText, detectIndentShift(oldText, matched));
+                if (overlapsInserted(start, end, insertedRanges)) {
+                    return fail(
+                        "change " +
+                            changeIndex +
+                            " matches text inserted by an earlier change in the same edit; " +
+                            "this is likely unintended. Split the changes into separate edit actions " +
+                            "or include more context to target the original text.",
+                        { matched: "inserted-overlap", changeIndex }
+                    );
+                }
+                const indentResult = detectIndentShift(oldText, matched);
+                if (indentResult.error) {
+                    return fail(
+                        "Cannot apply change " + changeIndex + ": " + indentResult.error,
+                        { matched: "loose", changeIndex }
+                    );
+                }
+                newText = applyIndentShift(newText, indentResult.shift);
                 const startLine = lineOf(text, start);
                 text = text.slice(0, start) + newText + text.slice(end);
                 applied.push({ startLine, removed: matched, added: newText });
                 removedLines += splitDiffLines(matched).length;
                 addedLines += splitDiffLines(newText).length;
+                shiftInsertedRanges(insertedRanges, start, end, newText.length);
+                insertedRanges.push({ start, end: start + newText.length });
                 count = 1;
             }
 
             if (!count) {
                 return fail(
-                    "Text to replace not found in " + filePath + "." + notFoundHint(text, oldText),
-                    {
-                        matched: "none",
-                    }
+                    "Text to replace not found in " +
+                        filePath +
+                        "." +
+                        notFoundHint(originalText, text, oldText),
+                    { matched: "none", changeIndex }
                 );
             }
         }
