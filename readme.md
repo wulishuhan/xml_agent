@@ -25,6 +25,7 @@
 - [测试与代码质量](#测试与代码质量)
 - [设计原则](#设计原则)
 - [当前能力](#当前能力)
+- [修改记录](#修改记录)
 - [文档索引](#文档索引)
 
 ---
@@ -1226,6 +1227,19 @@ npm run test:electron   # 需要 Electron 运行时
 - ✅ 桌面任务完成后的 Windows 系统通知（仅 completed 触发，点击通知聚焦主窗口）
 - ✅ 离线打包支持
 - ✅ Prettier 代码风格统一
+
+---
+
+# 修改记录
+
+## 2026-11-27 — Qwen 服务端错误快速失败
+
+- `providers/qwen.js`：发送前记录服务端错误基线，在等待响应开始、生成过程和稳定回复阶段检测新出现的
+  `Invalid input, the first message must not assistant message.` 与 `今日对话次数已达上限` 提示；命中后立即抛出
+  `QWEN_CONVERSATION_INVALID` 或 `QWEN_QUOTA_EXCEEDED`，不再空等至超时。检测会排除用户消息和历史遗留错误，避免误报。
+- `agent/step.js`：provider 错误标记 `retryable:false` 时直接终止本轮，不再按普通网络错误重试。
+- 回归测试：`test/unit/test-qwen-splash.js` 覆盖会话错误、额度上限、历史基线、用户消息防误报和生成中止；
+  `test/unit/test-step.js` 覆盖不可重试错误不重试。相关单测与 Prettier 检查均通过。
 
 ---
 

@@ -226,6 +226,44 @@ async function main() {
     }
 
     // ------------------------------------------------------------
+    // 5.1 明确不可重试的 provider 错误：立即抛出，不重试
+    // ------------------------------------------------------------
+    {
+        const state = { count: 0, max: 3 };
+        let sent = 0;
+        const failure = new Error("Qwen conversation history was rejected");
+        failure.code = "QWEN_CONVERSATION_INVALID";
+        failure.retryable = false;
+        const agent = makeAgent({
+            provider: {
+                async send() {
+                    sent += 1;
+                    throw failure;
+                },
+            },
+        });
+
+        let thrown = null;
+        try {
+            await runStep(agent, { prompt: "PROMPT", providerErrorState: state });
+        } catch (error) {
+            thrown = error;
+        }
+
+        check("不可重试错误原样抛出", thrown === failure);
+        check("不可重试错误不增加重试计数", state.count === 0, "count=" + state.count);
+        check("不可重试错误只发送一次", sent === 1, "sent=" + sent);
+        check(
+            "不可重试错误不发出 provider.retry",
+            !agent.events.some((item) => item.type === "provider.retry")
+        );
+        check(
+            "不可重试错误仍发出 provider.error",
+            agent.events.some((item) => item.type === "provider.error")
+        );
+    }
+
+    // ------------------------------------------------------------
     // 6. 已停止：不再发送，直接返回终止
     // ------------------------------------------------------------
     {

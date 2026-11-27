@@ -226,6 +226,265 @@ async function main() {
         assert.deepStrictEqual(order, ["splash", "insert"]);
     });
 
+    await check("识别 Qwen 会话历史错误并返回出现次数", async () => {
+        const provider = makeProvider({
+            evaluate: async () => ({
+                message: "Invalid input, the first message must not assistant message.",
+                count: 1,
+            }),
+        });
+
+        assert.deepStrictEqual(await provider.getServiceErrorState(), {
+            message: "Invalid input, the first message must not assistant message.",
+            count: 1,
+        });
+    });
+
+    await check("识别 Qwen 每日对话额度上限提示", async () => {
+        const provider = makeProvider({
+            evaluate: async () => ({
+                message: "今日对话次数已达上限。升级会员即可解锁更多对话。",
+                count: 2,
+            }),
+        });
+
+        assert.deepStrictEqual(await provider.getServiceErrorState(), {
+            message: "今日对话次数已达上限。升级会员即可解锁更多对话。",
+            count: 2,
+        });
+    });
+
+    await check("额度上限立即抛出 QWEN_QUOTA_EXCEEDED 且不等待生成", async () => {
+        const provider = makeProvider();
+        let generationWaited = false;
+        provider.waitForResponseStart = async () => true;
+        provider.getServiceErrorState = async () => ({
+            message: "今日对话次数已达上限。升级会员即可解锁更多对话。",
+            count: 1,
+        });
+        provider.waitForGenerationComplete = async () => {
+            generationWaited = true;
+            return "answer";
+        };
+
+        let thrown = null;
+        try {
+            await provider.collectResponse({
+                count: 1,
+                text: "上一轮回复",
+                serviceError: { message: "", count: 0 },
+            });
+        } catch (error) {
+            thrown = error;
+        }
+
+        assert.ok(thrown, "should throw");
+        assert.strictEqual(thrown.code, "QWEN_QUOTA_EXCEEDED");
+        assert.strictEqual(thrown.retryable, false);
+        assert.strictEqual(generationWaited, false);
+    });
+
+    await check("只识别错误区域，用户消息里的相同句子不会误报", async () => {
+        const message = "Invalid input, the first message must not assistant message.";
+        const visibleElement = (isUser) => ({
+            closest: () => (isUser ? {} : null),
+            getBoundingClientRect: () => ({ width: 100, height: 20 }),
+        });
+        const nodes = [
+            { nodeValue: "请分析：" + message, parentElement: visibleElement(true) },
+            {
+                nodeValue: "请分析：今日对话次数已达上限。升级会员即可解锁更多对话。",
+                parentElement: visibleElement(true),
+            },
+            {
+                nodeValue: "今日对话次数已达上限。升级会员即可解锁更多对话。",
+                parentElement: visibleElement(false),
+            },
+            { nodeValue: message, parentElement: visibleElement(false) },
+        ];
+        const previousDocument = global.document;
+        const previousNodeFilter = global.NodeFilter;
+        const previousWindow = global.window;
+
+        global.document = {
+            body: {},
+            querySelectorAll: () => [],
+            createTreeWalker: () => {
+                let index = 0;
+                return { nextNode: () => nodes[index++] || null };
+            },
+        };
+        global.NodeFilter = { SHOW_TEXT: 4 };
+        global.window = {
+            getComputedStyle: () => ({ display: "block", visibility: "visible" }),
+        };
+
+        try {
+            const provider = makeProvider({
+                evaluate: async (callback, args) => callback(args),
+            });
+            const result = await provider.getServiceErrorState();
+            assert.strictEqual(result.count, 2);
+            assert.strictEqual(result.message, message);
+        } finally {
+            global.document = previousDocument;
+            global.NodeFilter = previousNodeFilter;
+            global.window = previousWindow;
+        }
+    });
+
+    await check("页面关闭或探测失败时按无服务端错误处理", async () => {
+        const closed = makeProvider({ isClosed: () => true });
+        const broken = makeProvider({
+            evaluate: async () => {
+                throw new Error("execution context destroyed");
+            },
+        });
+
+        assert.deepStrictEqual(await closed.getServiceErrorState(), { message: "", count: 0 });
+        assert.deepStrictEqual(await broken.getServiceErrorState(), { message: "", count: 0 });
+    });
+
+    await check("发送前记录错误基线，新错误会被当作响应开始", async () => {
+        const provider = makeProvider();
+        const states = [
+            { message: "", count: 0 },
+            { message: "Invalid input, the first message must not assistant message.", count: 1 },
+        ];
+        provider.getServiceErrorState = async () => states.shift();
+        provider.getAssistantCount = async () => 1;
+        provider.getLastResponse = async () => "上一轮回复";
+
+        const before = await provider.captureResponseSnapshot();
+        const current = await provider.getResponseState();
+
+        assert.strictEqual(before.serviceError.count, 0);
+        assert.strictEqual(
+            current.text,
+            "Invalid input, the first message must not assistant message."
+        );
+    });
+
+    await check("历史遗留的同一条错误不会再次触发", async () => {
+        const provider = makeProvider();
+        const historical = {
+            message: "Invalid input, the first message must not assistant message.",
+            count: 1,
+        };
+        provider.getServiceErrorState = async () => historical;
+        provider.getAssistantCount = async () => 1;
+        provider.getLastResponse = async () => "上一轮回复";
+
+        await provider.captureResponseSnapshot();
+        const current = await provider.getResponseState();
+
+        assert.strictEqual(current.text, "上一轮回复");
+    });
+
+    await check("响应开始后发现新错误时立即抛出且不再等待生成", async () => {
+        const provider = makeProvider();
+        let generationWaited = false;
+        provider.waitForResponseStart = async () => true;
+        provider.getServiceErrorState = async () => ({
+            message: "Invalid input, the first message must not assistant message.",
+            count: 1,
+        });
+        provider.waitForGenerationComplete = async () => {
+            generationWaited = true;
+            return "answer";
+        };
+
+        let thrown = null;
+        try {
+            await provider.collectResponse({
+                count: 1,
+                text: "上一轮回复",
+                serviceError: { message: "", count: 0 },
+            });
+        } catch (error) {
+            thrown = error;
+        }
+
+        assert.ok(thrown, "should throw");
+        assert.strictEqual(thrown.code, "QWEN_CONVERSATION_INVALID");
+        assert.strictEqual(thrown.retryable, false);
+        assert.strictEqual(generationWaited, false);
+    });
+
+    await check("等待生成开始时就抛出会话错误，不进入轮询等待", async () => {
+        const provider = makeProvider();
+        let stateRead = false;
+        let slept = false;
+        provider.getServiceErrorState = async () => ({
+            message: "Invalid input, the first message must not assistant message.",
+            count: 1,
+        });
+        provider.getGenerationState = async () => {
+            stateRead = true;
+            return { stopVisible: false, sendVisible: true };
+        };
+        provider.sleep = async () => {
+            slept = true;
+        };
+
+        let thrown = null;
+        try {
+            await provider.waitForGenerationComplete(async () => "answer", {
+                startTimeout: 20,
+                finishTimeout: 20,
+                serviceErrorBaseline: { message: "", count: 0 },
+            });
+        } catch (error) {
+            thrown = error;
+        }
+
+        assert.ok(thrown && thrown.code === "QWEN_CONVERSATION_INVALID");
+        assert.strictEqual(stateRead, false);
+        assert.strictEqual(slept, false);
+    });
+
+    await check("生成过程中出现会话错误时立即中止", async () => {
+        const provider = makeProvider();
+        const states = [
+            { message: "", count: 0 },
+            { message: "Invalid input, the first message must not assistant message.", count: 1 },
+        ];
+        provider.getServiceErrorState = async () => states.shift();
+        provider.getGenerationState = async () => ({ stopVisible: true, sendVisible: false });
+
+        let thrown = null;
+        try {
+            await provider.waitForGenerationComplete(async () => "answer", {
+                startTimeout: 20,
+                finishTimeout: 20,
+                serviceErrorBaseline: { message: "", count: 0 },
+            });
+        } catch (error) {
+            thrown = error;
+        }
+
+        assert.ok(thrown && thrown.code === "QWEN_CONVERSATION_INVALID");
+    });
+
+    await check("没有服务端错误时仍按原流程等待生成", async () => {
+        const provider = makeProvider();
+        const states = [
+            { stopVisible: true, sendVisible: false },
+            { stopVisible: false, sendVisible: true },
+        ];
+        provider.getServiceErrorState = async () => ({ message: "", count: 0 });
+        provider.getGenerationState = async () => states.shift();
+        provider.waitForStableResponse = async () => "answer";
+
+        const result = await provider.waitForGenerationComplete(async () => "answer", {
+            startTimeout: 20,
+            finishTimeout: 20,
+            serviceErrorBaseline: { message: "", count: 0 },
+        });
+
+        assert.strictEqual(result, "answer");
+    });
+
     console.log("");
     console.log("Total: " + pass + "/" + total);
 

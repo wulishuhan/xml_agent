@@ -7,6 +7,29 @@ const QWEN_CONVERSATION_PATTERN = new RegExp("/c/([0-9a-zA-Z-]+)");
 
 const RESPONSE_SELECTOR = ".response-message-content";
 const FALLBACK_RESPONSE_SELECTOR = ".qwen-markdown-html";
+const SERVICE_ERROR_PATTERN =
+    /Invalid input,\s*the first message must not assistant message\.?|今日对话次数已达上限/i;
+const QUOTA_ERROR_PATTERN = /今日对话次数已达上限/i;
+const SERVICE_ERROR_SELECTOR = [
+    '[role="alert"]',
+    ".error-message",
+    ".qwen-error",
+    ".response-error",
+    ".error-container",
+    ".chat-error",
+    ".toast-error",
+].join(",");
+const USER_MESSAGE_SELECTOR = [
+    '[data-message-role="user"]',
+    '[data-role="user"]',
+    ".user-message",
+    ".user-message-content",
+    ".message-user",
+    ".human-message",
+    ".prompt-message",
+    ".message-input-textarea",
+    '[contenteditable="true"]',
+].join(",");
 
 // 点按式提交的兜底按钮。回车不生效时用它把消息送出去。
 const SEND_BUTTON_SELECTORS = [
@@ -39,6 +62,42 @@ function isInterceptionError(error) {
     return message.indexOf("intercepts pointer events") !== -1;
 }
 
+function emptyServiceErrorState() {
+    return { message: "", count: 0 };
+}
+
+function isNewServiceError(current, baseline) {
+    const now = current || emptyServiceErrorState();
+    const before = baseline || emptyServiceErrorState();
+
+    return now.count > before.count || (!!now.message && now.message !== before.message);
+}
+
+function conversationError(message) {
+    const error = new Error(
+        "[Qwen] conversation history was rejected: " +
+            message +
+            " Start a new Qwen conversation; retrying the current one will not help."
+    );
+    error.code = "QWEN_CONVERSATION_INVALID";
+    error.retryable = false;
+    return error;
+}
+
+function quotaError() {
+    const error = new Error(
+        "[Qwen] daily conversation limit reached: 今日对话次数已达上限。" +
+            " Wait for the quota to reset or upgrade the Qwen plan; retrying now will not help."
+    );
+    error.code = "QWEN_QUOTA_EXCEEDED";
+    error.retryable = false;
+    return error;
+}
+
+function serviceError(message) {
+    return QUOTA_ERROR_PATTERN.test(message) ? quotaError() : conversationError(message);
+}
+
 class QwenProvider extends BrowserChatProvider {
     constructor(options = {}) {
         super({
@@ -67,6 +126,96 @@ class QwenProvider extends BrowserChatProvider {
         } catch (error) {
             return 0;
         }
+    }
+
+    async getServiceErrorState() {
+        if (!this.isPageAlive()) return emptyServiceErrorState();
+
+        try {
+            return await this.page.evaluate(
+                ({ patternSource, errorSelector, userSelector }) => {
+                    if (!document.body) {
+                        return { message: "", count: 0 };
+                    }
+
+                    const pattern = new RegExp(patternSource, "gi");
+                    const collect = (value) => {
+                        pattern.lastIndex = 0;
+                        return String(value || "").match(pattern) || [];
+                    };
+                    const isVisible = (element) => {
+                        const style = window.getComputedStyle(element);
+                        const rect = element.getBoundingClientRect();
+                        return (
+                            style.display !== "none" &&
+                            style.visibility !== "hidden" &&
+                            rect.width > 0 &&
+                            rect.height > 0
+                        );
+                    };
+                    const isUserMessage = (element) =>
+                        !!(element.closest && element.closest(userSelector));
+                    let matches = [];
+
+                    document.querySelectorAll(errorSelector).forEach((element) => {
+                        if (isVisible(element) && !isUserMessage(element)) {
+                            matches = matches.concat(collect(element.innerText));
+                        }
+                    });
+
+                    if (!matches.length) {
+                        const walker = document.createTreeWalker(
+                            document.body,
+                            NodeFilter.SHOW_TEXT
+                        );
+                        let node = walker.nextNode();
+                        while (node) {
+                            const element = node.parentElement;
+                            if (element && isVisible(element) && !isUserMessage(element)) {
+                                matches = matches.concat(collect(node.nodeValue));
+                            }
+                            node = walker.nextNode();
+                        }
+                    }
+
+                    return {
+                        message: matches.length ? matches[matches.length - 1] : "",
+                        count: matches.length,
+                    };
+                },
+                {
+                    patternSource: SERVICE_ERROR_PATTERN.source,
+                    errorSelector: SERVICE_ERROR_SELECTOR,
+                    userSelector: USER_MESSAGE_SELECTOR,
+                }
+            );
+        } catch (error) {
+            return emptyServiceErrorState();
+        }
+    }
+
+    async throwIfNewServiceError(baseline) {
+        const current = await this.getServiceErrorState();
+        if (isNewServiceError(current, baseline)) {
+            throw serviceError(current.message);
+        }
+    }
+
+    async captureResponseSnapshot() {
+        const snapshot = await super.captureResponseSnapshot();
+        const serviceError = await this.getServiceErrorState();
+        this._serviceErrorBaseline = serviceError;
+        return Object.assign({}, snapshot, { serviceError });
+    }
+
+    async getResponseState() {
+        const state = await super.getResponseState();
+        const serviceError = await this.getServiceErrorState();
+
+        if (isNewServiceError(serviceError, this._serviceErrorBaseline)) {
+            return Object.assign({}, state, { text: serviceError.message });
+        }
+        return state;
     }
 
     /**
@@ -116,9 +265,14 @@ class QwenProvider extends BrowserChatProvider {
         const finishTimeout = options.finishTimeout || this.responseTimeout;
         const pollInterval = options.pollInterval || this.responsePollInterval;
         const stableTime = options.stableTime || this.responseStableTime;
+        const serviceErrorBaseline = options.serviceErrorBaseline || emptyServiceErrorState();
+        const getCheckedResponse = async () => {
+            await this.throwIfNewServiceError(serviceErrorBaseline);
+            return getResponse();
+        };
 
         const stableFallback = () =>
-            this.waitForStableResponse(getResponse, {
+            this.waitForStableResponse(getCheckedResponse, {
                 timeout: finishTimeout,
                 stableTime,
                 pollInterval,
@@ -133,6 +287,7 @@ class QwenProvider extends BrowserChatProvider {
                 throw new Error("[Qwen] page was closed while waiting for generation start");
             }
 
+            await this.throwIfNewServiceError(serviceErrorBaseline);
             const state = await this.getGenerationState();
 
             if (state.stopVisible) {
@@ -141,12 +296,15 @@ class QwenProvider extends BrowserChatProvider {
             }
 
             try {
-                const text = await getResponse();
+                const text = await getCheckedResponse();
                 if (text && text.trim()) {
                     started = true;
                     break;
                 }
             } catch (error) {
+                if (error.retryable === false) {
+                    throw error;
+                }
                 // 轮询期间读不到是常态（页面还没挂出回复气泡）；
                 // 记下来，超时走兜底时至少能说明"是一直报错还是一直为空"。
                 lastPollError = error;
@@ -173,6 +331,7 @@ class QwenProvider extends BrowserChatProvider {
                 throw new Error("[Qwen] page was closed while waiting for generation finish");
             }
 
+            await this.throwIfNewServiceError(serviceErrorBaseline);
             const state = await this.getGenerationState();
             lastState = state;
 
@@ -610,13 +769,16 @@ class QwenProvider extends BrowserChatProvider {
 
     /** 先确认响应开始，再用按钮状态等待生成结束。 */
     async collectResponse(before) {
+        const serviceErrorBaseline = before.serviceError || emptyServiceErrorState();
         await this.waitForResponseStart(before.count, before.text);
+        await this.throwIfNewServiceError(serviceErrorBaseline);
 
         return this.waitForGenerationComplete(() => this.getLastResponse(), {
             startTimeout: 60000,
             finishTimeout: this.responseTimeout,
             pollInterval: this.responsePollInterval,
             stableTime: this.responseStableTime,
+            serviceErrorBaseline,
         });
     }
 }

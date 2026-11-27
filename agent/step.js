@@ -66,6 +66,15 @@ async function runStep(agent, { prompt, providerErrorState }) {
                 prompt: null,
             };
         }
+        if (error.retryable === false) {
+            agent.emitEvent("provider.error", {
+                step: agent.step,
+                error: error.message,
+                count: providerErrorState.count,
+                max: providerErrorState.max,
+            });
+            throw error;
+        }
         providerErrorState.count++;
         // 退避加抖动：不再精确落在 1s/2s/4s 上。
         const jitter = typeof agent.retryJitter === "number" ? agent.retryJitter : 0;
